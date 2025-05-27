@@ -31,13 +31,16 @@ module RubyLsp
 				return unless :register_element == name
 
 				case arguments
-				in [Prism::SymbolNode[unescaped: String => element_name], *]
-					@listener.add_method(element_name, location, [
+				in [Prism::SymbolNode[unescaped: String => method_name], *]
+					tag_name = method_name.tr("_", "-")
+					arguments[1] in Prism::StringNode[unescaped: String => tag_name]
+
+					@listener.add_method(method_name, location, [
 						RubyIndexer::Entry::Signature.new([
 							RubyIndexer::Entry::KeywordRestParameter.new(name: :attributes),
 							RubyIndexer::Entry::BlockParameter.new(name: :content),
 						]),
-					], visibility: :public)
+					], visibility: :public, comments: "Outputs a `<#{tag_name}>` tag.")
 				end
 			end
 		end
