@@ -182,7 +182,7 @@ test "_, Date" do
 end
 
 test "_, Time" do
-	output = phlex { div(attribute: Time.new(2023, 1, 15, 12, 30, 45)) }
+	output = phlex { div(attribute: Time.new(2023, 1, 15, 12, 30, 45, "+00:00")) }
 	assert_equal_html output, %(<div attribute="2023-01-15T12:30:45+00:00"></div>)
 end
 
