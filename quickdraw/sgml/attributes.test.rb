@@ -194,12 +194,27 @@ end
 
 test "_, Array" do
 	output = phlex { div(attribute: []) }
-	assert_equal_html output, %(<div attribute=""></div>)
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Array(Array)" do
+	output = phlex { div(attribute: [[], [], []]) }
+	assert_equal_html output, %(<div></div>)
 end
 
 test "_, Array(nil)" do
 	output = phlex { div(attribute: [nil, nil, nil]) }
-	assert_equal_html output, %(<div attribute=""></div>)
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Array(Array(nil))" do
+	output = phlex { div(attribute: [[nil, nil], [nil, nil]]) }
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Array(Array(nil), nil)" do
+	output = phlex { div(attribute: [[nil, nil], nil]) }
+	assert_equal_html output, %(<div></div>)
 end
 
 test "_, Array(String)" do
@@ -386,15 +401,70 @@ test "_, Hash(_, nil)" do
 	assert_equal_html output, %(<div></div>)
 end
 
+test "_, Hash(_, Array)" do
+	output = phlex { div(data: { action: [] }) }
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Hash(_, Array(nil))" do
+	output = phlex { div(data: { action: [nil] }) }
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Hash(_, Set)" do
+	output = phlex { div(data: { action: Set[] }) }
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Hash(_, Set(Set))" do
+	output = phlex { div(data: { action: Set[Set[]] }) }
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Hash(_, Set(nil))" do
+	output = phlex { div(data: { action: Set[nil] }) }
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Hash(_, Set(Set(nil)))" do
+	output = phlex { div(data: { action: Set[Set[nil]] }) }
+	assert_equal_html output, %(<div></div>)
+end
+
 test "_, Hash(_, *invalid*)" do
 	assert_raises(Phlex::ArgumentError) do
 		phlex { div(data: { controller: Object.new }) }
 	end
 end
 
-test "_, Set(nil)" do
+test "_, Set" do
+	output = phlex { div(attribute: Set[]) }
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Set" do
 	output = phlex { div(attribute: Set[nil, nil, nil]) }
-	assert_equal_html output, %(<div attribute=""></div>)
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Set(Set)" do
+	output = phlex { div(attribute: Set[Set[]]) }
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Set(Set(nil))" do
+	output = phlex { div(attribute: Set[Set[nil, nil, nil]]) }
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Set(Set, nil)" do
+	output = phlex { div(attribute: Set[Set[], nil]) }
+	assert_equal_html output, %(<div></div>)
+end
+
+test "_, Set(Set(nil), nil)" do
+	output = phlex { div(attribute: Set[Set[nil], nil]) }
+	assert_equal_html output, %(<div></div>)
 end
 
 test "_, Set(String)" do
@@ -540,7 +610,7 @@ end
 
 test ":srcset on img with an Array" do
 	output = phlex { img(srcset: []) }
-	assert_equal_html output, %(<img srcset="">)
+	assert_equal_html output, %(<img>)
 
 	output = phlex { img(srcset: ["image.jpg 1x", "image@2x.jpg 2x"]) }
 	assert_equal_html output, %(<img srcset="image.jpg 1x, image@2x.jpg 2x">)
@@ -548,7 +618,7 @@ end
 
 test ":media on link with an Array" do
 	output = phlex { link(media: []) }
-	assert_equal_html output, %(<link media="">)
+	assert_equal_html output, %(<link>)
 
 	output = phlex { link(media: ["screen", "print"]) }
 	assert_equal_html output, %(<link media="screen, print">)
@@ -559,7 +629,7 @@ end
 
 test ":sizes on link with an Array" do
 	output = phlex { link(sizes: []) }
-	assert_equal_html output, %(<link sizes="">)
+	assert_equal_html output, %(<link>)
 
 	output = phlex { link(sizes: ["16x16", "32x32", "64x64"]) }
 	assert_equal_html output, %(<link sizes="16x16, 32x32, 64x64">)
@@ -567,7 +637,7 @@ end
 
 test ":imagesrcset on link with an Array when rel is preload and as is image" do
 	output = phlex { link(imagesrcset: [], rel: "preload", as: "image") }
-	assert_equal_html output, %(<link imagesrcset="" rel="preload" as="image">)
+	assert_equal_html output, %(<link rel="preload" as="image">)
 
 	output = phlex { link(imagesrcset: ["image.jpg 1x", "image@2x.jpg 2x"], rel: "preload", as: "image") }
 	assert_equal_html output, %(<link imagesrcset="image.jpg 1x, image@2x.jpg 2x" rel="preload" as="image">)
@@ -581,7 +651,7 @@ end
 
 test ":accept on input with array when type is file" do
 	output = phlex { input(accept: [], type: "file") }
-	assert_equal_html output, %(<input accept="" type="file">)
+	assert_equal_html output, %(<input type="file">)
 
 	output = phlex { input(accept: ["image/jpeg", "image/png"], type: "file") }
 	assert_equal_html output, %(<input accept="image/jpeg, image/png" type="file">)
