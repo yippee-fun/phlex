@@ -591,9 +591,13 @@ class Phlex::SGML
 			when Hash
 				__nested_attributes__(v, "#{base_name}#{name}-", buffer)
 			when Array
-				buffer << " " << base_name << name << '="' << __nested_tokens__(v) << '"'
+				if (value = __nested_tokens__(v))
+					buffer << " " << base_name << name << '="' << value << '"'
+				end
 			when Set
-				buffer << " " << base_name << name << '="' << __nested_tokens__(v.to_a) << '"'
+				if (value = __nested_tokens__(v.to_a))
+					buffer << " " << base_name << name << '="' << value << '"'
+				end
 			when Phlex::SGML::SafeObject
 				buffer << " " << base_name << name << '="' << v.to_s.gsub('"', "&quot;") << '"'
 			else
@@ -636,11 +640,19 @@ class Phlex::SGML
 					buffer << token.to_s
 				end
 			when Array
-				if token.length > 0
+				if (value = __nested_tokens__(token, sep))
 					if i > 0
-						buffer << sep << __nested_tokens__(token, sep)
+						buffer << sep << value
 					else
-						buffer << __nested_tokens__(token, sep)
+						buffer << value
+					end
+				end
+			when Set
+				if (value = __nested_tokens__(token.to_a, sep))
+					if i > 0
+						buffer << sep << value
+					else
+						buffer << value
 					end
 				end
 			when nil
@@ -651,6 +663,8 @@ class Phlex::SGML
 
 			i += 1
 		end
+
+		return if buffer.empty?
 
 		buffer.gsub('"', "&quot;")
 	end
