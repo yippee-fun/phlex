@@ -4,16 +4,16 @@ module Phlex::SGML::Elements
 	COMMA_SEPARATED_TOKENS = {
 		img: <<~RUBY,
 			if Array === (srcset_attribute = attributes[:srcset])
-				attributes[:srcset] = __nested_tokens__(srcset_attribute, ", ")
+				attributes[:srcset] = __nested_tokens__(srcset_attribute, ", ", ",", "%2C")
 			end
 		RUBY
 		link: <<~RUBY,
 			if Array === (media_attribute = attributes[:media])
-				attributes[:media] = __nested_tokens__(media_attribute, ", ")
+				attributes[:media] = __nested_tokens__(media_attribute, ", ", ",", "%2C")
 			end
 
 			if Array === (sizes_attribute = attributes[:sizes])
-				attributes[:sizes] = __nested_tokens__(sizes_attribute, ", ")
+				attributes[:sizes] = __nested_tokens__(sizes_attribute, ", ", ",", "%2C")
 			end
 
 			if Array === (imagesrcset_attribute = attributes[:imagesrcset])
@@ -21,7 +21,7 @@ module Phlex::SGML::Elements
 				as_attribute = attributes[:as] || attributes["as"]
 
 				if ("preload" == rel_attribute || :preload == rel_attribute) && ("image" == as_attribute || :image == as_attribute)
-					attributes[:imagesrcset] = __nested_tokens__(imagesrcset_attribute, ", ")
+					attributes[:imagesrcset] = __nested_tokens__(imagesrcset_attribute, ", ", ",", "%2C")
 				end
 			end
 		RUBY
@@ -30,7 +30,7 @@ module Phlex::SGML::Elements
 				type_attribute = attributes[:type] || attributes["type"]
 
 				if "file" == type_attribute || :file == type_attribute
-					attributes[:accept] = __nested_tokens__(accept_attribute, ", ")
+					attributes[:accept] = __nested_tokens__(accept_attribute, ", ", ",", "%2C")
 				end
 			end
 		RUBY

@@ -542,8 +542,11 @@ test ":srcset on img with an Array" do
 	output = phlex { img(srcset: []) }
 	assert_equal_html output, %(<img srcset="">)
 
-	output = phlex { img(srcset: ["image.jpg 1x", "image@2x.jpg 2x"]) }
-	assert_equal_html output, %(<img srcset="image.jpg 1x, image@2x.jpg 2x">)
+	output = phlex { img(srcset: ["/width=400/image.jpg 1x", "/width=400,dpr=2/image.jpg 2x"]) }
+	assert_equal_html output, %(<img srcset="/width=400/image.jpg 1x, /width=400%2Cdpr=2/image.jpg 2x">)
+
+	output = phlex { img(srcset: ["/width=400/image.jpg 1x", ["/width=400,dpr=2/image.jpg 2x"]]) }
+	assert_equal_html output, %(<img srcset="/width=400/image.jpg 1x, /width=400%2Cdpr=2/image.jpg 2x">)
 end
 
 test ":media on link with an Array" do
@@ -575,8 +578,8 @@ test ":imagesrcset on link with an Array when rel is preload and as is image" do
 	output = phlex { link(imagesrcset: ["image.jpg 1x", "image@2x.jpg 2x"], rel: :preload, as: :image) }
 	assert_equal_html output, %(<link imagesrcset="image.jpg 1x, image@2x.jpg 2x" rel="preload" as="image">)
 
-	output = phlex { link(:imagesrcset => ["image.jpg 1x", "image@2x.jpg 2x"], "rel" => "preload", "as" => "image") }
-	assert_equal_html output, %(<link imagesrcset="image.jpg 1x, image@2x.jpg 2x" rel="preload" as="image">)
+	output = phlex { link(:imagesrcset => ["/width=400/image.jpg 1x", "/width=400,dpr=2/image@2x.jpg 2x"], "rel" => "preload", "as" => "image") }
+	assert_equal_html output, %(<link imagesrcset="/width=400/image.jpg 1x, /width=400%2Cdpr=2/image@2x.jpg 2x" rel="preload" as="image">)
 end
 
 test ":accept on input with array when type is file" do

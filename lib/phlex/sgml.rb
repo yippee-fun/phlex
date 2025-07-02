@@ -608,7 +608,7 @@ class Phlex::SGML
 		end
 	end
 
-	private def __nested_tokens__(tokens, sep = " ")
+	private def __nested_tokens__(tokens, sep = " ", gsub_from = nil, gsub_to	= "")
 		buffer = +""
 
 		i, length = 0, tokens.length
@@ -618,6 +618,7 @@ class Phlex::SGML
 
 			case token
 			when String
+				token = token.gsub(gsub_from, gsub_to) if gsub_from
 				if i > 0
 					buffer << sep << token
 				else
@@ -638,9 +639,9 @@ class Phlex::SGML
 			when Array
 				if token.length > 0
 					if i > 0
-						buffer << sep << __nested_tokens__(token, sep)
+						buffer << sep << __nested_tokens__(token, sep, gsub_from, gsub_to)
 					else
-						buffer << __nested_tokens__(token, sep)
+						buffer << __nested_tokens__(token, sep, gsub_from, gsub_to)
 					end
 				end
 			when nil
