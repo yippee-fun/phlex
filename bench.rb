@@ -9,6 +9,7 @@ require_relative "fixtures/layout"
 
 RubyVM::YJIT.enable
 
+Phlex::Compiler.compile(Example::Page)
 sample = Example::Page.new.call
 puts sample.bytesize
 

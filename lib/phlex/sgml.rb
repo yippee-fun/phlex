@@ -727,8 +727,17 @@ class Phlex::SGML
 			if location[0] in "/" | "."
 				Phlex.__expand_attribute_cache__(location)
 			end
-		else
-			super
 		end
+
+		super
+	end
+
+	def self.redefine_compiled_method(source, path, line)
+		class_eval("# frozen_string_literal: true\n#{source}", path, line - 1)
+	end
+
+	def self.__compile__(method_name)
+		path, line = instance_method(method_name).source_location
+		Phlex::Compiler::Method.new(self, path, line, method_name).compile
 	end
 end
