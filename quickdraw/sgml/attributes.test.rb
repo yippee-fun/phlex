@@ -29,6 +29,16 @@ test "unsafe event attribute" do
 	assert_equal error.message, "Unsafe attribute name detected: onclick."
 end
 
+test "data with hash" do
+	data = phlex { div(data: { attr: "test" }) }
+	assert_equal_html data, %(<div data-attr="test"></div>)
+end
+
+test "data with object which responds to to_h" do
+	data = phlex { div(data: Data.define(:attr).new(attr: "test")) }
+	assert_equal_html data, %(<div data-attr="test"></div>)
+end
+
 test "href with hash" do
 	error = assert_raises(Phlex::ArgumentError) do
 		phlex { a(href: {}) }
