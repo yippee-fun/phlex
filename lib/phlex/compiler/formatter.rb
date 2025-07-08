@@ -101,7 +101,11 @@ module Phlex::Compiler
 			visit node.receiver
 			emit node.call_operator_loc
 			emit node.message_loc
-			emit node.opening_loc
+			if node.opening_loc
+				emit node.opening_loc
+			else
+				space
+			end
 			visit node.arguments
 			emit node.closing_loc
 			space
