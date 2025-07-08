@@ -595,8 +595,3 @@ test ":accept on input with array when type is file" do
 	output = phlex { input(:accept => ["image/jpeg", "image/png"], "type" => "file") }
 	assert_equal_html output, %(<input accept="image/jpeg, image/png" type="file">)
 end
-
-# This is just for coverage.
-Phlex::HTML.call do |c|
-	c.__send__(:__styles__, nil)
-end

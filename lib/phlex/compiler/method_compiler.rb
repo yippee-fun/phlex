@@ -69,7 +69,7 @@ module Phlex::Compiler
 			if node.arguments in [Prism::KeywordHashNode[elements: attributes]]
 				result = attributes.all? { |attribute| attribute in Prism::AssocNode[key: Prism::SymbolNode, value: Prism::StringNode] }
 				if result
-					return buffer(Phlex::HTML.allocate.__send__(:__attributes__, eval("{#{node.slice}}")))
+					return buffer(Phlex::SGML::Attributes.generate_attributes(eval("{#{node.slice}}")))
 				end
 			end
 

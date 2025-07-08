@@ -44,11 +44,11 @@ class Phlex::SVG < Phlex::SGML
 		if (tag = StandardElements.__registered_elements__[name]) || (tag = name.name.tr("_", "-")).include?("-")
 			if attributes.length > 0 # with attributes
 				if block_given # with content block
-					buffer << "<#{tag}" << (Phlex::ATTRIBUTE_CACHE[attributes] ||= __attributes__(attributes)) << ">"
+					buffer << "<#{tag}" << (Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes)) << ">"
 					__yield_content__(&)
 					buffer << "</#{tag}>"
 				else # without content
-					buffer << "<#{tag}" << (::Phlex::ATTRIBUTE_CACHE[attributes] ||= __attributes__(attributes)) << "></#{tag}>"
+					buffer << "<#{tag}" << (::Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes)) << "></#{tag}>"
 				end
 			else # without attributes
 				if block_given # with content block
