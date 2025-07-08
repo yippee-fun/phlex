@@ -36,7 +36,7 @@ module Phlex::Compiler
 		def format(node)
 			@buffer.clear
 			visit(node)
-			@buffer.join
+			[@buffer.join, @source_map]
 		end
 
 		def visit_each(nodes)
