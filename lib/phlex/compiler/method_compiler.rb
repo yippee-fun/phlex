@@ -22,7 +22,8 @@ module Phlex::Compiler
 				end
 			)
 
-			Phlex::Compiler::Formatter.new.format(result)
+			source, map = Phlex::Compiler::Formatter.new.format(result)
+			source
 		end
 
 		def visit_call_node(node)

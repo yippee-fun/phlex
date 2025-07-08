@@ -4,13 +4,35 @@ module Phlex::Compiler
 	class VerbatimFormatter < Prism::BasicVisitor
 		def initialize
 			@buffer = []
+			@source_map = []
+			@current_line = 1
 		end
 
-		def push(string)
+		def push(value)
+			string = case value
+			when String
+				value
+			when Symbol
+				value.name
+			end
+
 			@buffer << string
+			new_lines = string.count("\n")
+			@current_line += new_lines
 		end
 
 		def emit(node)
+			source_map = @source_map
+			current_line = @current_line
+			start_line = node.start_line
+			end_line = node.end_line
+			number_of_lines = end_line - start_line
+			i = 0
+			while i <= number_of_lines
+				source_map[current_line + i] = start_line + i
+				i += 1
+			end
+
 			push node.slice if node
 		end
 
