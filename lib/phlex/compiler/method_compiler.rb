@@ -114,6 +114,17 @@ module Phlex::Compiler
 		end
 
 		def compile_void_element(node, tag)
+			[
+				[
+					buffer("<#{tag}"),
+					*(
+						if node.arguments
+							visit_phlex_attributes(node.arguments)
+						end
+					),
+					buffer(">"),
+				],
+			]
 		end
 
 		private def ensure_new_line
