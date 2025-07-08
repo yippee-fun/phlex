@@ -508,6 +508,8 @@ class Phlex::SGML
 				end
 			when Phlex::SGML::SafeObject
 				v.to_s.gsub('"', "&quot;")
+			when  -> (v) { v.respond_to?(:to_h) }
+				__nested_attributes__(v.to_h, "#{name}-", buffer)
 			else
 				raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
 			end
