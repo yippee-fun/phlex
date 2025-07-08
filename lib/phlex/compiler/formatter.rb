@@ -88,10 +88,6 @@ module Phlex::Compiler
 			@level = original_level
 		end
 
-		def visit_insert_node(node)
-			node.block.call(self)
-		end
-
 		def visit_block_node(node)
 			emit node.opening_loc
 			indent do

@@ -12,7 +12,7 @@ module Phlex::Compiler
 		def compile(node)
 			result = visit(node)
 			result.body&.body&.unshift(
-				InsertNode.new do |f|
+				proc do |f|
 					f.statement do
 						f.push "__phlex_buffer__ = @_state.buffer; nil"
 					end
@@ -117,19 +117,19 @@ module Phlex::Compiler
 		end
 
 		private def ensure_new_line
-			InsertNode.new(&:ensure_new_line)
+			proc(&:ensure_new_line)
 		end
 
 		private def new_line
 			@current_buffer = nil
 
-			InsertNode.new(&:new_line)
+			proc(&:new_line)
 		end
 
 		private def statement(string)
 			@current_buffer = nil
 
-			InsertNode.new do |f|
+			proc do |f|
 				f.statement do
 					f.push string
 				end
@@ -139,7 +139,7 @@ module Phlex::Compiler
 		private def push(value)
 			@current_buffer = nil
 
-			InsertNode.new do |f|
+			proc do |f|
 				f.push value
 			end
 		end
@@ -153,7 +153,7 @@ module Phlex::Compiler
 				@current_buffer = new_buffer
 				new_buffer << value
 
-				InsertNode.new do |f|
+				proc do |f|
 					f.statement do
 						f.push "__phlex_buffer__ << \"#{new_buffer.gsub('"', '\\"')}\"; nil"
 					end
