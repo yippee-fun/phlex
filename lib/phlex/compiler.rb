@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "prism"
-require "literal"
 
 module Phlex::Compiler
 	def self.compile(component)
