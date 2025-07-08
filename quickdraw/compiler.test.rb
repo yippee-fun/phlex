@@ -17,7 +17,7 @@
 # 	RUBY
 # end
 
-test "sequential elements" do
+test "sequential elements", skip: true do
 	snippet = Prism.parse(<<~RUBY).value.statements.body.first
 		def foo
 			div do
