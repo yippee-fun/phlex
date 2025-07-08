@@ -462,6 +462,10 @@ class Phlex::SGML
 		true
 	end
 
+	private def __render_attributes__(attributes)
+		@_state.buffer << (Phlex::ATTRIBUTE_CACHE[attributes] ||= __attributes__(attributes))
+	end
+
 	private def __attributes__(attributes, buffer = +"")
 		attributes.each do |k, v|
 			next unless v
@@ -727,8 +731,13 @@ class Phlex::SGML
 			if location[0] in "/" | "."
 				Phlex.__expand_attribute_cache__(location)
 			end
-		else
-			super
 		end
+
+		super
+	end
+
+	def self.__compile__(method_name)
+		path, line = instance_method(method_name).source_location
+		Phlex::Compiler::Method.new(self, path, line, method_name).compile
 	end
 end
