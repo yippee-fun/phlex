@@ -101,7 +101,9 @@ module Phlex::Compiler
 		end
 
 		def visit_phlex_block(node)
-			if output_block?(node)
+			if Prism::BlockArgumentNode === node
+				[statement("__yield_content__("), node, push(")")]
+			elsif output_block?(node)
 				visit(node.body)
 			elsif content_block?(node)
 				content = node.body.body.first
