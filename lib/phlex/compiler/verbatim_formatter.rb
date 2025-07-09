@@ -22,6 +22,7 @@ module Phlex::Compiler
 		end
 
 		def emit(node)
+			return unless node
 			source_map = @source_map
 			current_line = @current_line
 			start_line = node.start_line
@@ -33,7 +34,7 @@ module Phlex::Compiler
 				i += 1
 			end
 
-			push node.slice if node
+			push node.slice
 		end
 
 		def visit_alias_global_variable_node(node)
