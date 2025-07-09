@@ -89,7 +89,7 @@ module Phlex::Compiler
 		end
 
 		def visit_def_node(node)
-			emit node.def_keyword_loc
+			push "def"
 			space
 			push node.name
 
@@ -103,7 +103,7 @@ module Phlex::Compiler
 			visit node.body
 
 			new_line
-			emit node.end_keyword_loc
+			push "end"
 		end
 
 		def visit_statements_node(node)
