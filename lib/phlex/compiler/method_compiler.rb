@@ -32,6 +32,12 @@ module Phlex::Compiler
 					return compile_standard_element(node, tag)
 				elsif (tag = void_element?(node))
 					return compile_void_element(node, tag)
+				elsif whitespace_helper?(node)
+					return compile_whitespace_helper(node)
+				elsif doctype_helper?(node)
+					return compile_doctype_helper(node)
+				elsif plain_helper?(node)
+					return compile_plain_helper(node)
 				end
 			end
 
@@ -128,6 +134,37 @@ module Phlex::Compiler
 			]
 		end
 
+		def compile_whitespace_helper(node)
+			if node.block
+				[
+					buffer(" "),
+					visit_phlex_block(node.block),
+					buffer(" "),
+				]
+			else
+				[
+					buffer(" "),
+				]
+			end
+		end
+
+		def compile_doctype_helper(node)
+			[
+				buffer("<!doctype html>"),
+			]
+		end
+
+		def compile_plain_helper(node)
+			if node.arguments in [Prism::StringNode]
+				[
+					buffer(node.arguments.child_nodes.first.unescaped),
+				]
+			else
+				@current_buffer = nil
+				node
+			end
+		end
+
 		private def ensure_new_line
 			proc(&:ensure_new_line)
 		end
@@ -182,7 +219,7 @@ module Phlex::Compiler
 
 		private def output_block?(node)
 			node.body.body.any? do |child|
-				Prism::CallNode === child && (standard_element?(child) || void_element?(child))
+				Prism::CallNode === child && (standard_element?(child) || void_element?(child) || plain_helper?(child) || whitespace_helper?(child))
 			end
 		end
 
@@ -211,9 +248,21 @@ module Phlex::Compiler
 			end
 		end
 
+		private def whitespace_helper?(node)
+			node.name == :whitespace && own_method_without_scope?(node)
+		end
+
+		private def doctype_helper?(node)
+			node.name == :doctype && own_method_without_scope?(node)
+		end
+
+		private def plain_helper?(node)
+			node.name == :plain && own_method_without_scope?(node)
+		end
+
+		ALLOWED_OWNERS = [Phlex::SGML, Phlex::HTML, Phlex::SVG]
 		private def own_method_without_scope?(node)
-			# TODO: Should return true for things like `capture`
-			false
+			ALLOWED_OWNERS.include?(@component.instance_method(node.name).owner)
 		end
 
 		private def extract_kwargs_from_string(string)
