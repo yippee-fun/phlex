@@ -2,9 +2,6 @@
 
 # **Standard Generalized Markup Language** for behaviour common to {HTML} and {SVG}.
 class Phlex::SGML
-	UNSAFE_ATTRIBUTES = Set.new(%w[srcdoc sandbox http-equiv]).freeze
-	REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping]).freeze
-
 	ERBCompiler = ERB::Compiler.new("<>").tap do |compiler|
 		compiler.pre_cmd    = [""]
 		compiler.put_cmd    = "@_state.buffer.<<"
@@ -462,262 +459,10 @@ class Phlex::SGML
 		true
 	end
 
-	private def __attributes__(attributes, buffer = +"")
-		attributes.each do |k, v|
-			next unless v
-
-			name = case k
-				when String then k
-				when Symbol then k.name.tr("_", "-")
-				else raise Phlex::ArgumentError.new("Attribute keys should be Strings or Symbols.")
-			end
-
-			value = case v
-			when true
-				true
-			when String
-				v.gsub('"', "&quot;")
-			when Symbol
-				v.name.tr("_", "-").gsub('"', "&quot;")
-			when Integer, Float
-				v.to_s
-			when Date
-				v.iso8601
-			when Time
-				v.respond_to?(:iso8601) ? v.iso8601 : v.strftime("%Y-%m-%dT%H:%M:%S%:z")
-			when Hash
-				case k
-				when :style
-					__styles__(v).gsub('"', "&quot;")
-				else
-					__nested_attributes__(v, "#{name}-", buffer)
-				end
-			when Array
-				case k
-				when :style
-					__styles__(v).gsub('"', "&quot;")
-				else
-					__nested_tokens__(v)
-				end
-			when Set
-				case k
-				when :style
-					__styles__(v).gsub('"', "&quot;")
-				else
-					__nested_tokens__(v.to_a)
-				end
-			when Phlex::SGML::SafeObject
-				v.to_s.gsub('"', "&quot;")
-			else
-				raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
-			end
-
-			lower_name = name.downcase
-
-			unless Phlex::SGML::SafeObject === v
-				normalized_name = lower_name.delete("^a-z-")
-
-				if value != true && REF_ATTRIBUTES.include?(normalized_name)
-					case value
-					when String
-						if value.downcase.delete("^a-z:").start_with?("javascript:")
-							# We just ignore these because they were likely not specified by the developer.
-							next
-						end
-					else
-						raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
-					end
-				end
-
-				if normalized_name.bytesize > 2 && normalized_name.start_with?("on") && !normalized_name.include?("-")
-					raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
-				end
-
-				if UNSAFE_ATTRIBUTES.include?(normalized_name)
-					raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
-				end
-			end
-
-			if name.match?(/[<>&"']/)
-				raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
-			end
-
-			if lower_name.to_sym == :id && k != :id
-				raise Phlex::ArgumentError.new(":id attribute should only be passed as a lowercase symbol.")
-			end
-
-			case value
-			when true
-				buffer << " " << name
-			when String
-				buffer << " " << name << '="' << value << '"'
-			end
-		end
-
-		buffer
-	end
-
-	# Provides the nested-attributes case for serializing out attributes.
-	# This allows us to skip many of the checks the `__attributes__` method must perform.
-	private def __nested_attributes__(attributes, base_name, buffer = +"")
-		attributes.each do |k, v|
-			next unless v
-
-			if (root_key = (:_ == k))
-				name = ""
-				original_base_name = base_name
-				base_name = base_name.delete_suffix("-")
-			else
-				name = case k
-					when String then k
-					when Symbol then k.name.tr("_", "-")
-					else raise Phlex::ArgumentError.new("Attribute keys should be Strings or Symbols")
-				end
-
-				if name.match?(/[<>&"']/)
-					raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
-				end
-			end
-
-			case v
-			when true
-				buffer << " " << base_name << name
-			when String
-				buffer << " " << base_name << name << '="' << v.gsub('"', "&quot;") << '"'
-			when Symbol
-				buffer << " " << base_name << name << '="' << v.name.tr("_", "-").gsub('"', "&quot;") << '"'
-			when Integer, Float
-				buffer << " " << base_name << name << '="' << v.to_s << '"'
-			when Hash
-				__nested_attributes__(v, "#{base_name}#{name}-", buffer)
-			when Array
-				buffer << " " << base_name << name << '="' << __nested_tokens__(v) << '"'
-			when Set
-				buffer << " " << base_name << name << '="' << __nested_tokens__(v.to_a) << '"'
-			when Phlex::SGML::SafeObject
-				buffer << " " << base_name << name << '="' << v.to_s.gsub('"', "&quot;") << '"'
-			else
-				raise Phlex::ArgumentError.new("Invalid attribute value #{v.inspect}.")
-			end
-
-			if root_key
-				base_name = original_base_name
-			end
-
-			buffer
-		end
-	end
-
-	private def __nested_tokens__(tokens, sep = " ", gsub_from = nil, gsub_to	= "")
-		buffer = +""
-
-		i, length = 0, tokens.length
-
-		while i < length
-			token = tokens[i]
-
-			case token
-			when String
-				token = token.gsub(gsub_from, gsub_to) if gsub_from
-				if i > 0
-					buffer << sep << token
-				else
-					buffer << token
-				end
-			when Symbol
-				if i > 0
-					buffer << sep << token.name.tr("_", "-")
-				else
-					buffer << token.name.tr("_", "-")
-				end
-			when Integer, Float, Phlex::SGML::SafeObject
-				if i > 0
-					buffer << sep << token.to_s
-				else
-					buffer << token.to_s
-				end
-			when Array
-				if token.length > 0
-					if i > 0
-						buffer << sep << __nested_tokens__(token, sep, gsub_from, gsub_to)
-					else
-						buffer << __nested_tokens__(token, sep, gsub_from, gsub_to)
-					end
-				end
-			when nil
-				# Do nothing
-			else
-				raise Phlex::ArgumentError.new("Invalid token type: #{token.class}.")
-			end
-
-			i += 1
-		end
-
-		buffer.gsub('"', "&quot;")
-	end
-
-	# Result is **unsafe**, so it should be escaped!
-	private def __styles__(styles)
-		case styles
-		when Array, Set
-			styles.filter_map do |s|
-				case s
-				when String
-					if s == "" || s.end_with?(";")
-						s
-					else
-						"#{s};"
-					end
-				when Phlex::SGML::SafeObject
-					value = s.to_s
-					value.end_with?(";") ? value : "#{value};"
-				when Hash
-					next __styles__(s)
-				when nil
-					next nil
-				else
-					raise Phlex::ArgumentError.new("Invalid style: #{s.inspect}.")
-				end
-			end.join(" ")
-		when Hash
-			buffer = +""
-			i = 0
-			styles.each do |k, v|
-				prop = case k
-				when String
-					k
-				when Symbol
-					k.name.tr("_", "-")
-				else
-					raise Phlex::ArgumentError.new("Style keys should be Strings or Symbols.")
-				end
-
-				value = case v
-				when String
-					v
-				when Symbol
-					v.name.tr("_", "-")
-				when Integer, Float, Phlex::SGML::SafeObject
-					v.to_s
-				when nil
-					nil
-				else
-					raise Phlex::ArgumentError.new("Invalid style value: #{v.inspect}")
-				end
-
-				if value
-					if i == 0
-						buffer << prop << ": " << value << ";"
-					else
-						buffer << " " << prop << ": " << value << ";"
-					end
-				end
-
-				i += 1
-			end
-
-			buffer
-		end
+	private def __render_attributes__(attributes)
+		state = @_state
+		return unless state.should_render?
+		state.buffer << (Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes))
 	end
 
 	private_class_method def self.method_added(method_name)
@@ -727,8 +472,13 @@ class Phlex::SGML
 			if location[0] in "/" | "."
 				Phlex.__expand_attribute_cache__(location)
 			end
-		else
-			super
 		end
+
+		super
+	end
+
+	def self.__compile__(method_name)
+		path, line = instance_method(method_name).source_location
+		Phlex::Compiler::Method.new(self, path, line, method_name).compile
 	end
 end
