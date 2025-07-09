@@ -14,3 +14,15 @@ Dir["./compilation_equivalence_cases/*.rb", base: File.dirname(__FILE__)].each d
 		assert_equal_html after, before
 	end
 end
+
+require_relative "../fixtures/page"
+require_relative "../fixtures/layout"
+
+test "benchmark fixtures" do
+	before = Example::Page.new.call
+	Phlex::Compiler.compile(Example::LayoutComponent)
+	Phlex::Compiler.compile(Example::Page)
+	after = Example::Page.new.call
+
+	assert_equal_html after, before
+end
