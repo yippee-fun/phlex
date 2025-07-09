@@ -3,6 +3,9 @@ inherit_from:
 
 AllCops:
   TargetRubyVersion: 3.2
+  Exclude:
+    - "quickdraw/compilation_equivalence_cases/**/*.rb"
+
 
 # We need to disable this cop because it’s not compatible with TruffleRuby 23.1, which still needs a `require "set"`
 Lint/RedundantRequireStatement:

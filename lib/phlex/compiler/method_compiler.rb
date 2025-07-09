@@ -96,6 +96,8 @@ module Phlex::Compiler
 				case content
 				when Prism::StringNode
 					buffer(Phlex::Escape.html_escape(content.unescaped))
+				when Prism::InterpolatedStringNode
+					compile_interpolated_string_node(content)
 				else
 					raise
 				end
@@ -122,6 +124,31 @@ module Phlex::Compiler
 				[[node]],
 				statement("end"),
 			]
+		end
+
+		def compile_interpolated_string_node(node)
+			node.parts.map do |part|
+				case part
+				when Prism::StringNode
+					buffer(Phlex::Escape.html_escape(part.unescaped))
+				when Prism::EmbeddedVariableNode
+					[
+						buffer('#{'),
+						buffer("::Phlex::Escape.html_escape(("),
+						buffer(part.variable.slice),
+						buffer(").to_s)}"),
+					]
+				when Prism::EmbeddedStatementsNode
+					[
+						buffer('#{'),
+						buffer("::Phlex::Escape.html_escape(("),
+						buffer(part.statements.slice, escape: false),
+						buffer(").to_s)}"),
+					]
+				else
+				  raise Phlex::Compiler::Error, "Unexpected node type in InterpolatedStringNode: #{part.class}"
+				end
+			end
 		end
 
 		def compile_void_element(node, tag)
@@ -217,19 +244,27 @@ module Phlex::Compiler
 			@current_buffer = nil
 		end
 
-		private def buffer(value)
+		private def buffer(value, escape: true)
 			if @current_buffer
-				@current_buffer << value
+				if escape
+					@current_buffer << value.gsub('"', '\\"')
+				else
+					@current_buffer << value
+				end
 				nil
 			else
 				new_buffer = +""
 				@current_buffer = new_buffer
-				new_buffer << value
+				if escape
+					new_buffer << value.gsub('"', '\\"')
+				else
+					new_buffer << value
+				end
 
 				[
 					:new_line,
 					"#{buffer_local} << \"",
-					-> { new_buffer.gsub('"', '\\"') },
+					new_buffer,
 					"\" if #{should_render_local}; nil;",
 				]
 			end
@@ -250,7 +285,7 @@ module Phlex::Compiler
 
 		private def content_block?(node)
 			return false unless node.body.body.length == 1
-			node.body.body.first in Prism::StringNode
+			node.body.body.first in Prism::StringNode | Prism::InterpolatedStringNode
 		end
 
 		private def standard_element?(node)

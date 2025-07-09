@@ -3,6 +3,8 @@
 require "prism"
 
 module Phlex::Compiler
+	Error = Class.new(StandardError)
+
 	def self.compile(component)
 		path, line = Object.const_source_location(component.name)
 		return unless File.exist?(path)
