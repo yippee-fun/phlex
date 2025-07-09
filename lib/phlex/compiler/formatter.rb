@@ -2,34 +2,16 @@
 
 module Phlex::Compiler
 	class Formatter < VerbatimFormatter
-		def initialize
-			super
-			@new_line_character = "\n"
-			@indentation_character = "\t"
-			@level = 0
-		end
-
 		def visit(node)
 			case node
 			when nil
 				nil
 			when Array
-				visit_array(node)
+				node.each { |n| visit(n) }
 			when Proc
 				node.call(self)
 			else
 				super
-			end
-		end
-
-		def visit_array(nodes)
-			nodes.each do |node|
-				case node
-				when Array
-					indent { visit_array(node) }
-				else
-					visit(node)
-				end
 			end
 		end
 
@@ -58,41 +40,29 @@ module Phlex::Compiler
 			end
 		end
 
+		def statement
+			new_line
+			yield
+		end
+
+		def parens
+			push "("
+			yield
+			push ")"
+		end
+
+		def new_line
+			push "\n"
+		end
+
 		def space
 			push " "
 		end
 
-		def statement
-			ensure_new_line
-			yield
-		end
-
-		def ensure_new_line
-			new_line unless on_new_line?
-		end
-
-		def on_new_line?
-			@new_line_at == @buffer.length
-		end
-
-		def new_line
-			push "#{@new_line_character}#{@indentation_character * @level}"
-			@new_line_at = @buffer.length
-		end
-
-		def indent
-			original_level = @level
-			@level += 1
-			ensure_new_line
-			yield
-			@level = original_level
-		end
-
 		def visit_block_node(node)
 			emit node.opening_loc
-			indent do
-				visit node.body
-			end
+			new_line
+			visit node.body
 			new_line
 			emit node.closing_loc
 		end
@@ -118,19 +88,20 @@ module Phlex::Compiler
 			push node.name
 
 			if node.parameters
-				push "("
-				visit node.parameters
-				push ")"
+				parens do
+					visit node.parameters
+				end
 			end
 
-			indent { visit node.body }
+			new_line
+			visit node.body
 
 			new_line
 			emit node.end_keyword_loc
 		end
 
 		def visit_statements_node(node)
-			visit_each(node.compact_child_nodes) { ensure_new_line }
+			visit_each(node.compact_child_nodes) { new_line }
 		end
 	end
 end
