@@ -11,11 +11,12 @@ class Phlex::Compiler::ClassCompiler < Prism::Visitor
 
 	def visit_def_node(node)
 		return if node.name == :initialize
+		return if node.receiver
 
 		compiled_source = Phlex::Compiler::MethodCompiler.new(@compiler.component).compile(node)
 
 		if compiled_source
-			puts compiled_source
+			# puts compiled_source
 			@compiler.redefine_method(compiled_source, node.location.start_line)
 		end
 	end
