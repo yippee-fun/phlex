@@ -39,6 +39,7 @@ module Phlex::Compiler
 				end
 			end
 
+			clear_buffer
 			super
 		end
 
