@@ -28,7 +28,7 @@ test "sequential elements", skip: true do
 
 	compiled = Phlex::Compiler::MethodCompiler.new(Phlex::HTML).compile(snippet)
 
-	puts compiled
+	# puts compiled
 
 	assert_equal compiled.strip, out = <<~RUBY.strip
 		def foo
