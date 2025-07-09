@@ -188,7 +188,7 @@ module Phlex::Compiler
 				body: [
 					statement("__phlex_original_should_render__ = __phlex_should_render__"),
 					statement("__phlex_should_render__ = __phlex_state__.should_render?;"),
-					compile_block_body_node(node.body),
+					visit(node.body),
 					statement("__phlex_should_render__ = __phlex_original_should_render__"),
 				]
 			)
