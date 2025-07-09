@@ -280,7 +280,7 @@ module Phlex::Compiler
 
 		private def output_block?(node)
 			node.body.body.any? do |child|
-				Prism::CallNode === child && (standard_element?(child) || void_element?(child) || plain_helper?(child) || whitespace_helper?(child))
+				Prism::CallNode === child && (standard_element?(child) || void_element?(child) || plain_helper?(child) || whitespace_helper?(child) || raw_helper?(child))
 			end
 		end
 
