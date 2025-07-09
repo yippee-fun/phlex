@@ -14,10 +14,16 @@ module Phlex::Compiler
 			result.body&.body&.unshift(
 				proc do |f|
 					f.statement do
-						f.push "__phlex_buffer__ = @_state.buffer; nil"
+						f.push "__phlex_state__ = @_state"
 					end
 					f.statement do
-						f.push "__phlex_me__ = self; nil"
+						f.push "__phlex_buffer__ = __phlex_state__.buffer"
+					end
+					f.statement do
+						f.push "__phlex_me__ = self"
+					end
+					f.statement do
+						f.push "__phlex_should_render__ = __phlex_state__.should_render?; nil"
 					end
 				end
 			)
@@ -38,6 +44,8 @@ module Phlex::Compiler
 					return compile_doctype_helper(node)
 				elsif plain_helper?(node)
 					return compile_plain_helper(node)
+				elsif fragment_helper?(node)
+					return compile_fragment_helper(node)
 				end
 			end
 
@@ -110,14 +118,18 @@ module Phlex::Compiler
 
 		def visit_block_node(node)
 			node.copy(
-				body: [
-					statement("if __phlex_me__ == self"),
-					visit(node.body),
-					statement("else"),
-					[[node.body]],
-					statement("end"),
-				]
+				body: compile_block_body_node(node.body)
 			)
+		end
+
+		def compile_block_body_node(node)
+			[
+				statement("if __phlex_me__ == self;"),
+				visit(node),
+				statement("else;"),
+				[[node]],
+				statement("end;"),
+			]
 		end
 
 		def compile_void_element(node, tag)
@@ -165,6 +177,23 @@ module Phlex::Compiler
 			end
 		end
 
+		def compile_fragment_helper(node)
+			node.copy(
+				block: compile_fragment_helper_block(node.block)
+			)
+		end
+
+		def compile_fragment_helper_block(node)
+			node.copy(
+				body: [
+					statement("__phlex_original_should_render__ = __phlex_should_render__"),
+					statement("__phlex_should_render__ = __phlex_state__.should_render?;"),
+					visit(node.body),
+					statement("__phlex_should_render__ = __phlex_original_should_render__"),
+				]
+			)
+		end
+
 		private def ensure_new_line
 			proc(&:ensure_new_line)
 		end
@@ -204,7 +233,7 @@ module Phlex::Compiler
 
 				proc do |f|
 					f.statement do
-						f.push "__phlex_buffer__ << \"#{new_buffer.gsub('"', '\\"')}\"; nil"
+						f.push "__phlex_buffer__ << \"#{new_buffer.gsub('"', '\\"')}\" if __phlex_should_render__; nil;"
 					end
 				end
 			end
@@ -258,6 +287,10 @@ module Phlex::Compiler
 
 		private def plain_helper?(node)
 			node.name == :plain && own_method_without_scope?(node)
+		end
+
+		private def fragment_helper?(node)
+			node.name == :fragment && own_method_without_scope?(node)
 		end
 
 		ALLOWED_OWNERS = [Phlex::SGML, Phlex::HTML, Phlex::SVG]
