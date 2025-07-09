@@ -7,26 +7,12 @@ module Phlex::Compiler
 		def initialize(component)
 			@component = component
 			@current_buffer = nil
+			@preamble = Set[]
 		end
 
 		def compile(node)
 			result = visit(node)
-			result.body&.body&.unshift(
-				proc do |f|
-					f.statement do
-						f.push "__phlex_state__ = @_state"
-					end
-					f.statement do
-						f.push "__phlex_buffer__ = __phlex_state__.buffer"
-					end
-					f.statement do
-						f.push "__phlex_me__ = self"
-					end
-					f.statement do
-						f.push "__phlex_should_render__ = __phlex_state__.should_render?; nil"
-					end
-				end
-			)
+			result.body&.body&.unshift(@preamble, statement("nil"))
 
 			source, map = Phlex::Compiler::Formatter.new.format(result)
 			source
@@ -93,7 +79,7 @@ module Phlex::Compiler
 			end
 
 			[
-				ensure_new_line,
+				:new_line,
 				push("__render_attributes__("),
 				node,
 				push(")"),
@@ -102,7 +88,7 @@ module Phlex::Compiler
 
 		def visit_phlex_block(node)
 			if Prism::BlockArgumentNode === node
-				[statement("__yield_content__("), node, push(")")]
+				[push("__yield_content__("), node, push(")")]
 			elsif output_block?(node)
 				visit(node.body)
 			elsif content_block?(node)
@@ -130,11 +116,11 @@ module Phlex::Compiler
 
 		def compile_block_body_node(node)
 			[
-				statement("if __phlex_me__ == self;"),
+				statement("if #{self_local} == self"),
 				visit(node),
-				statement("else;"),
+				statement("else"),
 				[[node]],
-				statement("end;"),
+				statement("end"),
 			]
 		end
 
@@ -192,10 +178,10 @@ module Phlex::Compiler
 		def compile_fragment_helper_block(node)
 			node.copy(
 				body: [
-					statement("__phlex_original_should_render__ = __phlex_should_render__"),
-					statement("__phlex_should_render__ = __phlex_state__.should_render?;"),
+					statement("__phlex_original_should_render__ = #{should_render_local}"),
+					statement("#{should_render_local} = #{state_local}.should_render?"),
 					visit(node.body),
-					statement("__phlex_should_render__ = __phlex_original_should_render__"),
+					statement("#{should_render_local} = __phlex_original_should_render__"),
 				]
 			)
 		end
@@ -209,36 +195,26 @@ module Phlex::Compiler
 		end
 
 		def compile_raw_helper(node)
-			@current_buffer = nil
+			clear_buffer
 			node
 		end
 
-		private def ensure_new_line
-			proc(&:ensure_new_line)
-		end
-
-		private def new_line
-			@current_buffer = nil
-
-			proc(&:new_line)
-		end
-
 		private def statement(string)
-			@current_buffer = nil
-
-			proc do |f|
-				f.statement do
-					f.push string
-				end
-			end
+			clear_buffer
+			[
+				:new_line,
+				string,
+				";",
+			]
 		end
 
 		private def push(value)
-			@current_buffer = nil
+			clear_buffer
+			value
+		end
 
-			proc do |f|
-				f.push value
-			end
+		private def clear_buffer
+			@current_buffer = nil
 		end
 
 		private def buffer(value)
@@ -250,11 +226,12 @@ module Phlex::Compiler
 				@current_buffer = new_buffer
 				new_buffer << value
 
-				proc do |f|
-					f.statement do
-						f.push "__phlex_buffer__ << \"#{new_buffer.gsub('"', '\\"')}\" if __phlex_should_render__; nil;"
-					end
-				end
+				[
+					:new_line,
+					"#{buffer_local} << \"",
+					-> { new_buffer.gsub('"', '\\"') },
+					"\" if #{should_render_local}; nil;",
+				]
 			end
 		end
 
@@ -327,6 +304,26 @@ module Phlex::Compiler
 
 		private def extract_kwargs_from_string(string)
 			eval("{#{string}}")
+		end
+
+		private def state_local
+			@preamble << [:new_line, "__phlex_state__ = @_state;"]
+			"__phlex_state__"
+		end
+
+		private def buffer_local
+			@preamble << [:new_line, "__phlex_buffer__ = #{state_local}.buffer;"]
+			"__phlex_buffer__"
+		end
+
+		private def self_local
+			@preamble << [:new_line, "__phlex_self__ = self;"]
+			"__phlex_self__"
+		end
+
+		private def should_render_local
+			@preamble << [:new_line, "__phlex_should_render__ = #{state_local}.should_render?;"]
+			"__phlex_should_render__"
 		end
 	end
 end

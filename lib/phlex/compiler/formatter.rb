@@ -6,10 +6,16 @@ module Phlex::Compiler
 			case node
 			when nil
 				nil
-			when Array
+			when String
+				push node
+			when Array, Set
 				node.each { |n| visit(n) }
 			when Proc
-				node.call(self)
+				visit node.call
+			when :new_line
+				new_line
+			when :space
+				space
 			else
 				super
 			end
