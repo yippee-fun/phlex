@@ -46,6 +46,10 @@ module Phlex::Compiler
 					return compile_plain_helper(node)
 				elsif fragment_helper?(node)
 					return compile_fragment_helper(node)
+				elsif comment_helper?(node)
+					return compile_comment_helper(node)
+				elsif raw_helper?(node)
+					return compile_raw_helper(node)
 				end
 			end
 
@@ -194,6 +198,19 @@ module Phlex::Compiler
 			)
 		end
 
+		def compile_comment_helper(node)
+			[
+				buffer("<!-- "),
+				visit_phlex_block(node.block),
+				buffer(" -->"),
+			]
+		end
+
+		def compile_raw_helper(node)
+			@current_buffer = nil
+			node
+		end
+
 		private def ensure_new_line
 			proc(&:ensure_new_line)
 		end
@@ -291,6 +308,14 @@ module Phlex::Compiler
 
 		private def fragment_helper?(node)
 			node.name == :fragment && own_method_without_scope?(node)
+		end
+
+		private def comment_helper?(node)
+			node.name == :comment && own_method_without_scope?(node)
+		end
+
+		private def raw_helper?(node)
+			node.name == :raw && own_method_without_scope?(node)
 		end
 
 		ALLOWED_OWNERS = [Phlex::SGML, Phlex::HTML, Phlex::SVG]
