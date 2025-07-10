@@ -129,7 +129,8 @@ module Phlex::Compiler
 				end
 				visit node.arguments if node.arguments
 				emit node.closing_loc if node.closing_loc
-				push " " if node.block
+				# Only add space before regular blocks, not block arguments (&)
+				push " " if node.block && !node.block.is_a?(Prism::BlockArgumentNode)
 				visit node.block if node.block
 			else
 				emit node

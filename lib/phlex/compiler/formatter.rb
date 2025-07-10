@@ -77,15 +77,29 @@ module Phlex::Compiler
 			visit node.receiver
 			emit node.call_operator_loc
 			emit node.message_loc
+			
 			if node.opening_loc
 				emit node.opening_loc
-			else
+			elsif node.arguments || node.block
 				space
 			end
+			
 			visit node.arguments
+			
+			# Handle block arguments that should be inside parentheses
+			if node.block.is_a?(Prism::BlockArgumentNode)
+				# Add comma if there were arguments
+				push ", " if node.arguments
+				visit node.block
+			end
+			
 			emit node.closing_loc
-			space
-			visit node.block
+			
+			# Handle regular blocks (outside parentheses)
+			if node.block && !node.block.is_a?(Prism::BlockArgumentNode)
+				space
+				visit node.block
+			end
 		end
 
 		def visit_def_node(node)
