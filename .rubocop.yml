@@ -6,10 +6,15 @@ AllCops:
   Exclude:
     - "quickdraw/compilation_equivalence_cases/**/*.rb"
 
-
 # We need to disable this cop because it’s not compatible with TruffleRuby 23.1, which still needs a `require "set"`
 Lint/RedundantRequireStatement:
   Enabled: false
 
 Layout/ExtraSpacing:
+  Enabled: false
+
+UnderscorePrefixedVariableName:
+  Enabled: false
+
+Style/SoleNestedConditional:
   Enabled: false
