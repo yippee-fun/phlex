@@ -1,15 +1,12 @@
 class Heredoc < Phlex::HTML
 	def view_template
+		lines = 3
 		unknown {
-			p(<<~FIRST, <<~SECOND).gsub() { <<~THIRD }
-			  This is a heredoc.
-				It has multiple lines of text.
-				And it's all going in this <p> tag.
-			FIRST
-			  This is another thing
-			SECOND
-				Yet another string
-			THIRD
+			p { <<~FIRST }
+        This is a heredoc.
+        It has #{lines} lines of text.
+        And it's all going in this <p> tag.
+      FIRST
 		}
 	end
 

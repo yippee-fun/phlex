@@ -109,5 +109,18 @@ module Phlex::Compiler
 		def visit_statements_node(node)
 			visit_each(node.compact_child_nodes) { new_line }
 		end
+
+		def visit_interpolated_string_node(node)
+			push '"'
+			node.parts.each do |part|
+				case part
+				when Prism::StringNode
+					push part.unescaped.gsub('"', '\"')
+				when Prism::EmbeddedStatementsNode
+					visit(part)
+				end
+			end
+			push '"'
+		end
 	end
 end
