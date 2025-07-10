@@ -54,7 +54,13 @@ module Phlex::Compiler
 		end
 
 		def visit_arguments_node(node)
-			emit node
+			# Visit each argument, adding commas between them
+			first = true
+			node.child_nodes.each do |child|
+				push ", " unless first
+				first = false
+				visit child
+			end
 		end
 
 		def visit_array_node(node)
@@ -110,7 +116,35 @@ module Phlex::Compiler
 		end
 
 		def visit_call_node(node)
-			emit node
+			# If this call has arguments that might contain heredocs, we need to handle them specially
+			if node.arguments && contains_heredoc?(node.arguments)
+				# Visit parts separately to handle heredocs
+				visit node.receiver if node.receiver
+				emit node.call_operator_loc if node.call_operator_loc
+				emit node.message_loc
+				if node.opening_loc
+					emit node.opening_loc
+				else
+					push " " if node.arguments
+				end
+				visit node.arguments if node.arguments
+				emit node.closing_loc if node.closing_loc
+				push " " if node.block
+				visit node.block if node.block
+			else
+				emit node
+			end
+		end
+
+		private def contains_heredoc?(node)
+			case node
+			when Prism::ArgumentsNode
+				node.child_nodes.any? { |child| contains_heredoc?(child) }
+			when Prism::StringNode
+				node.opening_loc&.slice&.start_with?("<<")
+			else
+				false
+			end
 		end
 
 		def visit_call_operator_write_node(node)
@@ -598,7 +632,15 @@ module Phlex::Compiler
 		end
 
 		def visit_string_node(node)
-			emit node
+			# Heredocs cannot be emitted verbatim since they span multiple lines
+			# with special syntax, so we convert them to regular strings
+			if node.opening_loc&.slice&.start_with?("<<")
+				push '"'
+				push node.unescaped.gsub('"', '\"').gsub("\n", '\n')
+				push '"'
+			else
+				emit node
+			end
 		end
 
 		def visit_super_node(node)

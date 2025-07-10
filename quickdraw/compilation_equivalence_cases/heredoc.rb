@@ -7,6 +7,9 @@ class Heredoc < Phlex::HTML
         It has #{lines} lines of text.
         And it's all going in this <p> tag.
       FIRST
+      plain(<<~TXT)
+        This is some plain text.
+      TXT
 		}
 	end
 
