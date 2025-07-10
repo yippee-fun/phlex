@@ -73,8 +73,11 @@ module Phlex::Compiler
 
 		def visit_phlex_attributes(node)
 			if node.arguments in [Prism::KeywordHashNode[elements: attributes]]
-				result = attributes.all? { |attribute| attribute in Prism::AssocNode[key: Prism::SymbolNode, value: Prism::StringNode] }
-				if result
+				literal_attributes = attributes.all? do |attribute|
+					Prism::AssocNode === attribute && static_attribute_value_literal?(attribute)
+				end
+
+				if literal_attributes
 					return buffer(Phlex::SGML::Attributes.generate_attributes(eval("{#{node.slice}}")))
 				end
 			end
@@ -147,7 +150,7 @@ module Phlex::Compiler
 						buffer(").to_s)}"),
 					]
 				else
-				  raise Phlex::Compiler::Error, "Unexpected node type in InterpolatedStringNode: #{part.class}"
+					raise Phlex::Compiler::Error, "Unexpected node type in InterpolatedStringNode: #{part.class}"
 				end
 			end
 		end
@@ -304,6 +307,38 @@ module Phlex::Compiler
 					(Phlex::HTML::VoidElements == @component.instance_method(node.name).owner)
 
 				tag
+			else
+				false
+			end
+		end
+
+		private def static_attribute_value_literal?(value)
+			case value
+			when Prism::SymbolNode, Prism::StringNode, Prism::IntegerNode, Prism::FloatNode, Prism::TrueNode, Prism::FalseNode, Prism::NilNode
+				true
+			when Prism::ArrayNode
+				value.elements.all? { |n| static_token_value_literal?(n) }
+			when Prism::HashNode
+				value.elements.all? { |n| static_attribute_value_literal?(n) }
+			when Prism::AssocNode
+				(Prism::StringNode === value.key || Prism::SymbolNode === value.key) && static_attribute_value_literal?(value.value)
+			when Prism::CallNode
+				if value in { receiver: Prism::ConstantReadNode[name: :Set]| Prism::ConstantPathNode[name: :Set, parent: nil], name: :[] }
+					value.arguments.arguments.all? { |n| static_token_value_literal?(n) }
+				else
+					false
+				end
+			else
+				false
+			end
+		end
+
+		private def static_token_value_literal?(value)
+			case value
+			when Prism::SymbolNode, Prism::StringNode, Prism::IntegerNode, Prism::FloatNode, Prism::NilNode
+				true
+			when Prism::ArrayNode
+				value.elements.all? { |n| static_token_value_literal?(n) }
 			else
 				false
 			end
