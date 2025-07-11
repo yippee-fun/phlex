@@ -12,7 +12,12 @@ module Phlex::Compiler
 
 		def compile(node)
 			result = visit(node)
-			result.body&.body&.unshift(@preamble, statement("nil"))
+			case result.body
+			when Prism::BeginNode
+				result.body.statements.body.unshift(@preamble, statement("nil"))
+			else
+				result.body&.body&.unshift(@preamble, statement("nil"))
+			end
 
 			source, map = Phlex::Compiler::Formatter.new.format(result)
 			source
