@@ -74,13 +74,33 @@ module Phlex::Compiler
 		end
 
 		def visit_call_node(node)
-			visit node.receiver
-			emit node.call_operator_loc
+			# Check if this is a unary operator
+			# Unary operators are either:
+			# 1. Named with @ suffix (like -@, +@)
+			# 2. ! or ~ with no arguments
+			is_unary = case node.name
+			when :-@, :+@
+				true
+			when :!, :~
+				node.arguments.nil?
+			else
+				false
+			end
 			
-			# For [] calls, message_loc includes the brackets and arguments,
-			# so we should not emit it to avoid duplication
-			if node.name != :[]
+			if is_unary && node.receiver && !node.call_operator_loc
+				# For unary operators, emit the operator first
 				emit node.message_loc
+				visit node.receiver
+			else
+				# Regular method call (including binary operators)
+				visit node.receiver
+				emit node.call_operator_loc
+				
+				# For [] calls, message_loc includes the brackets and arguments,
+				# so we should not emit it to avoid duplication
+				if node.name != :[]
+					emit node.message_loc
+				end
 			end
 			
 			if node.opening_loc
