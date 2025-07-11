@@ -160,6 +160,15 @@ module Phlex::Compiler
 				# Only add space before regular blocks, not block arguments (&)
 				push " " if node.block && !node.block.is_a?(Prism::BlockArgumentNode)
 				visit node.block if node.block
+			# If we have a BlockArgumentNode (&), we need to emit parts separately
+			# because node.slice doesn't include the closing parenthesis
+			elsif node.block.is_a?(Prism::BlockArgumentNode) && node.opening_loc
+				visit node.receiver if node.receiver
+				emit node.call_operator_loc if node.call_operator_loc
+				emit node.message_loc
+				emit node.opening_loc
+				visit node.block
+				emit node.closing_loc if node.closing_loc
 			else
 				emit node
 			end
@@ -439,7 +448,19 @@ module Phlex::Compiler
 		end
 
 		def visit_instance_variable_write_node(node)
-			emit node
+			# Check if the value is a call node with a block argument
+			# This works around a Prism bug where the node's location doesn't include
+			# the closing parenthesis when the call has a BlockArgumentNode
+			if node.value.is_a?(Prism::CallNode) && 
+			   node.value.block.is_a?(Prism::BlockArgumentNode) && 
+			   node.value.closing_loc
+				emit node.name_loc
+				emit node.operator_loc
+				push " "
+				visit node.value
+			else
+				emit node
+			end
 		end
 
 		def visit_integer_node(node)
@@ -717,9 +738,7 @@ module Phlex::Compiler
 			# Heredocs cannot be emitted verbatim since they span multiple lines
 			# with special syntax, so we convert them to regular strings
 			if node.opening_loc&.slice&.start_with?("<<")
-				push '"'
-				push node.unescaped.gsub('"', '\"').gsub("\n", '\n')
-				push '"'
+				push node.unescaped.inspect
 			else
 				emit node
 			end
