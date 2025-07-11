@@ -282,13 +282,13 @@ module Phlex::Compiler
 		end
 
 		private def output_block?(node)
-			node.body.body.any? do |child|
+			node.body&.body&.any? do |child|
 				Prism::CallNode === child && (standard_element?(child) || void_element?(child) || plain_helper?(child) || whitespace_helper?(child) || raw_helper?(child))
 			end
 		end
 
 		private def content_block?(node)
-			return false unless node.body.body.length == 1
+			return false unless node.body&.body&.length == 1
 			node.body.body.first in Prism::StringNode | Prism::InterpolatedStringNode
 		end
 
