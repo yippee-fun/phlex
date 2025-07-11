@@ -72,7 +72,27 @@ module Phlex::Compiler
 		end
 
 		def visit_assoc_node(node)
-			emit node
+			# If the value contains a heredoc, visit key and value separately
+			if contains_heredoc?(node.value)
+				# Handle symbol keys with label syntax specially
+				if node.key.is_a?(Prism::SymbolNode) && node.key.opening_loc.nil? && node.key.closing_loc
+					# For label syntax (key:), emit just the value_loc and closing_loc
+					emit node.key.value_loc
+					emit node.key.closing_loc
+					push " "
+				else
+					visit node.key
+					# Check if it's a symbol key (ends with :) or needs =>
+					if node.operator_loc
+						emit node.operator_loc
+					# else
+						# push ": "
+					end
+				end
+				visit node.value
+			else
+				emit node
+			end
 		end
 
 		def visit_assoc_splat_node(node)
@@ -121,12 +141,20 @@ module Phlex::Compiler
 				# Visit parts separately to handle heredocs
 				visit node.receiver if node.receiver
 				emit node.call_operator_loc if node.call_operator_loc
-				emit node.message_loc
-				if node.opening_loc
+
+				# For [] calls, the message_loc includes the brackets and arguments,
+				# so we should only emit the opening bracket to avoid duplication
+				if node.name == :[]
 					emit node.opening_loc
 				else
-					push " " if node.arguments
+					emit node.message_loc
+					if node.opening_loc
+						emit node.opening_loc
+					else
+						push " " if node.arguments
+					end
 				end
+
 				visit node.arguments if node.arguments
 				emit node.closing_loc if node.closing_loc
 				# Only add space before regular blocks, not block arguments (&)
@@ -143,6 +171,14 @@ module Phlex::Compiler
 				node.child_nodes.any? { |child| contains_heredoc?(child) }
 			when Prism::StringNode
 				node.opening_loc&.slice&.start_with?("<<")
+			when Prism::InterpolatedStringNode
+				node.opening_loc&.slice&.start_with?("<<")
+			when Prism::HashNode, Prism::KeywordHashNode
+				node.elements.any? { |element| contains_heredoc?(element) }
+			when Prism::AssocNode
+				contains_heredoc?(node.value)
+			when Prism::LocalVariableWriteNode
+				contains_heredoc?(node.value)
 			else
 				false
 			end
@@ -329,7 +365,17 @@ module Phlex::Compiler
 		end
 
 		def visit_hash_node(node)
-			emit node
+			# If the hash contains heredocs, we need to visit elements individually
+			if contains_heredoc?(node)
+				emit node.opening_loc
+				node.elements.each_with_index do |element, i|
+					push ", " if i > 0
+					visit element
+				end
+				emit node.closing_loc
+			else
+				emit node
+			end
 		end
 
 		def visit_hash_pattern_node(node)
@@ -409,7 +455,24 @@ module Phlex::Compiler
 		end
 
 		def visit_interpolated_string_node(node)
-			emit node
+			# Heredocs cannot be emitted verbatim since they span multiple lines
+			# with special syntax, so we convert them to regular strings
+			if node.opening_loc&.slice&.start_with?("<<")
+				push '"'
+				node.parts.each do |part|
+					case part
+					when Prism::StringNode
+						push part.unescaped.gsub('"', '\"').gsub("\n", '\n')
+					when Prism::EmbeddedStatementsNode
+						push '#{'
+						visit part.statements
+						push '}'
+					end
+				end
+				push '"'
+			else
+				emit node
+			end
 		end
 
 		def visit_interpolated_symbol_node(node)
@@ -429,7 +492,17 @@ module Phlex::Compiler
 		end
 
 		def visit_keyword_hash_node(node)
-			emit node
+			# If the hash contains heredocs, we need to visit elements individually
+			if contains_heredoc?(node)
+				first = true
+				node.elements.each do |element|
+					push ", " unless first
+					first = false
+					visit element
+				end
+			else
+				emit node
+			end
 		end
 
 		def visit_keyword_rest_parameter_node(node)
@@ -461,7 +534,15 @@ module Phlex::Compiler
 		end
 
 		def visit_local_variable_write_node(node)
-			emit node
+			# If the value contains a heredoc, visit parts separately
+			if contains_heredoc?(node.value)
+				emit node.name_loc
+				emit node.operator_loc
+				push " "
+				visit node.value
+			else
+				emit node
+			end
 		end
 
 		def visit_match_last_line_node(node)

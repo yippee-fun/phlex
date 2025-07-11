@@ -314,8 +314,14 @@ module Phlex::Compiler
 
 		private def static_attribute_value_literal?(value)
 			case value
-			when Prism::SymbolNode, Prism::StringNode, Prism::IntegerNode, Prism::FloatNode, Prism::TrueNode, Prism::FalseNode, Prism::NilNode
+			when Prism::SymbolNode, Prism::IntegerNode, Prism::FloatNode, Prism::TrueNode, Prism::FalseNode, Prism::NilNode
 				true
+			when Prism::StringNode
+				# Exclude heredocs from static compilation since their slice doesn't work properly
+				!value.opening_loc&.slice&.start_with?("<<")
+			# when Prism::InterpolatedStringNode
+			# 	# Exclude heredocs
+			# 	!value.opening_loc&.slice&.start_with?("<<")
 			when Prism::ArrayNode
 				value.elements.all? { |n| static_token_value_literal?(n) }
 			when Prism::HashNode

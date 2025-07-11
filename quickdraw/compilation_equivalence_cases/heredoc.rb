@@ -1,6 +1,13 @@
 class Heredoc < Phlex::HTML
 	def view_template
 		lines = 3
+	  photo_effect = <<~JS
+	    let dt = new DataTransfer()
+	    for (let photo of photos) {
+	      dt.items.add(photo)
+	    }
+	    $el.files = dt.files
+	  JS
 		unknown {
 			p { <<~FIRST }
         This is a heredoc.

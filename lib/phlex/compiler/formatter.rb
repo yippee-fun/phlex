@@ -76,7 +76,12 @@ module Phlex::Compiler
 		def visit_call_node(node)
 			visit node.receiver
 			emit node.call_operator_loc
-			emit node.message_loc
+			
+			# For [] calls, message_loc includes the brackets and arguments,
+			# so we should not emit it to avoid duplication
+			if node.name != :[]
+				emit node.message_loc
+			end
 			
 			if node.opening_loc
 				emit node.opening_loc
