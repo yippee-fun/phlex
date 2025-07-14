@@ -98,10 +98,12 @@ module Phlex::Compiler
 			elsif content_block?(node)
 				content = node.body.body.first
 				case content
-				when Prism::StringNode
+				when Prism::StringNode, Prism::SymbolNode
 					buffer(Phlex::Escape.html_escape(content.unescaped))
 				when Prism::InterpolatedStringNode
 					compile_interpolated_string_node(content)
+				when Prism::NilNode
+					nil
 				else
 					raise
 				end
@@ -289,7 +291,7 @@ module Phlex::Compiler
 
 		private def content_block?(node)
 			return false unless node.body.body.length == 1
-			node.body.body.first in Prism::StringNode | Prism::InterpolatedStringNode
+			node.body.body.first in Prism::StringNode | Prism::InterpolatedStringNode | Prism::SymbolNode | Prism::NilNode
 		end
 
 		private def standard_element?(node)
