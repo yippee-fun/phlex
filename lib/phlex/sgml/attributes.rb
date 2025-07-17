@@ -135,9 +135,13 @@ module Phlex::SGML::Attributes
 			when Hash
 				generate_nested_attributes(v, "#{base_name}#{name}-", buffer)
 			when Array
-				buffer << " " << base_name << name << '="' << generate_nested_tokens(v) << '"'
+				if (value = generate_nested_tokens(v))
+					buffer << " " << base_name << name << '="' << value << '"'
+				end
 			when Set
-				buffer << " " << base_name << name << '="' << generate_nested_tokens(v.to_a) << '"'
+				if (value = generate_nested_tokens(v.to_a))
+					buffer << " " << base_name << name << '="' << value << '"'
+				end
 			when Phlex::SGML::SafeObject
 				buffer << " " << base_name << name << '="' << v.to_s.gsub('"', "&quot;") << '"'
 			else
@@ -181,11 +185,19 @@ module Phlex::SGML::Attributes
 					buffer << token.to_s
 				end
 			when Array
-				if token.length > 0
+				if token.length > 0 && (value = generate_nested_tokens(token, sep, gsub_from, gsub_to))
 					if i > 0
-						buffer << sep << generate_nested_tokens(token, sep, gsub_from, gsub_to)
+						buffer << sep << value
 					else
-						buffer << generate_nested_tokens(token, sep, gsub_from, gsub_to)
+						buffer << value
+					end
+				end
+			when Set
+				if token.length > 0 && (value = generate_nested_tokens(token.to_a, sep, gsub_from, gsub_to))
+					if i > 0
+						buffer << sep << value
+					else
+						buffer << value
 					end
 				end
 			when nil
@@ -196,6 +208,8 @@ module Phlex::SGML::Attributes
 
 			i += 1
 		end
+
+		return if buffer.empty?
 
 		buffer.gsub('"', "&quot;")
 	end
