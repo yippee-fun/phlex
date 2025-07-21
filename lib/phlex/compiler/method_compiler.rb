@@ -3,22 +3,57 @@
 require "prism"
 
 module Phlex::Compiler
-	class MethodCompiler < Prism::MutationCompiler
+	class MethodCompiler < Refract::MutationVisitor
 		def initialize(component)
+			super()
 			@component = component
 			@current_buffer = nil
-			@preamble = Set[]
+			@preamble = []
 		end
 
 		def compile(node)
 			result = visit(node)
-			result.body&.body&.unshift(@preamble, statement("nil"))
 
-			source, map = Phlex::Compiler::Formatter.new.format(result)
-			source
+			Refract::Formatter.new.format_node(result)
 		end
 
-		def visit_call_node(node)
+		def around_visit(node)
+			result = super
+
+			# We want to clear the buffer when there’s a node that isn’t a statements node,
+			# but we should ignore nils, which are usually other buffers.
+			clear_buffer unless result in Refract::StatementsNode | nil
+
+			result
+		end
+
+		visit Refract::ClassNode do |node|
+			node
+		end
+
+		visit Refract::ModuleNode do |node|
+			node
+		end
+
+		visit Refract::DefNode do |node|
+			if @stack.size == 1
+				node.copy(
+					body: Refract::StatementsNode.new(
+						body: [
+							Refract::StatementsNode.new(
+								body: @preamble
+							),
+							Refract::NilNode.new,
+							visit(node.body),
+						]
+					)
+				)
+			else
+				node
+			end
+		end
+
+		visit Refract::CallNode do |node|
 			if nil == node.receiver
 				if (tag = standard_element?(node))
 					return compile_standard_element(node, tag)
@@ -39,259 +74,375 @@ module Phlex::Compiler
 				end
 			end
 
-			clear_buffer
-			super
+			super(node)
 		end
 
-		def visit_class_node(node)
-			node
-		end
-
-		def visit_module_node(node)
-			node
+		visit Refract::BlockNode do |node|
+			node.copy(
+				body: compile_block_body_node(
+					node.body
+				)
+			)
 		end
 
 		def compile_standard_element(node, tag)
-			[
-				[
+			node => Refract::CallNode
+
+			Refract::StatementsNode.new(
+				body: [
 					buffer("<#{tag}"),
 					*(
 						if node.arguments
-							visit_phlex_attributes(node.arguments)
+							compile_phlex_attributes(node.arguments)
 						end
 					),
 					buffer(">"),
 					*(
 						if node.block
-							[visit_phlex_block(node.block)]
+							compile_phlex_block(node.block)
 						end
 					),
 					buffer("</#{tag}>"),
-				],
-			]
+				]
+			)
 		end
 
-		def visit_phlex_attributes(node)
-			if node.arguments in [Prism::KeywordHashNode[elements: attributes]]
+		def compile_void_element(node, tag)
+			node => Refract::CallNode
+
+			Refract::StatementsNode.new(
+				body: [
+					buffer("<#{tag}"),
+					*(
+						if node.arguments
+							compile_phlex_attributes(node.arguments)
+						end
+					),
+					buffer(">"),
+				]
+			)
+		end
+
+		def compile_phlex_attributes(node)
+			arguments = node.arguments
+
+			if arguments.size == 1 && Refract::KeywordHashNode === (first_argument = arguments[0])
+				attributes = first_argument.elements
 				literal_attributes = attributes.all? do |attribute|
-					Prism::AssocNode === attribute && static_attribute_value_literal?(attribute)
+					Refract::AssocNode === attribute && static_attribute_value_literal?(attribute)
 				end
 
 				if literal_attributes
-					return buffer(Phlex::SGML::Attributes.generate_attributes(eval("{#{node.slice}}")))
+					return buffer(
+						Phlex::SGML::Attributes.generate_attributes(
+							eval(
+								"{#{Refract::Formatter.new.format_node(node)}}"
+							)
+						)
+					)
 				end
-			end
 
-			[
-				:new_line,
-				push("__render_attributes__("),
-				node,
-				push(")"),
-			]
-		end
+				clear_buffer
 
-		def visit_phlex_block(node)
-			if Prism::BlockArgumentNode === node
-				[push("__yield_content__("), node, push(")")]
-			elsif output_block?(node)
-				visit(node.body)
-			elsif content_block?(node)
-				content = node.body.body.first
-				case content
-				when Prism::StringNode, Prism::SymbolNode
-					buffer(Phlex::Escape.html_escape(content.unescaped))
-				when Prism::InterpolatedStringNode
-					compile_interpolated_string_node(content)
-				when Prism::NilNode
-					nil
-				else
-					raise
-				end
-			else
-				[
-					statement("__yield_content__ do"),
-					[node.body],
-					statement("end"),
-				]
+				Refract::CallNode.new(
+					name: :__render_attributes__,
+					arguments: Refract::ArgumentsNode.new(
+						arguments: [
+							node,
+						]
+					)
+				)
 			end
 		end
 
-		def visit_block_node(node)
-			node.copy(
-				body: compile_block_body_node(node.body)
+		def compile_phlex_block(node)
+			case node
+			when Refract::BlockNode
+				if output_block?(node)
+					return visit(node.body)
+				elsif static_content_block?(node)
+					content = node.body.body.first
+					case content
+					when Refract::StringNode, Refract::SymbolNode
+						return buffer(Phlex::Escape.html_escape(content.unescaped))
+					when Refract::InterpolatedStringNode
+						return compile_interpolated_string_node(content)
+					when Refract::NilNode
+						return nil
+					else
+						raise
+					end
+				end
+			end
+
+			clear_buffer
+			Refract::CallNode.new(
+				name: :__yield_content__,
+				block: node
 			)
 		end
 
 		def compile_block_body_node(node)
-			[
-				statement("if #{self_local} == self"),
-				visit(node),
-				statement("else"),
-				[[node]],
-				statement("end"),
-			]
+			node => Refract::StatementsNode
+
+			Refract::StatementsNode.new(
+				body: [
+					Refract::IfNode.new(
+						inline: false,
+						predicate: Refract::CallNode.new(
+							receiver: Refract::SelfNode.new,
+							name: :==,
+							arguments: Refract::ArgumentsNode.new(
+								arguments: [
+									Refract::LocalVariableReadNode.new(
+										name: self_local
+									),
+								]
+							)
+						),
+						statements: Refract::StatementsNode.new(
+							body: node.body.map { |n| visit(n) }
+						),
+						subsequent: Refract::ElseNode.new(
+							statements: node
+						)
+					),
+				]
+			)
 		end
 
 		def compile_interpolated_string_node(node)
-			node.parts.map do |part|
-				case part
-				when Prism::StringNode
-					buffer(Phlex::Escape.html_escape(part.unescaped))
-				when Prism::EmbeddedVariableNode
-					[
-						buffer('#{'),
-						buffer("::Phlex::Escape.html_escape(("),
-						buffer(part.variable.slice),
-						buffer(").to_s)}"),
-					]
-				when Prism::EmbeddedStatementsNode
-					[
-						buffer('#{'),
-						buffer("::Phlex::Escape.html_escape(("),
-						buffer(part.statements.slice, escape: false),
-						buffer(").to_s)}"),
-					]
-				else
-					raise Phlex::Compiler::Error, "Unexpected node type in InterpolatedStringNode: #{part.class}"
-				end
-			end
-		end
+			node => Refract::InterpolatedStringNode
 
-		def compile_void_element(node, tag)
-			[
-				[
-					buffer("<#{tag}"),
-					*(
-						if node.arguments
-							visit_phlex_attributes(node.arguments)
-						end
-					),
-					buffer(">"),
-				],
-			]
+			Refract::StatementsNode.new(
+				body: node.parts.map do |part|
+					case part
+					when Refract::StringNode
+						buffer(Phlex::Escape.html_escape(part.unescaped))
+					when Refract::EmbeddedVariableNode
+						interpolate(part.variable)
+					when Refract::EmbeddedStatementsNode
+						interpolate(part.statements)
+					else
+						raise Phlex::Compiler::Error, "Unexpected node type in InterpolatedStringNode: #{part.class}"
+					end
+				end
+			)
 		end
 
 		def compile_whitespace_helper(node)
+			node => Refract::CallNode
+
 			if node.block
-				[
-					buffer(" "),
-					visit_phlex_block(node.block),
-					buffer(" "),
-				]
+				Refract::StatementsNode.new(
+					body: [
+						buffer(" "),
+						compile_phlex_block(node.block),
+						buffer(" "),
+					]
+				)
 			else
-				[
-					buffer(" "),
-				]
+				buffer(" ")
 			end
 		end
 
 		def compile_doctype_helper(node)
-			[
-				buffer("<!doctype html>"),
-			]
+			node => Refract::CallNode
+
+			buffer("<!doctype html>")
 		end
 
 		def compile_plain_helper(node)
-			if node.arguments in [Prism::StringNode]
-				[
-					buffer(node.arguments.child_nodes.first.unescaped),
-				]
+			node => Refract::CallNode
+
+			if node.arguments in [Refract::StringNode]
+				buffer(node.arguments.arguments.first.unescaped)
 			else
-				@current_buffer = nil
 				node
 			end
 		end
 
 		def compile_fragment_helper(node)
+			node => Refract::CallNode
+
 			node.copy(
 				block: compile_fragment_helper_block(node.block)
 			)
 		end
 
 		def compile_fragment_helper_block(node)
+			node => Refract::BlockNode
+
 			node.copy(
-				body: [
-					statement("__phlex_original_should_render__ = #{should_render_local}"),
-					statement("#{should_render_local} = #{state_local}.should_render?"),
-					visit(node.body),
-					statement("#{should_render_local} = __phlex_original_should_render__"),
-				]
+				body: Refract::StatementsNode.new(
+					body: [
+						Refract::LocalVariableWriteNode.new(
+							name: :__phlex_original_should_render__,
+							value: Refract::LocalVariableReadNode.new(
+								name: should_render_local
+							)
+						),
+						Refract::LocalVariableWriteNode.new(
+							name: should_render_local,
+							value: Refract::CallNode.new(
+								receiver: Refract::LocalVariableReadNode.new(
+									name: state_local
+								),
+								name: :should_render?
+							)
+						),
+						visit(node.body),
+						Refract::LocalVariableWriteNode.new(
+							name: should_render_local,
+							value: Refract::LocalVariableReadNode.new(
+								name: :__phlex_original_should_render__
+							)
+						),
+					]
+				)
 			)
 		end
 
 		def compile_comment_helper(node)
-			[
-				buffer("<!-- "),
-				visit_phlex_block(node.block),
-				buffer(" -->"),
-			]
+			node => Refract::CallNode
+
+			Refract::StatementsNode.new(
+				body: [
+					buffer("<!-- "),
+					compile_phlex_block(node.block),
+					buffer(" -->"),
+				]
+			)
 		end
 
 		def compile_raw_helper(node)
-			clear_buffer
+			node => Refract::CallNode
+
 			node
 		end
 
-		private def statement(string)
-			clear_buffer
-			[
-				:new_line,
-				string,
-				";",
-			]
+		private def buffer(value)
+			if @current_buffer
+				@current_buffer << Refract::StringNode.new(
+					unescaped: value
+				)
+
+				nil
+			else
+				new_buffer = [
+					Refract::StringNode.new(
+						unescaped: value
+					),
+				]
+
+				@current_buffer = new_buffer
+
+				Refract::IfNode.new(
+					inline: false,
+					predicate: Refract::LocalVariableReadNode.new(
+						name: should_render_local
+					),
+					statements: Refract::StatementsNode.new(
+						body: [
+							Refract::CallNode.new(
+								receiver: Refract::CallNode.new(
+									name: buffer_local,
+								),
+								name: :<<,
+								arguments: Refract::ArgumentsNode.new(
+									arguments: [
+										Refract::InterpolatedStringNode.new(
+											parts: new_buffer
+										),
+									]
+								)
+							),
+						]
+					)
+				)
+			end
 		end
 
-		private def push(value)
-			clear_buffer
-			value
+		private def interpolate(statements, escape: true)
+			embedded_statement = Refract::EmbeddedStatementsNode.new(
+				statements: Refract::StatementsNode.new(
+					body: [
+						Refract::CallNode.new(
+							receiver: Refract::ConstantPathNode.new(
+								parent: Refract::ConstantPathNode.new(
+									name: "Phlex"
+								),
+								name: "Escape"
+							),
+							name: :html_escape,
+							arguments: Refract::ArgumentsNode.new(
+								arguments: [
+									Refract::CallNode.new(
+										receiver: Refract::ParenthesesNode.new(
+											body: statements
+										),
+										name: :to_s
+									),
+								]
+							)
+						),
+					]
+				)
+			)
+
+			if @current_buffer
+				@current_buffer << embedded_statement
+
+				nil
+			else
+				new_buffer = [embedded_statement]
+
+				@current_buffer = new_buffer
+
+				Refract::IfNode.new(
+					predicate: Refract::LocalVariableReadNode.new(
+						name: should_render_local
+					),
+					statements: Refract::StatementsNode.new(
+						body: [
+							Refract::CallNode.new(
+								receiver: Refract::CallNode.new(
+									name: buffer_local,
+								),
+								name: :<<,
+								arguments: Refract::ArgumentsNode.new(
+									arguments: [
+										Refract::InterpolatedStringNode.new(
+											parts: new_buffer
+										),
+									]
+								)
+							),
+						]
+					)
+				)
+			end
 		end
 
 		private def clear_buffer
 			@current_buffer = nil
 		end
 
-		private def buffer(value, escape: true)
-			if @current_buffer
-				if escape
-					@current_buffer << value.gsub('"', '\\"')
-				else
-					@current_buffer << value
-				end
-				nil
-			else
-				new_buffer = +""
-				@current_buffer = new_buffer
-				if escape
-					new_buffer << value.gsub('"', '\\"')
-				else
-					new_buffer << value
-				end
-
-				[
-					:new_line,
-					"#{buffer_local} << \"",
-					new_buffer,
-					"\" if #{should_render_local}; nil;",
-				]
-			end
-		end
-
-		private def new_scope
-			original_in_scope = @in_scope
-			@in_scope = false
-			yield
-			@in_scope = original_in_scope
-		end
-
 		private def output_block?(node)
 			node.body.body.any? do |child|
-				Prism::CallNode === child && (standard_element?(child) || void_element?(child) || plain_helper?(child) || whitespace_helper?(child) || raw_helper?(child))
+				Refract::CallNode === child && (
+					standard_element?(child) ||
+					void_element?(child) ||
+					plain_helper?(child) ||
+					whitespace_helper?(child) ||
+					raw_helper?(child)
+				)
 			end
 		end
 
-		private def content_block?(node)
+		private def static_content_block?(node)
 			return false unless node.body.body.length == 1
-			node.body.body.first in Prism::StringNode | Prism::InterpolatedStringNode | Prism::SymbolNode | Prism::NilNode
+			node.body.body.first in Refract::StringNode | Refract::InterpolatedStringNode | Refract::SymbolNode | Refract::NilNode
 		end
 
 		private def standard_element?(node)
@@ -316,15 +467,15 @@ module Phlex::Compiler
 
 		private def static_attribute_value_literal?(value)
 			case value
-			when Prism::SymbolNode, Prism::StringNode, Prism::IntegerNode, Prism::FloatNode, Prism::TrueNode, Prism::FalseNode, Prism::NilNode
+			when Refract::SymbolNode, Refract::StringNode, Refract::IntegerNode, Refract::FloatNode, Refract::TrueNode, Refract::FalseNode, Refract::NilNode
 				true
-			when Prism::ArrayNode
+			when Refract::ArrayNode
 				value.elements.all? { |n| static_token_value_literal?(n) }
-			when Prism::HashNode
+			when Refract::HashNode
 				value.elements.all? { |n| static_attribute_value_literal?(n) }
-			when Prism::AssocNode
-				(Prism::StringNode === value.key || Prism::SymbolNode === value.key) && static_attribute_value_literal?(value.value)
-			when Prism::CallNode
+			when Refract::AssocNode
+				(Refract::StringNode === value.key || Refract::SymbolNode === value.key) && static_attribute_value_literal?(value.value)
+			when Refract::CallNode
 				if value in { receiver: Prism::ConstantReadNode[name: :Set]| Prism::ConstantPathNode[name: :Set, parent: nil], name: :[] }
 					value.arguments.arguments.all? { |n| static_token_value_literal?(n) }
 				else
@@ -370,33 +521,73 @@ module Phlex::Compiler
 			node.name == :raw && own_method_without_scope?(node)
 		end
 
-		ALLOWED_OWNERS = [Phlex::SGML, Phlex::HTML, Phlex::SVG]
+		ALLOWED_OWNERS = Set[Phlex::SGML, Phlex::HTML, Phlex::SVG]
 		private def own_method_without_scope?(node)
 			ALLOWED_OWNERS.include?(@component.instance_method(node.name).owner)
 		end
 
-		private def extract_kwargs_from_string(string)
-			eval("{#{string}}")
-		end
-
 		private def state_local
-			@preamble << [:new_line, "__phlex_state__ = @_state;"]
-			"__phlex_state__"
+			:__phlex_state__.tap do |local|
+				unless @state_local_set
+					@preamble << Refract::LocalVariableWriteNode.new(
+						name: local,
+						value: Refract::InstanceVariableReadNode.new(
+							name: :@_state
+						)
+					)
+
+					@state_local_set = true
+				end
+			end
 		end
 
 		private def buffer_local
-			@preamble << [:new_line, "__phlex_buffer__ = #{state_local}.buffer;"]
-			"__phlex_buffer__"
+			:__phlex_buffer__.tap do |local|
+				unless @buffer_local_set
+					@preamble << Refract::LocalVariableWriteNode.new(
+						name: local,
+						value: Refract::CallNode.new(
+							receiver: Refract::LocalVariableReadNode.new(
+								name: state_local
+							),
+							name: :buffer,
+						)
+					)
+
+					@buffer_local_set = true
+				end
+			end
 		end
 
 		private def self_local
-			@preamble << [:new_line, "__phlex_self__ = self;"]
-			"__phlex_self__"
+			:__phlex_self__.tap do |local|
+				unless @self_local_set
+					@preamble << Refract::LocalVariableWriteNode.new(
+						name: local,
+						value: Refract::SelfNode.new
+					)
+
+					@self_local_set = true
+				end
+			end
 		end
 
 		private def should_render_local
-			@preamble << [:new_line, "__phlex_should_render__ = #{state_local}.should_render?;"]
-			"__phlex_should_render__"
+			:__phlex_should_render__.tap do |local|
+				unless @should_render_local_set
+					@preamble << Refract::LocalVariableWriteNode.new(
+						name: :__phlex_should_render__,
+						value: Refract::CallNode.new(
+							receiver: Refract::LocalVariableReadNode.new(
+								name: state_local
+							),
+							name: :should_render?
+						)
+					)
+
+					@should_render_local_set = true
+				end
+			end
 		end
 	end
 end

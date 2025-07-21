@@ -1,35 +1,35 @@
 # frozen_string_literal: true
 
-class Phlex::Compiler::ClassCompiler < Prism::Visitor
+class Phlex::Compiler::ClassCompiler < Refract::Visitor
 	def initialize(compiler)
+		super()
 		@compiler = compiler
 	end
 
 	def compile(node)
-		visit_all(node.child_nodes)
+		visit(node.body)
 	end
 
-	def visit_def_node(node)
+	visit Refract::DefNode do |node|
 		return if node.name == :initialize
 		return if node.receiver
 
 		compiled_source = Phlex::Compiler::MethodCompiler.new(@compiler.component).compile(node)
 
 		if compiled_source
-			# puts compiled_source
-			@compiler.redefine_method(compiled_source, node.location.start_line)
+			@compiler.redefine_method(compiled_source, node.start_line)
 		end
 	end
 
-	def visit_class_node(node)
+	visit Refract::ClassNode do |node|
 		nil
 	end
 
-	def visit_module_node(node)
+	visit Refract::ModuleNode do |node|
 		nil
 	end
 
-	def visit_block_node(node)
+	visit Refract::BlockNode do |node|
 		nil
 	end
 end
