@@ -28,5 +28,6 @@ Gem::Specification.new do |spec|
 
 	spec.require_paths = ["lib"]
 
-	spec.add_runtime_dependency "zeitwerk", "~>2.7"
+	spec.add_dependency "zeitwerk", "~>2.7"
+	spec.add_dependency "refract", "~> 1.0"
 end
