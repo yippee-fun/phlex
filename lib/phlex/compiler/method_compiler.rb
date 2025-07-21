@@ -22,11 +22,7 @@ module Phlex::Compiler
 
 			# We want to clear the buffer when there’s a node that isn’t a statements node,
 			# but we should ignore nils, which are usually other buffers.
-			if result
-				unless Refract::StatementsNode === result
-					clear_buffer
-				end
-			end
+			clear_buffer unless result in Refract::StatementsNode | nil
 
 			result
 		end
