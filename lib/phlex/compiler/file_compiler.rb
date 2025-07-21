@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
-class Phlex::Compiler::FileCompiler < Prism::Visitor
+class Phlex::Compiler::FileCompiler < Refract::Visitor
 	def initialize(compiler)
+		super()
 		@compiler = compiler
 	end
 
@@ -9,8 +10,8 @@ class Phlex::Compiler::FileCompiler < Prism::Visitor
 		visit(node)
 	end
 
-	def visit_class_node(node)
-		if @compiler.line == node.location.start_line
+	visit Refract::ClassNode do |node|
+		if @compiler.line == node.start_line
 			Phlex::Compiler::ClassCompiler.new(@compiler).compile(node)
 		end
 	end
@@ -19,11 +20,11 @@ class Phlex::Compiler::FileCompiler < Prism::Visitor
 	# 	super
 	# end
 
-	def visit_def_node(node)
+	visit Refract::DefNode do |node|
 		nil
 	end
 
-	def visit_block_node(node)
+	visit Refract::BlockNode do |node|
 		nil
 	end
 end
