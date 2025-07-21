@@ -12,9 +12,7 @@ module Phlex::Compiler
 		end
 
 		def compile(node)
-			result = visit(node)
-
-			Refract::Formatter.new.format_node(result)
+			visit(node)
 		end
 
 		def around_visit(node)

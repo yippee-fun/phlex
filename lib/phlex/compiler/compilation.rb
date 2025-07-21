@@ -14,11 +14,32 @@ module Phlex::Compiler
 		attr_reader :component, :line, :source, :path
 
 		def compile
-			FileCompiler.new(self).compile(@tree)
+			result = FileCompiler.new(self).compile(@tree)
+
+			result.compiled_snippets.each do |snippet|
+				start_line = snippet.start_line
+
+				namespaced = result.namespace.reverse_each.reduce(snippet) do |body, scope|
+					start_line -= 1
+
+					scope.copy(
+						body: Refract::StatementsNode.new(
+							body: [body]
+						)
+					)
+				end
+
+				source = Refract::Formatter.new.format_node(namespaced)
+
+				redefine_method(
+					source,
+					start_line
+				)
+			end
 		end
 
 		def redefine_method(source, line)
-			@component.class_eval("# frozen_string_literal: true\n#{source}", @path, line - 1)
+			eval("# frozen_string_literal: true\n#{source}", TOPLEVEL_BINDING, @path, line - 1)
 		end
 	end
 end
