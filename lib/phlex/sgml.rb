@@ -481,4 +481,18 @@ class Phlex::SGML
 		path, line = instance_method(method_name).source_location
 		Phlex::Compiler::Method.new(self, path, line, method_name).compile
 	end
+
+	def __map_exception__(exception)
+		exception.set_backtrace(
+			exception.backtrace_locations.map do |loc|
+				if ((map = Phlex::Compiler::MAP[loc.path]) && (line = map[loc.lineno]))
+					"[Phlex] #{loc.path}:#{line}:#{loc.label}"
+				else
+					"#{loc.path}:#{loc.lineno}:#{loc.label}"
+				end
+			end
+		)
+
+		exception
+	end
 end

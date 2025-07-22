@@ -16,13 +16,11 @@ module Phlex::Compiler
 		end
 
 		def around_visit(node)
-			result = super
+			unless node in Refract::StatementsNode | Refract::CallNode | nil
+				clear_buffer
+			end
 
-			# We want to clear the buffer when there’s a node that isn’t a statements node,
-			# but we should ignore nils, which are usually other buffers.
-			clear_buffer unless result in Refract::StatementsNode | nil
-
-			result
+			super
 		end
 
 		visit Refract::ClassNode do |node|
@@ -36,14 +34,49 @@ module Phlex::Compiler
 		visit Refract::DefNode do |node|
 			if @stack.size == 1
 				node.copy(
-					body: Refract::StatementsNode.new(
-						body: [
-							Refract::StatementsNode.new(
-								body: @preamble
+					body: Refract::BeginNode.new(
+						statements: Refract::StatementsNode.new(
+							body: [
+								Refract::StatementsNode.new(
+									body: @preamble
+								),
+								Refract::NilNode.new,
+								visit(node.body),
+							]
+						),
+						rescue_clause: Refract::RescueNode.new(
+							exceptions: [],
+							reference: Refract::LocalVariableTargetNode.new(
+								name: :__phlex_exception__
 							),
-							Refract::NilNode.new,
-							visit(node.body),
-						]
+							statements: Refract::StatementsNode.new(
+								body: [
+									Refract::CallNode.new(
+										receiver: Refract::ConstantReadNode.new(
+											name: :Kernel
+										),
+										name: :raise,
+										arguments: Refract::ArgumentsNode.new(
+											arguments: [
+												Refract::CallNode.new(
+													name: :__map_exception__,
+													arguments: Refract::ArgumentsNode.new(
+														arguments: [
+															Refract::LocalVariableReadNode.new(
+																name: :__phlex_exception__
+															),
+														]
+													)
+												),
+											]
+										)
+									),
+								]
+							),
+							subsequent: nil
+						),
+						else_clause: nil,
+						ensure_clause: nil
 					)
 				)
 			else
@@ -72,6 +105,7 @@ module Phlex::Compiler
 				end
 			end
 
+			clear_buffer
 			super(node)
 		end
 
@@ -134,7 +168,8 @@ module Phlex::Compiler
 					return raw(
 						Phlex::SGML::Attributes.generate_attributes(
 							eval(
-								"{#{Refract::Formatter.new.format_node(node)}}"
+								"{#{Refract::Formatter.new.format_node(node).source}}",
+								TOPLEVEL_BINDING
 							)
 						)
 					)
@@ -253,9 +288,10 @@ module Phlex::Compiler
 		def compile_plain_helper(node)
 			node => Refract::CallNode
 
-			if node.arguments in [Refract::StringNode]
+			if node.arguments.arguments in [Refract::StringNode]
 				raw(node.arguments.arguments.first.unescaped)
 			else
+				clear_buffer
 				node
 			end
 		end
@@ -315,6 +351,8 @@ module Phlex::Compiler
 
 		def compile_raw_helper(node)
 			node => Refract::CallNode
+
+			clear_buffer
 			node
 		end
 
@@ -373,28 +411,33 @@ module Phlex::Compiler
 			else
 				@current_buffer = [node]
 
-				Refract::IfNode.new(
-					inline: false,
-					predicate: Refract::LocalVariableReadNode.new(
-						name: should_render_local
-					),
-					statements: Refract::StatementsNode.new(
-						body: [
-							Refract::CallNode.new(
-								receiver: Refract::CallNode.new(
-									name: buffer_local,
-								),
-								name: :<<,
-								arguments: Refract::ArgumentsNode.new(
-									arguments: [
-										Refract::InterpolatedStringNode.new(
-											parts: @current_buffer
-										),
-									]
-								)
+				Refract::StatementsNode.new(
+					body: [
+						Refract::IfNode.new(
+							inline: false,
+							predicate: Refract::LocalVariableReadNode.new(
+								name: should_render_local
 							),
-						]
-					)
+							statements: Refract::StatementsNode.new(
+								body: [
+									Refract::CallNode.new(
+										receiver: Refract::CallNode.new(
+											name: buffer_local,
+										),
+										name: :<<,
+										arguments: Refract::ArgumentsNode.new(
+											arguments: [
+												Refract::InterpolatedStringNode.new(
+													parts: @current_buffer
+												),
+											]
+										)
+									),
+								]
+							)
+						),
+						Refract::NilNode.new,
+					]
 				)
 			end
 		end
