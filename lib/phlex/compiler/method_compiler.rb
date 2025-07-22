@@ -364,6 +364,8 @@ module Phlex::Compiler
 		end
 
 		private def buffer(node)
+			node => Refract::StringNode | Refract::EmbeddedStatementsNode
+
 			if @current_buffer
 				@current_buffer << node
 
