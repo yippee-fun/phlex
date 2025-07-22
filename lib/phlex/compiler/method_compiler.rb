@@ -16,13 +16,11 @@ module Phlex::Compiler
 		end
 
 		def around_visit(node)
-			result = super
+			unless node in Refract::StatementsNode | Refract::CallNode | nil
+				clear_buffer
+			end
 
-			# We want to clear the buffer when there’s a node that isn’t a statements node,
-			# but we should ignore nils, which are usually other buffers.
-			clear_buffer unless result in Refract::StatementsNode | nil
-
-			result
+			super
 		end
 
 		visit Refract::ClassNode do |node|
@@ -107,6 +105,7 @@ module Phlex::Compiler
 				end
 			end
 
+			clear_buffer
 			super(node)
 		end
 
@@ -169,7 +168,8 @@ module Phlex::Compiler
 					return raw(
 						Phlex::SGML::Attributes.generate_attributes(
 							eval(
-								"{#{Refract::Formatter.new.format_node(node).source}}"
+								"{#{Refract::Formatter.new.format_node(node).source}}",
+								TOPLEVEL_BINDING
 							)
 						)
 					)
@@ -288,9 +288,10 @@ module Phlex::Compiler
 		def compile_plain_helper(node)
 			node => Refract::CallNode
 
-			if node.arguments in [Refract::StringNode]
+			if node.arguments.arguments in [Refract::StringNode]
 				raw(node.arguments.arguments.first.unescaped)
 			else
+				clear_buffer
 				node
 			end
 		end
@@ -350,6 +351,8 @@ module Phlex::Compiler
 
 		def compile_raw_helper(node)
 			node => Refract::CallNode
+
+			clear_buffer
 			node
 		end
 
@@ -408,28 +411,33 @@ module Phlex::Compiler
 			else
 				@current_buffer = [node]
 
-				Refract::IfNode.new(
-					inline: false,
-					predicate: Refract::LocalVariableReadNode.new(
-						name: should_render_local
-					),
-					statements: Refract::StatementsNode.new(
-						body: [
-							Refract::CallNode.new(
-								receiver: Refract::CallNode.new(
-									name: buffer_local,
-								),
-								name: :<<,
-								arguments: Refract::ArgumentsNode.new(
-									arguments: [
-										Refract::InterpolatedStringNode.new(
-											parts: @current_buffer
-										),
-									]
-								)
+				Refract::StatementsNode.new(
+					body: [
+						Refract::IfNode.new(
+							inline: false,
+							predicate: Refract::LocalVariableReadNode.new(
+								name: should_render_local
 							),
-						]
-					)
+							statements: Refract::StatementsNode.new(
+								body: [
+									Refract::CallNode.new(
+										receiver: Refract::CallNode.new(
+											name: buffer_local,
+										),
+										name: :<<,
+										arguments: Refract::ArgumentsNode.new(
+											arguments: [
+												Refract::InterpolatedStringNode.new(
+													parts: @current_buffer
+												),
+											]
+										)
+									),
+								]
+							)
+						),
+						Refract::NilNode.new,
+					]
 				)
 			end
 		end

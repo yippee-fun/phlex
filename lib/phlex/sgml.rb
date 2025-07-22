@@ -485,22 +485,11 @@ class Phlex::SGML
 	def __map_exception__(exception)
 		exception.set_backtrace(
 			exception.backtrace_locations.map do |loc|
-				map = Phlex::Compiler::MAP[loc.path]
-
-				line = if map
-					i = loc.lineno
-					while i > 0
-						if (r = map[i])
-							break r
-						end
-
-						i -= 1
-					end
+				if ((map = Phlex::Compiler::MAP[loc.path]) && (line = map[loc.lineno]))
+					"[Phlex] #{loc.path}:#{line}:#{loc.label}"
 				else
-					loc.lineno
+					"#{loc.path}:#{loc.lineno}:#{loc.label}"
 				end
-
-				"#{loc.path}:#{line}:#{loc.label}"
 			end
 		)
 

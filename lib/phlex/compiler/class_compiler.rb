@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 class Phlex::Compiler::ClassCompiler < Refract::Visitor
-	def initialize(compiler)
+	def initialize(component)
 		super()
-		@compiler = compiler
+		@component = component
 		@compiled_snippets = []
 	end
 
@@ -17,7 +17,7 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 		return if node.receiver
 
 		@compiled_snippets << Phlex::Compiler::MethodCompiler.new(
-			@compiler.component
+			@component
 		).compile(node)
 	end
 
