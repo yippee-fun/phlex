@@ -3,24 +3,22 @@
 require "prism"
 
 module Phlex::Compiler
+	Concat = Data.define(:node) do
+		def start_line = nil
+		def accept(visitor) = self
+	end
+
 	class MethodCompiler < Refract::MutationVisitor
 		def initialize(component)
 			super()
 			@component = component
-			@current_buffer = nil
 			@preamble = []
 		end
 
 		def compile(node)
-			visit(node)
-		end
-
-		def around_visit(node)
-			unless node in Refract::StatementsNode | Refract::CallNode | nil
-				clear_buffer
-			end
-
-			super
+			Compactor.new.visit(
+				visit(node)
+			)
 		end
 
 		visit Refract::ClassNode do |node|
@@ -105,7 +103,6 @@ module Phlex::Compiler
 				end
 			end
 
-			clear_buffer
 			super(node)
 		end
 
@@ -175,8 +172,6 @@ module Phlex::Compiler
 					)
 				end
 
-				clear_buffer
-
 				Refract::CallNode.new(
 					name: :__render_attributes__,
 					arguments: Refract::ArgumentsNode.new(
@@ -208,7 +203,6 @@ module Phlex::Compiler
 				end
 			end
 
-			clear_buffer
 			Refract::CallNode.new(
 				name: :__yield_content__,
 				block: node
@@ -291,7 +285,6 @@ module Phlex::Compiler
 			if node.arguments.arguments in [Refract::StringNode]
 				raw(node.arguments.arguments.first.unescaped)
 			else
-				clear_buffer
 				node
 			end
 		end
@@ -351,8 +344,6 @@ module Phlex::Compiler
 
 		def compile_raw_helper(node)
 			node => Refract::CallNode
-
-			clear_buffer
 			node
 		end
 
@@ -404,46 +395,16 @@ module Phlex::Compiler
 		private def buffer(node)
 			node => Refract::StringNode | Refract::EmbeddedStatementsNode
 
-			if @current_buffer
-				@current_buffer << node
+			should_render_local
+			buffer_local
 
-				nil
-			else
-				@current_buffer = [node]
-
-				Refract::StatementsNode.new(
-					body: [
-						Refract::IfNode.new(
-							inline: false,
-							predicate: Refract::LocalVariableReadNode.new(
-								name: should_render_local
-							),
-							statements: Refract::StatementsNode.new(
-								body: [
-									Refract::CallNode.new(
-										receiver: Refract::CallNode.new(
-											name: buffer_local,
-										),
-										name: :<<,
-										arguments: Refract::ArgumentsNode.new(
-											arguments: [
-												Refract::InterpolatedStringNode.new(
-													parts: @current_buffer
-												),
-											]
-										)
-									),
-								]
-							)
-						),
-						Refract::NilNode.new,
-					]
-				)
-			end
-		end
-
-		private def clear_buffer
-			@current_buffer = nil
+			Refract::StatementsNode.new(
+				body: [
+					Concat.new(
+						node
+					),
+				]
+			)
 		end
 
 		private def output_block?(node)
