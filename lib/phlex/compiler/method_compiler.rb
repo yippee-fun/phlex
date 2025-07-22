@@ -88,19 +88,19 @@ module Phlex::Compiler
 
 			Refract::StatementsNode.new(
 				body: [
-					buffer("<#{tag}"),
+					raw("<#{tag}"),
 					*(
 						if node.arguments
 							compile_phlex_attributes(node.arguments)
 						end
 					),
-					buffer(">"),
+					raw(">"),
 					*(
 						if node.block
 							compile_phlex_block(node.block)
 						end
 					),
-					buffer("</#{tag}>"),
+					raw("</#{tag}>"),
 				]
 			)
 		end
@@ -110,13 +110,13 @@ module Phlex::Compiler
 
 			Refract::StatementsNode.new(
 				body: [
-					buffer("<#{tag}"),
+					raw("<#{tag}"),
 					*(
 						if node.arguments
 							compile_phlex_attributes(node.arguments)
 						end
 					),
-					buffer(">"),
+					raw(">"),
 				]
 			)
 		end
@@ -131,7 +131,7 @@ module Phlex::Compiler
 				end
 
 				if literal_attributes
-					return buffer(
+					return raw(
 						Phlex::SGML::Attributes.generate_attributes(
 							eval(
 								"{#{Refract::Formatter.new.format_node(node)}}"
@@ -162,7 +162,7 @@ module Phlex::Compiler
 					content = node.body.body.first
 					case content
 					when Refract::StringNode, Refract::SymbolNode
-						return buffer(Phlex::Escape.html_escape(content.unescaped))
+						return plain(content.unescaped)
 					when Refract::InterpolatedStringNode
 						return compile_interpolated_string_node(content)
 					when Refract::NilNode
@@ -216,7 +216,7 @@ module Phlex::Compiler
 				body: node.parts.map do |part|
 					case part
 					when Refract::StringNode
-						buffer(Phlex::Escape.html_escape(part.unescaped))
+						plain(part.unescaped)
 					when Refract::EmbeddedVariableNode
 						interpolate(part.variable)
 					when Refract::EmbeddedStatementsNode
@@ -234,27 +234,27 @@ module Phlex::Compiler
 			if node.block
 				Refract::StatementsNode.new(
 					body: [
-						buffer(" "),
+						raw(" "),
 						compile_phlex_block(node.block),
-						buffer(" "),
+						raw(" "),
 					]
 				)
 			else
-				buffer(" ")
+				raw(" ")
 			end
 		end
 
 		def compile_doctype_helper(node)
 			node => Refract::CallNode
 
-			buffer("<!doctype html>")
+			raw("<!doctype html>")
 		end
 
 		def compile_plain_helper(node)
 			node => Refract::CallNode
 
 			if node.arguments in [Refract::StringNode]
-				buffer(node.arguments.arguments.first.unescaped)
+				raw(node.arguments.arguments.first.unescaped)
 			else
 				node
 			end
@@ -306,34 +306,72 @@ module Phlex::Compiler
 
 			Refract::StatementsNode.new(
 				body: [
-					buffer("<!-- "),
+					raw("<!-- "),
 					compile_phlex_block(node.block),
-					buffer(" -->"),
+					raw(" -->"),
 				]
 			)
 		end
 
 		def compile_raw_helper(node)
 			node => Refract::CallNode
-
 			node
 		end
 
-		private def buffer(value)
-			if @current_buffer
-				@current_buffer << Refract::StringNode.new(
+		private def plain(value)
+			value => String
+			raw(Phlex::Escape.html_escape(value))
+		end
+
+		private def raw(value)
+			value => String
+
+			buffer(
+				Refract::StringNode.new(
 					unescaped: value
 				)
+			)
+		end
+
+		private def interpolate(statements)
+			buffer(
+				Refract::EmbeddedStatementsNode.new(
+					statements: Refract::StatementsNode.new(
+						body: [
+							Refract::CallNode.new(
+								receiver: Refract::ConstantPathNode.new(
+									parent: Refract::ConstantPathNode.new(
+										name: "Phlex"
+									),
+									name: "Escape"
+								),
+								name: :html_escape,
+								arguments: Refract::ArgumentsNode.new(
+									arguments: [
+										Refract::CallNode.new(
+											receiver: Refract::ParenthesesNode.new(
+												body: statements
+											),
+											name: :to_s
+										),
+									]
+								)
+							),
+						]
+					)
+				)
+			)
+		end
+
+		private def buffer(node)
+			node => Refract::StringNode | Refract::EmbeddedStatementsNode
+
+			if @current_buffer
+				@current_buffer << node
 
 				nil
 			else
-				new_buffer = [
-					Refract::StringNode.new(
-						unescaped: value
-					),
-				]
-
-				@current_buffer = new_buffer
+				@current_buffer = [node]
 
 				Refract::IfNode.new(
 					inline: false,
@@ -350,68 +388,7 @@ module Phlex::Compiler
 								arguments: Refract::ArgumentsNode.new(
 									arguments: [
 										Refract::InterpolatedStringNode.new(
-											parts: new_buffer
-										),
-									]
-								)
-							),
-						]
-					)
-				)
-			end
-		end
-
-		private def interpolate(statements, escape: true)
-			embedded_statement = Refract::EmbeddedStatementsNode.new(
-				statements: Refract::StatementsNode.new(
-					body: [
-						Refract::CallNode.new(
-							receiver: Refract::ConstantPathNode.new(
-								parent: Refract::ConstantPathNode.new(
-									name: "Phlex"
-								),
-								name: "Escape"
-							),
-							name: :html_escape,
-							arguments: Refract::ArgumentsNode.new(
-								arguments: [
-									Refract::CallNode.new(
-										receiver: Refract::ParenthesesNode.new(
-											body: statements
-										),
-										name: :to_s
-									),
-								]
-							)
-						),
-					]
-				)
-			)
-
-			if @current_buffer
-				@current_buffer << embedded_statement
-
-				nil
-			else
-				new_buffer = [embedded_statement]
-
-				@current_buffer = new_buffer
-
-				Refract::IfNode.new(
-					predicate: Refract::LocalVariableReadNode.new(
-						name: should_render_local
-					),
-					statements: Refract::StatementsNode.new(
-						body: [
-							Refract::CallNode.new(
-								receiver: Refract::CallNode.new(
-									name: buffer_local,
-								),
-								name: :<<,
-								arguments: Refract::ArgumentsNode.new(
-									arguments: [
-										Refract::InterpolatedStringNode.new(
-											parts: new_buffer
+											parts: @current_buffer
 										),
 									]
 								)
