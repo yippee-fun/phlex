@@ -107,11 +107,15 @@ module Phlex::Compiler
 		end
 
 		visit Refract::BlockNode do |node|
-			node.copy(
-				body: compile_block_body_node(
-					node.body
+			if node.body
+				node.copy(
+					body: compile_block_body_node(
+						node.body
+					)
 				)
-			)
+			else
+				node
+			end
 		end
 
 		def compile_standard_element(node, tag)
@@ -408,7 +412,7 @@ module Phlex::Compiler
 		end
 
 		private def output_block?(node)
-			node.body.body.any? do |child|
+			node.body&.body&.any? do |child|
 				Refract::CallNode === child && (
 					standard_element?(child) ||
 					void_element?(child) ||
@@ -420,7 +424,7 @@ module Phlex::Compiler
 		end
 
 		private def static_content_block?(node)
-			return false unless node.body.body.length == 1
+			return false unless node.body&.body&.length == 1
 			node.body.body.first in Refract::StringNode | Refract::InterpolatedStringNode | Refract::SymbolNode | Refract::NilNode
 		end
 
