@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 module Phlex::Compiler
+	MAP = {}
+
 	class Compilation
 		def initialize(component, path, line, source, tree)
 			@component = component
@@ -14,31 +16,31 @@ module Phlex::Compiler
 		attr_reader :component, :line, :source, :path
 
 		def compile
+			last_line = @source.count("\n")
+
 			result = FileCompiler.new(self).compile(@tree)
 
-			result.compiled_snippets.each do |snippet|
-				start_line = snippet.start_line
-
-				namespaced = result.namespace.reverse_each.reduce(snippet) do |body, scope|
-					start_line -= 1
-
-					scope.copy(
-						body: Refract::StatementsNode.new(
-							body: [body]
-						)
+			namespaced = result.namespace.reverse_each.reduce(
+				result.compiled_snippets
+			) do |body, scope|
+				scope.copy(
+					body: Refract::StatementsNode.new(
+						body: [body]
 					)
-				end
-
-				source = Refract::Formatter.new.format_node(namespaced)
-
-				redefine_method(
-					source,
-					start_line
 				)
 			end
+
+			formatting_result = Refract::Formatter.new(starting_line: last_line).format_node(namespaced)
+
+			MAP[@path] = formatting_result.source_map
+
+			redefine(
+				formatting_result.source,
+				last_line
+			)
 		end
 
-		def redefine_method(source, line)
+		def redefine(source, line)
 			eval("# frozen_string_literal: true\n#{source}", TOPLEVEL_BINDING, @path, line - 1)
 		end
 	end

@@ -36,14 +36,49 @@ module Phlex::Compiler
 		visit Refract::DefNode do |node|
 			if @stack.size == 1
 				node.copy(
-					body: Refract::StatementsNode.new(
-						body: [
-							Refract::StatementsNode.new(
-								body: @preamble
+					body: Refract::BeginNode.new(
+						statements: Refract::StatementsNode.new(
+							body: [
+								Refract::StatementsNode.new(
+									body: @preamble
+								),
+								Refract::NilNode.new,
+								visit(node.body),
+							]
+						),
+						rescue_clause: Refract::RescueNode.new(
+							exceptions: [],
+							reference: Refract::LocalVariableTargetNode.new(
+								name: :__phlex_exception__
 							),
-							Refract::NilNode.new,
-							visit(node.body),
-						]
+							statements: Refract::StatementsNode.new(
+								body: [
+									Refract::CallNode.new(
+										receiver: Refract::ConstantReadNode.new(
+											name: :Kernel
+										),
+										name: :raise,
+										arguments: Refract::ArgumentsNode.new(
+											arguments: [
+												Refract::CallNode.new(
+													name: :__map_exception__,
+													arguments: Refract::ArgumentsNode.new(
+														arguments: [
+															Refract::LocalVariableReadNode.new(
+																name: :__phlex_exception__
+															),
+														]
+													)
+												),
+											]
+										)
+									),
+								]
+							),
+							subsequent: nil
+						),
+						else_clause: nil,
+						ensure_clause: nil
 					)
 				)
 			else
@@ -134,7 +169,7 @@ module Phlex::Compiler
 					return raw(
 						Phlex::SGML::Attributes.generate_attributes(
 							eval(
-								"{#{Refract::Formatter.new.format_node(node)}}"
+								"{#{Refract::Formatter.new.format_node(node).source}}"
 							)
 						)
 					)
