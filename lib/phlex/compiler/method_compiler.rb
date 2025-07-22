@@ -214,7 +214,7 @@ module Phlex::Compiler
 		end
 
 		def compile_block_body_node(node)
-			node => Refract::StatementsNode
+			node => Refract::StatementsNode | Refract::BeginNode
 
 			Refract::StatementsNode.new(
 				body: [
