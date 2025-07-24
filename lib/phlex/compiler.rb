@@ -27,7 +27,7 @@ module Phlex::Compiler
 
 		starting_line = last_line + 1
 
-		results = FileCompiler.new.compile(refract)
+		results = FileCompiler.new(path).compile(refract)
 
 		result = Refract::StatementsNode.new(
 			body: results.map do |result|

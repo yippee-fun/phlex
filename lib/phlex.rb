@@ -27,6 +27,8 @@ module Phlex
 	CACHED_FILES = Set.new
 	ATTRIBUTE_CACHE = FIFO.new
 
+	UNBOUND_INSTANCE_METHOD_METHOD = Module.instance_method(:instance_method)
+
 	def self.__expand_attribute_cache__(file_path)
 		unless CACHED_FILES.include?(file_path)
 			CACHED_FILES << file_path

@@ -430,7 +430,7 @@ module Phlex::Compiler
 
 		private def standard_element?(node)
 			if (tag = Phlex::HTML::StandardElements.__registered_elements__[node.name]) &&
-					(Phlex::HTML::StandardElements == @component.instance_method(node.name).owner)
+					(Phlex::HTML::StandardElements == Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(@component, node.name).owner)
 
 				tag
 			else
@@ -440,7 +440,7 @@ module Phlex::Compiler
 
 		private def void_element?(node)
 			if (tag = Phlex::HTML::VoidElements.__registered_elements__[node.name]) &&
-					(Phlex::HTML::VoidElements == @component.instance_method(node.name).owner)
+					(Phlex::HTML::VoidElements == Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(@component, node.name).owner)
 
 				tag
 			else
@@ -506,7 +506,7 @@ module Phlex::Compiler
 
 		ALLOWED_OWNERS = Set[Phlex::SGML, Phlex::HTML, Phlex::SVG]
 		private def own_method_without_scope?(node)
-			ALLOWED_OWNERS.include?(@component.instance_method(node.name).owner)
+			ALLOWED_OWNERS.include?(Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(@component, node.name).owner)
 		end
 
 		private def state_local

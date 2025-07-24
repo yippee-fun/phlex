@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
 class Phlex::Compiler::ClassCompiler < Refract::Visitor
-	def initialize(component)
+	def initialize(component, path)
 		super()
 		@component = component
+		@path = path
 		@compiled_snippets = []
 	end
 
@@ -15,6 +16,17 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 	visit Refract::DefNode do |node|
 		return if node.name == :initialize
 		return if node.receiver
+
+		method = begin
+			Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(@component, node.name)
+		rescue NameError
+			nil
+		end
+
+		return unless method
+		path, lineno = method.source_location
+		return unless @path == path
+		return unless node.start_line == lineno
 
 		@compiled_snippets << Phlex::Compiler::MethodCompiler.new(
 			@component

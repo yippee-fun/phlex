@@ -3,8 +3,9 @@
 class Phlex::Compiler::FileCompiler < Refract::Visitor
 	Result = Data.define(:namespace, :compiled_snippets)
 
-	def initialize
-		super
+	def initialize(path)
+		super()
+		@path = path
 		@current_namespace = []
 		@results = []
 	end
@@ -32,7 +33,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		if Class === const && Phlex::SGML > const
 			@results << Result.new(
 				namespace: @current_namespace.dup.freeze,
-				compiled_snippets: Phlex::Compiler::ClassCompiler.new(const).compile(node)
+				compiled_snippets: Phlex::Compiler::ClassCompiler.new(const, @path).compile(node)
 			)
 		else
 			super(node)
