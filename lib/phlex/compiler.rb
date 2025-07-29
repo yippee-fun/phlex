@@ -7,6 +7,11 @@ module Phlex::Compiler
 	MAP = {}
 	Error = Class.new(StandardError)
 
+	Concat = Data.define(:node) do
+		def start_line = nil
+		def accept(visitor) = self
+	end
+
 	def self.compile(component)
 		path, line = Object.const_source_location(component.name)
 		compile_file(path)
@@ -46,8 +51,6 @@ module Phlex::Compiler
 		formatting_result = Refract::Formatter.new(starting_line:).format_node(result)
 
 		MAP[path] = formatting_result.source_map
-
-		puts formatting_result.source
 
 		eval("# frozen_string_literal: true\n#{formatting_result.source}", TOPLEVEL_BINDING, path, starting_line - 1)
 	end

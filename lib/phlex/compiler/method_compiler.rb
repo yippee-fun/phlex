@@ -3,11 +3,6 @@
 require "prism"
 
 module Phlex::Compiler
-	Concat = Data.define(:node) do
-		def start_line = nil
-		def accept(visitor) = self
-	end
-
 	class MethodCompiler < Refract::MutationVisitor
 		def initialize(component)
 			super()
