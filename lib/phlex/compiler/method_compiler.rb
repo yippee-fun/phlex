@@ -13,12 +13,19 @@ module Phlex::Compiler
 			super()
 			@component = component
 			@preamble = []
+			@optimized = false
 		end
 
 		def compile(node)
-			Compactor.new.visit(
-				visit(node)
-			)
+			tree = visit(node)
+
+			if @optimized
+				Compactor.new.visit(
+					tree
+				)
+			else
+				nil
+			end
 		end
 
 		visit Refract::ClassNode do |node|
@@ -397,6 +404,7 @@ module Phlex::Compiler
 		end
 
 		private def buffer(node)
+			@optimized = true
 			node => Refract::StringNode | Refract::EmbeddedStatementsNode
 
 			should_render_local

@@ -10,7 +10,7 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 
 	def compile(node)
 		visit(node.body)
-		@compiled_snippets.freeze
+		@compiled_snippets.compact.freeze
 	end
 
 	visit Refract::DefNode do |node|
