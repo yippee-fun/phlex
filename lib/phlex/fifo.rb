@@ -36,7 +36,7 @@ class Phlex::FIFO
 			@bytesize += value.bytesize
 
 			while @bytesize > @max_bytesize
-				k, v = @store.shift
+				_k, v = @store.shift
 				@bytesize -= v[1].bytesize
 			end
 		end
