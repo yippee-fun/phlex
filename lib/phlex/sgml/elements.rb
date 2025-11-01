@@ -54,6 +54,8 @@ module Phlex::SGML::Elements
 					return nil
 				end
 
+				attributes = process_attributes(attributes) if respond_to?(:process_attributes)
+
 				if attributes.length > 0 # with attributes
 					if block_given # with content block
 						buffer << "<#{tag}"
@@ -147,6 +149,7 @@ module Phlex::SGML::Elements
 				return unless state.should_render?
 
 				buffer = state.buffer
+				attributes = process_attributes(attributes) if respond_to?(:process_attributes)
 
 				if attributes.length > 0 # with attributes
 					buffer << "<#{tag}"

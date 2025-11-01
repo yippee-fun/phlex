@@ -4,6 +4,28 @@ require "sgml_helper"
 
 include SGMLHelper
 
+test 'proscess_attributes callback' do
+	component = Class.new(Phlex::HTML) do
+		def initialize(name)
+			@name = name
+			@count = 0
+		end
+
+		def process_attributes(attrs)
+			attrs.tap do
+				it[:age] = 48 if it[:name] == 'Joel'
+			end
+		end
+
+		def view_template
+			i(class: "foo", name: @name) { "hello" }
+		end
+	end
+
+	assert_equal_html component.call('Joel'), %(<i class="foo" name="Joel" age="48">hello</i>)
+	assert_equal_html component.call('Sam'), %(<i class="foo" name="Sam">hello</i>)
+end
+
 test "id attributes must be lower case symbols" do
 	assert_raises(Phlex::ArgumentError) { phlex { div("id" => "abc") } }
 	assert_raises(Phlex::ArgumentError) { phlex { div("ID" => "abc") } }

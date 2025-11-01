@@ -462,6 +462,8 @@ class Phlex::SGML
 	private def __render_attributes__(attributes)
 		state = @_state
 		return unless state.should_render?
+
+		attributes = process_attributes(attributes) if respond_to?(:process_attributes)
 		state.buffer << (Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes))
 	end
 

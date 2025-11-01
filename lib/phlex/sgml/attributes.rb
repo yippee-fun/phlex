@@ -6,7 +6,9 @@ module Phlex::SGML::Attributes
 	UNSAFE_ATTRIBUTES = Set.new(%w[srcdoc sandbox http-equiv]).freeze
 	REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping]).freeze
 
-	def generate_attributes(attributes, buffer = +"")
+	def generate_attributes(attributes, buffer = +"", callback: nil)
+		callback&.(attributes)
+
 		attributes.each do |k, v|
 			next unless v
 

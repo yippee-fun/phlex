@@ -55,6 +55,8 @@ class Phlex::HTML < Phlex::SGML
 			raise Phlex::ArgumentError.new("Expected the tag name to be a Symbol.")
 		end
 
+		attributes = process_attributes(attributes) if respond_to?(:process_attributes)
+
 		if (tag = StandardElements.__registered_elements__[name]) || (tag = name.name.tr("_", "-")).include?("-")
 			if attributes.length > 0 # with attributes
 				if block_given # with content block
