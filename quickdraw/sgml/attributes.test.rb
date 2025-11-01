@@ -12,7 +12,7 @@ test 'proscess_attributes callback' do
 		end
 
 		def process_attributes(attrs)
-			attrs.tap do
+			attrs.tap do |it|
 				it[:age] = 48 if it[:name] == 'Joel'
 			end
 		end
