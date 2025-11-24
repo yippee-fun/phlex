@@ -20,7 +20,7 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Setup
         uses: ruby/setup-ruby@v1
@@ -41,7 +41,7 @@ jobs:
   rubocop:
     runs-on: "ubuntu-latest"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Setup
         uses: ruby/setup-ruby@v1
