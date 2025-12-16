@@ -41,6 +41,8 @@ module RubyLsp
 							RubyIndexer::Entry::BlockParameter.new(name: :content),
 						]),
 					], visibility: :public, comments: "Outputs a `<#{tag_name}>` tag.")
+				else
+					# no-op
 				end
 			end
 		end
