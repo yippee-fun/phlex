@@ -25,3 +25,6 @@ run = ["bundle exec ./bench.rb"]
 [tasks.browser_tests]
 description = "Run browser tests"
 run = ["bundle exec ./browser_tests.rb"]
+
+[tools]
+ruby = "latest"
