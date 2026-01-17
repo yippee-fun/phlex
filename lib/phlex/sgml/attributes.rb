@@ -53,7 +53,11 @@ module Phlex::SGML::Attributes
 			when Phlex::SGML::SafeObject
 				v.to_s.gsub('"', "&quot;")
 			else
-				raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
+				if v.respond_to?(:to_h)
+					generate_nested_attributes(v.to_h, "#{name}-", buffer)
+				else
+					raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
+				end
 			end
 
 			lower_name = name.downcase
