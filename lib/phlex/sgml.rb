@@ -60,7 +60,8 @@ class Phlex::SGML
 
 		block ||= @_content_block
 
-		Thread.current[:__phlex_component__] = [self, Fiber.current.object_id].freeze
+		previous_phlex_component = Thread.current[:__phlex_component__]
+		Thread.current[:__phlex_component__] = self
 
 		state.around_render(self) do
 			before_template(&block)
@@ -82,7 +83,7 @@ class Phlex::SGML
 			after_template(&block)
 		end
 	ensure
-		Thread.current[:__phlex_component__] = [parent, Fiber.current.object_id].freeze
+		Thread.current[:__phlex_component__] = previous_phlex_component
 	end
 
 	def context
