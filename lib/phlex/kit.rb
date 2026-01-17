@@ -63,8 +63,8 @@ module Phlex::Kit
 				end
 
 				define_singleton_method(name) do |*args, **kwargs, &block|
-					component, fiber_id = Thread.current[:__phlex_component__]
-					if (component && fiber_id == Fiber.current.object_id)
+					component = Thread.current[:__phlex_component__]
+					if component
 						component.instance_exec do
 							constant = me.const_get(name)
 							render(constant.new(*args, **kwargs), &block)
