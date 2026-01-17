@@ -65,8 +65,13 @@ test "string + set" do
 	assert_equal output, { class: ["foo", "bar"] }
 end
 
-test "override" do
+test "override with symbol key" do
 	output = mix({ class: "foo" }, { class!: "bar" })
+	assert_equal output, { class: "bar" }
+end
+
+test "override with string key" do
+	output = mix({ class: "foo" }, { "class!" => "bar" })
 	assert_equal output, { class: "bar" }
 end
 
