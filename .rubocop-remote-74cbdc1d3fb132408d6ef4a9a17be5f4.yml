@@ -1,0 +1,9 @@
+---
+inherit_from:
+  - https://www.goodcop.style/base.yml
+
+Layout/IndentationStyle:
+  EnforcedStyle: tabs
+
+Layout/IndentationWidth:
+  Width: 1

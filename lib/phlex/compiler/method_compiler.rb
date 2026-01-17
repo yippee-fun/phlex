@@ -462,7 +462,7 @@ module Phlex::Compiler
 			when Refract::AssocNode
 				(Refract::StringNode === value.key || Refract::SymbolNode === value.key) && static_attribute_value_literal?(value.value)
 			when Refract::CallNode
-				if value in { receiver: Prism::ConstantReadNode[name: :Set]| Prism::ConstantPathNode[name: :Set, parent: nil], name: :[] }
+				if value in { receiver: Prism::ConstantReadNode[name: :Set] | Prism::ConstantPathNode[name: :Set, parent: nil], name: :[] }
 					value.arguments.arguments.all? { |n| static_token_value_literal?(n) }
 				else
 					false
