@@ -752,9 +752,6 @@ Style/HashSyntax:
 Style/HashTransformKeys:
   Enabled: true
 
-Style/HashTransformValues:
-  Enabled: true
-
 Style/IfWithSemicolon:
   Enabled: true
 
