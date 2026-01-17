@@ -109,15 +109,10 @@ class XSSWithStrings < Phlex::HTML
 						s.cdata(line)
 						s.cdata { line }
 					end
-					erb_snippet(line:)
 				end
 			end
 		end
 	end
-
-	erb :erb_snippet, <<~HTML, locals: %(line:)
-		<%= @line %>
-	HTML
 end
 
 class XSSWithSymbols < Phlex::HTML
