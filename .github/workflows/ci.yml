@@ -31,7 +31,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          bundle install --jobs 4 --without development
+          bundle install --jobs 4
 
       - name: Sus Tests
         run: bundle exec sus
