@@ -36,14 +36,7 @@ module Phlex::Helpers
 			end
 
 			result.transform_keys! do |key|
-				case key
-				when Symbol
-					key.end_with?("!") ? key.name.chop.to_sym : key
-				when String
-					key.end_with?("!") ? key.chop.to_sym : key
-				else
-					key
-				end
+				key.end_with?("!") ? key.name.chop.to_sym : key
 			end
 		end
 	end
