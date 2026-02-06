@@ -160,4 +160,28 @@ HTML
    <custom-tag></custom-tag>
 HTML
 	end
+
+	test "with unsafe custom tag name containing a space" do
+		error = assert_raises Phlex::ArgumentError do
+			HTMLComponent.call(:"x-widget onclick=alert(1)")
+		end
+
+		assert_equal error.message, "Invalid HTML tag: x-widget onclick=alert(1)"
+	end
+
+	test "with unsafe custom tag name containing special characters" do
+		error = assert_raises Phlex::ArgumentError do
+			HTMLComponent.call(:"x-widget>")
+		end
+
+		assert_equal error.message, "Invalid HTML tag: x-widget>"
+	end
+
+	test "with unsafe SVG custom tag name containing a space" do
+		error = assert_raises Phlex::ArgumentError do
+			SVGComponent.call(:"x-widget onclick=alert(1)")
+		end
+
+		assert_equal error.message, "Invalid SVG tag: x-widget onclick=alert(1)"
+	end
 end

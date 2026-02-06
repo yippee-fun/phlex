@@ -56,8 +56,24 @@ class AttributesTest < Quickdraw::Test
 			phlex { a("Href" => "javascript:alert('hello')") },
 			phlex { a("Href" => "javascript:javascript:alert('hello')") },
 			phlex { a(href: " \t\njavascript:alert('hello')") },
+			phlex { a(href: "java&#x73;cript:alert(1)") },
+			phlex { a(href: "javascript&#58;alert(1)") },
+			phlex { a(href: "java&#115;cript:alert(1)") },
+			phlex { a(href: "&#106;avascript:alert(1)") },
+			phlex { a(href: "javascript&#58alert(1)") },
+			phlex { a(href: "javascript&colon;alert(1)") },
 		].each do |output|
 			assert_equal output, %(<a></a>)
+		end
+	end
+
+	test "unsafe xlink:href attribute" do
+		[
+			phlex(Phlex::SVG) { a("xlink:href": "javascript:alert(1)") { "x" } },
+			phlex(Phlex::SVG) { a("xlink:href": "javascript&colon;alert(1)") { "x" } },
+			phlex(Phlex::SVG) { a("xlink:href": "javascript&#58alert(1)") { "x" } },
+		].each do |output|
+			assert_equal output, %(<a>x</a>)
 		end
 	end
 
@@ -99,6 +115,38 @@ class AttributesTest < Quickdraw::Test
 		end
 
 		assert_equal error.message, "Unsafe attribute name detected: \"."
+	end
+
+	test "unsafe attribute name with space (String)" do
+		error = assert_raises(Phlex::ArgumentError) do
+			phlex { div("foo bar" => true) }
+		end
+
+		assert_equal error.message, "Unsafe attribute name detected: foo bar."
+	end
+
+	test "unsafe attribute name with space (Symbol)" do
+		error = assert_raises(Phlex::ArgumentError) do
+			phlex { div("foo bar": true) }
+		end
+
+		assert_equal error.message, "Unsafe attribute name detected: foo bar."
+	end
+
+	test "unsafe attribute name with slash (String)" do
+		error = assert_raises(Phlex::ArgumentError) do
+			phlex { div("foo/bar" => true) }
+		end
+
+		assert_equal error.message, "Unsafe attribute name detected: foo/bar."
+	end
+
+	test "unsafe attribute name with slash (Symbol)" do
+		error = assert_raises(Phlex::ArgumentError) do
+			phlex { div("foo/bar": true) }
+		end
+
+		assert_equal error.message, "Unsafe attribute name detected: foo/bar."
 	end
 
 	test "_, nil" do

@@ -4,7 +4,13 @@ module Phlex::SGML::Attributes
 	extend self
 
 	UNSAFE_ATTRIBUTES = Set.new(%w[srcdoc sandbox http-equiv]).freeze
-	REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping]).freeze
+	REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping xlinkhref]).freeze
+	NAMED_CHARACTER_REFERENCES = {
+		"colon" => ":",
+		"tab" => "\t",
+		"newline" => "\n",
+	}.freeze
+	UNSAFE_ATTRIBUTE_NAME_CHARS = %r([<>&"'/=\s\x00])
 
 	def generate_attributes(attributes, buffer = +"")
 		attributes.each do |k, v|
@@ -68,7 +74,9 @@ module Phlex::SGML::Attributes
 				if value != true && REF_ATTRIBUTES.include?(normalized_name)
 					case value
 					when String
-						if value.downcase.delete("^a-z:").start_with?("javascript:")
+						decoded_value = decode_html_character_references(value)
+
+						if decoded_value.downcase.delete("^a-z:").start_with?("javascript:")
 							# We just ignore these because they were likely not specified by the developer.
 							next
 						end
@@ -86,7 +94,7 @@ module Phlex::SGML::Attributes
 				end
 			end
 
-			if name.match?(/[<>&"']/)
+			if name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
 				raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
 			end
 
@@ -122,7 +130,7 @@ module Phlex::SGML::Attributes
 					else raise Phlex::ArgumentError.new("Attribute keys should be Strings or Symbols")
 				end
 
-				if name.match?(/[<>&"']/)
+				if name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
 					raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
 				end
 			end
@@ -158,6 +166,27 @@ module Phlex::SGML::Attributes
 
 			buffer
 		end
+	end
+
+	def decode_html_character_references(value)
+		value
+			.gsub(/&#x([0-9a-f]+);?/i) {
+				begin
+					[$1.to_i(16)].pack("U*")
+				rescue
+					""
+				end
+			}
+			.gsub(/&#(\d+);?/) {
+				begin
+					[$1.to_i].pack("U*")
+				rescue
+					""
+				end
+			}
+			.gsub(/&([a-z][a-z0-9]+);?/i) {
+				NAMED_CHARACTER_REFERENCES[$1.downcase] || ""
+			}
 	end
 
 	def generate_nested_tokens(tokens, sep = " ", gsub_from = nil, gsub_to	= "")
