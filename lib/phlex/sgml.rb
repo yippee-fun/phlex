@@ -3,7 +3,13 @@
 # **Standard Generalized Markup Language** for behaviour common to {HTML} and {SVG}.
 class Phlex::SGML
 	UNSAFE_ATTRIBUTES = Set.new(%w[srcdoc sandbox http-equiv]).freeze
-	REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping]).freeze
+	REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping xlinkhref]).freeze
+	NAMED_CHARACTER_REFERENCES = {
+		"colon" => ":",
+		"tab" => "\t",
+		"newline" => "\n",
+	}.freeze
+	UNSAFE_ATTRIBUTE_NAME_CHARS = %r([<>&"'/=\s\x00])
 
 	ERBCompiler = ERB::Compiler.new("<>").tap do |compiler|
 		compiler.pre_cmd    = [""]
@@ -520,7 +526,9 @@ class Phlex::SGML
 				if value != true && REF_ATTRIBUTES.include?(normalized_name)
 					case value
 					when String
-						if value.downcase.delete("^a-z:").start_with?("javascript:")
+						decoded_value = decode_html_character_references(value)
+
+						if decoded_value.downcase.delete("^a-z:").start_with?("javascript:")
 							# We just ignore these because they were likely not specified by the developer.
 							next
 						end
@@ -538,7 +546,7 @@ class Phlex::SGML
 				end
 			end
 
-			if name.match?(/[<>&"']/)
+			if name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
 				raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
 			end
 
@@ -574,7 +582,7 @@ class Phlex::SGML
 					else raise Phlex::ArgumentError.new("Attribute keys should be Strings or Symbols")
 				end
 
-				if name.match?(/[<>&"']/)
+				if name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
 					raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
 				end
 			end
@@ -653,6 +661,27 @@ class Phlex::SGML
 		end
 
 		buffer.gsub('"', "&quot;")
+	end
+
+	private def decode_html_character_references(value)
+		value
+			.gsub(/&#x([0-9a-f]+);?/i) {
+				begin
+					[$1.to_i(16)].pack("U*")
+				rescue
+					""
+				end
+			}
+			.gsub(/&#(\d+);?/) {
+				begin
+					[$1.to_i].pack("U*")
+				rescue
+					""
+				end
+			}
+			.gsub(/&([a-z][a-z0-9]+);?/i) {
+				NAMED_CHARACTER_REFERENCES[$1.downcase] || ""
+			}
 	end
 
 	# Result is **unsafe**, so it should be escaped!
