@@ -1,3 +1,6 @@
+[settings]
+idiomatic_version_file_enable_tools = ["ruby"]
+
 [tasks.setup]
 description = "Install all project dependencies."
 run = ["mise install", "bundle install --jobs 4"]
