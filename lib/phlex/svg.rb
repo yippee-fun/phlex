@@ -43,7 +43,7 @@ class Phlex::SVG < Phlex::SGML
 			raise Phlex::ArgumentError.new("Expected the tag name to be a Symbol.")
 		end
 
-		if (tag = StandardElements.__registered_elements__[name]) || (tag = name.name.tr("_", "-")).include?("-")
+		if (tag = StandardElements.__registered_elements__[name]) || ((tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z0-9-]+\z/))
 			if attributes.length > 0 # with attributes
 				if block_given # with content block
 					buffer << "<#{tag}" << (Phlex::ATTRIBUTE_CACHE[attributes] ||= __attributes__(attributes)) << ">"
