@@ -175,6 +175,71 @@ class OnClick < Phlex::HTML
 	end
 end
 
+class EncodedJavaScriptLinks < Phlex::HTML
+	def view_template
+		render Layout do
+			ignore_warnings { a(href: "javascript&#58;alert(1)") { "x" } }
+			ignore_warnings { a(href: "java&#x73;cript:alert(1)") { "x" } }
+			ignore_warnings { a(href: "javascript&#58alert(1)") { "x" } }
+			ignore_warnings { a(href: "java&#x73cript:alert(1)") { "x" } }
+			ignore_warnings { a(href: "javascript&colon;alert(1)") { "x" } }
+		end
+	end
+
+	def ignore_warnings
+		yield
+	rescue ArgumentError
+		# ignore
+	end
+end
+
+class InjectedAttributeNames < Phlex::HTML
+	def view_template
+		render Layout do
+			ignore_warnings { div("x onclick": "alert(1)") { "x" } }
+			ignore_warnings { div("x/onclick": "alert(1)") { "x" } }
+		end
+	end
+
+	def ignore_warnings
+		yield
+	rescue ArgumentError
+		# ignore
+	end
+end
+
+class UnsafeCustomTagNames < Phlex::HTML
+	def view_template
+		render Layout do
+			ignore_warnings { tag(:"x-widget onclick=alert(1)") { "x" } }
+		end
+	end
+
+	def ignore_warnings
+		yield
+	rescue ArgumentError
+		# ignore
+	end
+end
+
+class UnsafeSvgXlinkHref < Phlex::HTML
+	def view_template
+		render Layout do
+			svg do |s|
+				ignore_warnings { s.a("xlink:href": "javascript:alert(1)") { "x" } }
+				ignore_warnings { s.a("xlink:href": "javascript&colon;alert(1)") { "x" } }
+				ignore_warnings { s.a("xlink:href": "javascript&#58alert(1)") { "x" } }
+			end
+		end
+	end
+
+	def ignore_warnings
+		yield
+	rescue ArgumentError
+		# ignore
+	end
+end
+
 class Browser
 	MUTEX = { safari: Mutex.new, chrome: Mutex.new, firefox: Mutex.new }
 
@@ -262,5 +327,33 @@ Browser.open_each do |browser|
 
 	if browser.alert
 		raise "Failed with symbols"
+	end
+
+	browser.load_string(EncodedJavaScriptLinks.new.call)
+	browser.execute_script("document.querySelectorAll('a').forEach(function(a) { a.click(); });")
+	browser.each_alert do |alert|
+		unless alert.text == "Safari cannot open the page because the address is invalid."
+			raise "Failed with encoded javascript links"
+		end
+
+		alert.accept
+	end
+
+	browser.load_string(InjectedAttributeNames.new.call)
+	browser.execute_script("document.querySelectorAll('div').forEach(function(div) { div.click(); });")
+	browser.each_alert do
+		raise "Failed with injected attribute names"
+	end
+
+	browser.load_string(UnsafeCustomTagNames.new.call)
+	browser.execute_script("document.querySelectorAll('x-widget').forEach(function(node) { node.click(); });")
+	browser.each_alert do
+		raise "Failed with unsafe custom tag names"
+	end
+
+	browser.load_string(UnsafeSvgXlinkHref.new.call)
+	browser.execute_script("document.querySelectorAll('svg a').forEach(function(node) { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); });")
+	browser.each_alert do
+		raise "Failed with unsafe SVG xlink href"
 	end
 end
