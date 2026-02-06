@@ -157,6 +157,41 @@ describe Phlex::HTML do
 		end
 	end
 
+	with "naughty javascript link protocol with encoded characters" do
+		view do
+			def view_template
+				a(href: "java&#x73;cript:alert(1)") { "XSS" }
+				a(href: "javascript&#58;alert(1)") { "XSS" }
+				a(href: "java&#115;cript:alert(1)") { "XSS" }
+				a(href: "&#106;avascript:alert(1)") { "XSS" }
+				a(href: "javascript&#58alert(1)") { "XSS" }
+				a(href: "javascript&colon;alert(1)") { "XSS" }
+			end
+		end
+
+		it "strips the javascript protocol" do
+			expect(output.scan("<a>").size).to be == 6
+			expect(output.scan("href").size).to be == 0
+		end
+	end
+
+	with "naughty javascript link protocol in xlink:href" do
+		view do
+			def view_template
+				svg do |s|
+					s.a("xlink:href": "javascript:alert(1)") { "XSS" }
+					s.a("xlink:href": "javascript&colon;alert(1)") { "XSS" }
+					s.a("xlink:href": "javascript&#58alert(1)") { "XSS" }
+				end
+			end
+		end
+
+		it "strips the javascript protocol" do
+			expect(output.scan("<a>").size).to be == 3
+			expect(output.scan("xlink:href").size).to be == 0
+		end
+	end
+
 	Phlex::HTML::EVENT_ATTRIBUTES.each_key do |event_attribute|
 		with "with naughty #{event_attribute} attribute" do
 			naughty_attributes = { event_attribute => "alert(1);" }
@@ -174,7 +209,7 @@ describe Phlex::HTML do
 		end
 	end
 
-	%w[< > & " '].each do |naughty_character|
+	["<", ">", "&", "\"", "'", " ", "/", "="].each do |naughty_character|
 		with "naughty attribute name containing #{naughty_character}" do
 			naughty_attribute = "abc#{naughty_character}123"
 			naughty_attributes = { naughty_attribute => "alert(1);" }

@@ -4,6 +4,13 @@ module Phlex
 	# **Standard Generalized Markup Language** for behaviour common to {HTML} and {SVG}.
 	class SGML
 		include Helpers
+		REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping xlinkhref]).freeze
+		NAMED_CHARACTER_REFERENCES = {
+			"colon" => ":",
+			"tab" => "\t",
+			"newline" => "\n",
+		}.freeze
+		UNSAFE_ATTRIBUTE_NAME_CHARS = %r([<>&"'/=\s\x00])
 
 		class << self
 			# Render the view to a String. Arguments are delegated to {.new}.
@@ -421,6 +428,27 @@ module Phlex
 			buffer
 		end
 
+		def decode_html_character_references(value)
+			value
+				.gsub(/&#x([0-9a-f]+);?/i) {
+					begin
+						[$1.to_i(16)].pack("U*")
+					rescue
+						""
+					end
+				}
+				.gsub(/&#(\d+);?/) {
+					begin
+						[$1.to_i].pack("U*")
+					rescue
+						""
+					end
+				}
+				.gsub(/&([a-z][a-z0-9]+);?/i) {
+					NAMED_CHARACTER_REFERENCES[$1.downcase] || ""
+				}
+		end
+
 		# @api private
 		def __build_attributes__(attributes, buffer:)
 			attributes.each do |k, v|
@@ -433,10 +461,21 @@ module Phlex
 				end
 
 				lower_name = name.downcase
-				next if lower_name == "href" && v.to_s.downcase.tr("^a-z:",	"").start_with?("javascript:")
+				normalized_name = lower_name.delete("^a-z")
+
+				if REF_ATTRIBUTES.include?(normalized_name)
+					decoded_value = case v
+						when String then decode_html_character_references(v)
+						when Symbol then decode_html_character_references(v.name)
+					end
+
+					if decoded_value && decoded_value.downcase.tr("^a-z:", "").start_with?("javascript:")
+						next
+					end
+				end
 
 				# Detect unsafe attribute names. Attribute names are considered unsafe if they match an event attribute or include unsafe characters.
-				if HTML::EVENT_ATTRIBUTES.include?(lower_name.tr("^a-z-", "")) || name.match?(/[<>&"']/)
+				if HTML::EVENT_ATTRIBUTES.include?(lower_name.tr("^a-z-", "")) || name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
 					raise ArgumentError, "Unsafe attribute name detected: #{k}."
 				end
 

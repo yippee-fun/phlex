@@ -11,7 +11,8 @@ group :test do
 		gem "async"
 	end
 	gem "concurrent-ruby"
-	gem "selenium-webdriver"
+	gem "quickdraw", git: "https://github.com/joeldrapper/quickdraw.git", ref: "06615ef2554dabec4fbf6cf2848fb9493842fd05"
+	gem "selenium-webdriver", "< 4.40"
 end
 
 group :development do
