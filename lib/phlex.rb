@@ -15,6 +15,10 @@ module Phlex
 			"html" => "HTML",
 			"sgml" => "SGML",
 			"svg" => "SVG",
+			"tui" => "TUI",
+			"qr" => "QR",
+			"hstack" => "HStack",
+			"vstack" => "VStack"
 		)
 
 		loader.collapse("#{__dir__}/phlex/errors")
