@@ -1,9 +1,11 @@
 # frozen_string_literal: true
 
 class Phlex::TUI::Paragraph < Phlex::TUI::Node
-	def initialize(parent:, bold: nil, italic: nil, underline: nil, blink: nil, inverse: nil, strikethrough: nil)
+	def initialize(parent:, color: nil, bg: nil, bold: nil, italic: nil, underline: nil, blink: nil, inverse: nil, strikethrough: nil)
 		@parent = parent
 		@children = []
+		@color = (nil == color) ? @parent&.color : color
+		@bg = (nil == bg) ? @parent&.bg : bg
 		@bold = (nil == bold) ? @parent&.bold : bold
 		@italic = (nil == italic) ? @parent&.italic : italic
 		@underline = (nil == underline) ? @parent&.underline : underline
@@ -24,7 +26,7 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		)
 	end
 
-	attr_reader :children, :bold, :italic, :underline, :blink, :inverse, :strikethrough, :requested_width, :requested_height
+	attr_reader :children, :color, :bg, :bold, :italic, :underline, :blink, :inverse, :strikethrough, :requested_width, :requested_height
 
 	def fit_width(_renderer)
 		validate_structure!
@@ -129,6 +131,8 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 					col: render_col + offset + cursor,
 					text: run[:text],
 					font: run[:font],
+					color: run[:color],
+					bg: run[:bg],
 					bold: run[:bold],
 					italic: run[:italic],
 					underline: run[:underline],
@@ -227,16 +231,18 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 					:word
 				end
 
-				tokens << {
-					type:,
-					text: piece,
-					font: span.font,
-					bold: span.bold,
-					italic: span.italic,
-					underline: span.underline,
-					blink: span.blink,
-					inverse: span.inverse,
-					strikethrough: span.strikethrough,
+					tokens << {
+						type:,
+						text: piece,
+						font: span.font,
+						color: span.color,
+						bg: span.bg,
+						bold: span.bold,
+						italic: span.italic,
+						underline: span.underline,
+						blink: span.blink,
+						inverse: span.inverse,
+						strikethrough: span.strikethrough,
 				}
 			end
 		end
@@ -248,6 +254,8 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		{
 			text: token[:text],
 			font: token[:font],
+			color: token[:color],
+			bg: token[:bg],
 			bold: token[:bold],
 			italic: token[:italic],
 			underline: token[:underline],
@@ -270,6 +278,8 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 			clipped << {
 				text:,
 				font: run[:font],
+				color: run[:color],
+				bg: run[:bg],
 				bold: run[:bold],
 				italic: run[:italic],
 				underline: run[:underline],

@@ -233,31 +233,18 @@ class Phlex::TUI::Canvas
 	end
 
 	def to_s
-		lines.join("\n")
+		styled_lines.join("\n")
 	end
 
 	def lines
-		@cells.each_with_index.map do |line, row|
-			line.each_with_index.map do |cell, col|
-				codes = [
-					(1 if cell.bold),
-					(3 if cell.italic),
-					(4 if cell.underline),
-					(5 if cell.blink),
-					(7 if cell.inverse),
-					(9 if cell.strikethrough),
-					*(ansi_color(cell.color, foreground: true) if cell.color),
-					*(ansi_color(cell.bg, foreground: false) if cell.bg),
-				]
+		@cells.map { |row| row.map(&:character).join }
+	end
 
-				codes.compact!
+	def styled_lines
+		encoder = Phlex::TUI::AnsiEncoder.new
 
-				if codes.any?
-					"\e[#{codes.join(';')}m#{cell.character}\e[0m"
-				else
-					cell.character
-				end
-			end.join
+		@cells.map do |row|
+			encoder.encode_cells(row, reset: true)
 		end
 	end
 
@@ -545,8 +532,8 @@ class Phlex::TUI::Canvas
 
 			cell.line = nil
 			cell.character = char
-			cell.color = resolved_color.dup
-			cell.bg = resolved_bg.dup if resolved_bg
+			cell.color = resolved_color
+			cell.bg = resolved_bg if resolved_bg
 			cell.bold = bold if bold
 			cell.italic = italic if italic
 			cell.underline = underline if underline

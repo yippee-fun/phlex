@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
 class Phlex::TUI::Span < Phlex::TUI::Node
-	def initialize(content:, parent:, font: nil, bold: nil, italic: nil, underline: nil, blink: nil, inverse: nil, strikethrough: nil)
+	def initialize(content:, parent:, font: nil, color: nil, bg: nil, bold: nil, italic: nil, underline: nil, blink: nil, inverse: nil, strikethrough: nil)
 		@parent = parent
 		@content = content.to_s
 		@font = font
+		@color = (nil == color) ? @parent&.color : color
+		@bg = (nil == bg) ? @parent&.bg : bg
 		@bold = (nil == bold) ? @parent&.bold : bold
 		@italic = (nil == italic) ? @parent&.italic : italic
 		@underline = (nil == underline) ? @parent&.underline : underline
@@ -28,7 +30,7 @@ class Phlex::TUI::Span < Phlex::TUI::Node
 		)
 	end
 
-	attr_reader :content, :font, :bold, :italic, :underline, :blink, :inverse, :strikethrough, :requested_width, :requested_height
+	attr_reader :content, :font, :color, :bg, :bold, :italic, :underline, :blink, :inverse, :strikethrough, :requested_width, :requested_height
 
 	private
 

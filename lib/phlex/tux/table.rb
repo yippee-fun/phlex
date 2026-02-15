@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class Phlex::Tux::Table < Phlex::TUI
-	Column = Data.define(:header, :block)
+	Column = Data.define(:header, :block, :text_align)
 
 	def initialize(data)
 		@data = data
@@ -11,8 +11,8 @@ class Phlex::Tux::Table < Phlex::TUI
 	def view_template
 		yield(self)
 
-		table do
-			row(bold: true) do
+		table(width: :grow) do
+			row(bold: true, bg: :red) do
 				@columns.each do |column|
 					col(border: :rounded, padding: [0, 1]) do
 						column.header
@@ -23,7 +23,7 @@ class Phlex::Tux::Table < Phlex::TUI
 			@data.each do |row|
 				row do
 					@columns.each do |column|
-						col(border: :rounded, padding: [0, 1]) do
+						col(text_align: column.text_align, border: :rounded, padding: [0, 1]) do
 							column.block.call(row)
 						end
 					end
@@ -32,7 +32,7 @@ class Phlex::Tux::Table < Phlex::TUI
 		end
 	end
 
-	def column(header, &block)
-		@columns << Column.new(header:, block:)
+	def column(header, text_align: :left, &block)
+		@columns << Column.new(header:, block:, text_align:)
 	end
 end
