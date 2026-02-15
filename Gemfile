@@ -19,6 +19,8 @@ group :development do
 	gem "ruby-lsp"
 	gem "benchmark-ips"
 	gem "irb"
+	gem "markly"
+	gem "kramdown"
 end
 
 gem "refract", github: "yippee-fun/refract"

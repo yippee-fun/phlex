@@ -10,50 +10,39 @@ show_ruler = ARGV.delete("--ruler")
 [:red, 0.5]
 [123, 123, 123, 0.123]
 
+require "kramdown"
+
 class Demo < Phlex::TUI
 	def view_template
 		vstack(padding: [1, 2]) do
-			table(border: :rounded) do
-				row(border: { bottom: :thin }, bold: true) do
-					col { "Language" }
-					col { "Creator" }
-					col { "Year" }
-					col { "Typing" }
-				end
+			render Phlex::TUI::Markdown.new(<<~MD)
+				# Hello
 
-				row do
-					col { "Ruby" }
-					col { "Matz" }
-					col { "1995" }
-					col { "Dynamic" }
-				end
+				## Table
 
-				row do
-					col { "Rust" }
-					col { "Graydon Hoare" }
-					col { "2010" }
-					col { "Static" }
-				end
+				| Name   | Age | Role       |
+				|--------|-----|------------|
+				| Alice  | 30  | Engineer   |
+				| Bob    | 25  | Designer   |
+				| Charlie| 35  | Manager    |
 
-				row do
-					col { "Elixir" }
-					col { "Jose Valim" }
-					col { "2011" }
-					col { "Dynamic" }
-				end
+				## Bullet Lists
 
-				row do
-					col { "Go" }
-					col { "Rob Pike et al." }
-					col { "2009" }
-					col { "Static" }
-				end
-			end
+				Unordered list:
+
+				- First item
+				- Second item
+				  - Nested item A
+				  - Nested item B
+				- Third item
+
+				Ordered list:
+
+				1. Step one
+				2. Step two
+				3. Step three
+			MD
 		end
-	end
-
-	def col(**, &)
-		super(padding: [0, 1], **, &)
 	end
 end
 

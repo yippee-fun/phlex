@@ -90,6 +90,16 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	end
 
 	def grow_width(_renderer)
+		if direction == :vertical
+			target_width = [width - inset_horizontal, 0].max
+
+			each_flow_children do |child|
+				next unless child.requested_width == :grow
+
+				child.width = clamp(target_width, child.min_width, child.max_width)
+			end
+		end
+
 		remaining_width = available_internal_width
 		growables = []
 		each_flow_children do |child|

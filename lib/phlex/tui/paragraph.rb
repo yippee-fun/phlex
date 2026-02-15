@@ -33,10 +33,21 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		natural_width = content.lines.map(&:chomp).map(&:length).max || 0
 		longest_word = content.split(/\s+/).map(&:length).max || 0
 		natural_height = content.lines.size
+		available_parent_width = if parent
+			[parent.width - parent.inset_horizontal, 0].max
+		else
+			0
+		end
 
-		self.width = natural_width
+		effective_width = if parent && parent.text_align != :left
+			[natural_width, available_parent_width].max
+		else
+			natural_width
+		end
+
+		self.width = effective_width
 		self.min_width = [min_width, [longest_word, 5].min].max
-		self.max_width = [max_width, natural_width].max
+		self.max_width = [max_width, effective_width].max
 		self.height = natural_height
 		self.min_height = [min_height, natural_height].max
 	end

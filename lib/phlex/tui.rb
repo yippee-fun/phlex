@@ -1,13 +1,18 @@
 # frozen_string_literal: true
 
 class Phlex::TUI
-	def template
+	def view_template
 	end
 
-	def call(tree = Phlex::TUI::Tree.new)
+	def call(tree = Phlex::TUI::Tree.new, &)
 		@tree = tree
-		yield_content { view_template }
+		previous_phlex_tui_component = Thread.current[:__phlex_tui_component__]
+		Thread.current[:__phlex_tui_component__] = self
+
+		yield_content { view_template(&) }
 		tree
+	ensure
+		Thread.current[:__phlex_tui_component__] = previous_phlex_tui_component
 	end
 
 	def hstack(*, **, &)
@@ -22,6 +27,18 @@ class Phlex::TUI
 		box(height: :grow, width: :grow)
 	end
 
+	def hr(border:, width: :grow, padding: 0)
+		box(padding:, width:) do
+			box(border: { top: border }, width: :grow)
+		end
+	end
+
+	def vr(border:, height: :grow, padding: 0)
+		box(padding:, height:) do
+			box(border: { left: border }, height: :grow)
+		end
+	end
+
 	def box(*, **)
 		node = Phlex::TUI::Box.new(*, parent: @tree.current_parent, **)
 		@tree.attach(node)
@@ -30,6 +47,13 @@ class Phlex::TUI
 		nil
 	ensure
 		@tree.stack.pop
+	end
+
+	def render(component, &)
+		case component
+		in Phlex::TUI
+			component.call(@tree, &)
+		end
 	end
 
 	def popover(...)
