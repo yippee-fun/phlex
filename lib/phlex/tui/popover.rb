@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
 class Phlex::TUI::Popover < Phlex::TUI::Box
-	ANCHORS = [:viewport, :parent].freeze
+	ANCHORS = [:canvas, :parent].freeze
 	VERTICAL_SIDES = [:top, :middle, :bottom].freeze
 	HORIZONTAL_SIDES = [:left, :center, :right].freeze
 
-	def initialize(anchor: :viewport, top: nil, middle: nil, bottom: nil, left: nil, center: nil, right: nil, z: 0, **)
+	def initialize(anchor: :canvas, top: nil, middle: nil, bottom: nil, left: nil, center: nil, right: nil, z: 0, **)
 		super(**)
 		@base_max_width = max_width
 		@base_max_height = max_height
@@ -61,7 +61,7 @@ class Phlex::TUI::Popover < Phlex::TUI::Box
 	end
 
 	private def resolve_width!(renderer)
-		effective_max_width = viewport_limited_max_width(renderer)
+		effective_max_width = canvas_limited_max_width(renderer)
 		effective_min_width = [min_width, effective_max_width].min
 
 		if Integer === requested_width
@@ -82,7 +82,7 @@ class Phlex::TUI::Popover < Phlex::TUI::Box
 	end
 
 	private def resolve_height!(renderer)
-		effective_max_height = viewport_limited_max_height(renderer)
+		effective_max_height = canvas_limited_max_height(renderer)
 		effective_min_height = [min_height, effective_max_height].min
 
 		if Integer === requested_height
@@ -292,11 +292,11 @@ class Phlex::TUI::Popover < Phlex::TUI::Box
 		{ fallback => { anchor_side: fallback, offset: 0 } }
 	end
 
-	private def viewport_limited_max_width(renderer)
+	private def canvas_limited_max_width(renderer)
 		[@base_max_width, renderer.width].min
 	end
 
-	private def viewport_limited_max_height(renderer)
+	private def canvas_limited_max_height(renderer)
 		[@base_max_height, renderer.height].min
 	end
 end

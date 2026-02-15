@@ -5,13 +5,13 @@ class TUIRenderTest < Quickdraw::Test
 		def view_template
 			paragraph("AB")
 
-			popover(anchor: :viewport, right: 0, bottom: 0) do
+			popover(anchor: :canvas, right: 0, bottom: 0) do
 				paragraph("P")
 			end
 		end
 	end
 
-	test "fit canvas uses resolved viewport for viewport-anchored popovers" do
+	test "fit canvas uses resolved canvas for canvas-anchored popovers" do
 		tree = Example.new.call
 		renderer = Phlex::TUI::Render.new(tree, width: :fit, height: :fit)
 

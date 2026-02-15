@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class Phlex::TUI::Markdown < Phlex::TUI
+class Phlex::Tux::Markdown < Phlex::TUI
 	def initialize(content)
 		unless defined?(Kramdown::Document)
 			raise "Kramdown is not installed. Please run `bundle add kramdown` and require 'kramdown'."

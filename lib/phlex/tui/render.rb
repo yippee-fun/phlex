@@ -23,12 +23,12 @@ class Phlex::TUI::Render
 	end
 
 	def call
-		seed_root_viewport
+		seed_root_canvas
 		layout_tree
 		resolve_canvas_dimensions
 
 		if fit_canvas?
-			seed_root_viewport
+			seed_root_canvas
 			layout_tree
 			resolve_canvas_dimensions
 		end
@@ -38,7 +38,7 @@ class Phlex::TUI::Render
 		@canvas.to_s
 	end
 
-	private def seed_root_viewport
+	private def seed_root_canvas
 		@root.row = 0
 		@root.col = 0
 

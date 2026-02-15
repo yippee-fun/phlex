@@ -13,9 +13,34 @@ show_ruler = ARGV.delete("--ruler")
 require "kramdown"
 
 class Demo < Phlex::TUI
+	include Phlex::Tux
+
+	User = Data.define(:name, :age, :role)
+
+	def initialize
+		@users = [
+			User.new("Alice", 30, "Engineer"),
+			User.new("Bob", 25, "Designer"),
+			User.new("Charlie", 35, "Manager"),
+		]
+	end
+
 	def view_template
 		vstack(padding: [1, 2]) do
-			render Phlex::TUI::Markdown.new(<<~MD)
+			
+			
+			
+			
+			Table(@users) do |t|
+				t.column("Name", &:name)
+				t.column("Age", &:age)
+				t.column("Role", &:role)
+			end
+			
+			
+			
+
+			Markdown(<<~MD)
 				# Hello
 
 				## Table
