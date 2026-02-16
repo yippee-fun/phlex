@@ -22,23 +22,18 @@ class TUIColorAttributesTest < Quickdraw::Test
 		renderer = Phlex::TUI::Render.new(InlineColorExample.new.call, width: :fit, height: :fit)
 		renderer.call
 
-		cell = renderer.canvas.raw_cell(0, 0)
-
-		assert_equal cell.character, "A"
-		assert_equal cell.color, Phlex::TUI::Terminal.color(:red)
-		assert_equal cell.bg, Phlex::TUI::Terminal.color(:blue)
+		assert_equal renderer.canvas.cell_character(0, 0), "A"
+		assert_equal renderer.canvas.cell_color(0, 0), Phlex::TUI::Terminal.color(:red)
+		assert_equal renderer.canvas.cell_bg(0, 0), Phlex::TUI::Terminal.color(:blue)
 	end
 
 	test "span color inheritance follows parent, with explicit override" do
 		renderer = Phlex::TUI::Render.new(InheritedColorExample.new.call, width: :fit, height: :fit)
 		renderer.call
 
-		first = renderer.canvas.raw_cell(0, 0)
-		second = renderer.canvas.raw_cell(0, 1)
-
-		assert_equal first.character, "A"
-		assert_equal first.color, Phlex::TUI::Terminal.color(:yellow)
-		assert_equal second.character, "B"
-		assert_equal second.color, Phlex::TUI::Terminal.color(:cyan)
+		assert_equal renderer.canvas.cell_character(0, 0), "A"
+		assert_equal renderer.canvas.cell_color(0, 0), Phlex::TUI::Terminal.color(:yellow)
+		assert_equal renderer.canvas.cell_character(0, 1), "B"
+		assert_equal renderer.canvas.cell_color(0, 1), Phlex::TUI::Terminal.color(:cyan)
 	end
 end

@@ -51,6 +51,39 @@ class Phlex::TUI::AnsiEncoder
 		buffer
 	end
 
+	def encode_packed_row(row, width:, state: default_state, reset: false)
+		buffer = +""
+		flags, color, bg = unpack_state(state)
+		col = 0
+		base = 0
+
+		while col < width
+			next_flags = row[base + Phlex::TUI::Canvas::CELL_FLAGS_OFFSET] || 0
+			next_color = row[base + Phlex::TUI::Canvas::CELL_COLOR_OFFSET]
+			next_bg = row[base + Phlex::TUI::Canvas::CELL_BG_OFFSET]
+
+			if flags != next_flags || color != next_color || bg != next_bg
+				append_sgr(
+					buffer,
+					flags:, next_flags:,
+					color:, next_color:,
+					bg:, next_bg:
+				)
+
+				flags = next_flags
+				color = next_color
+				bg = next_bg
+			end
+
+			buffer << (row[base + Phlex::TUI::Canvas::CELL_CHARACTER_OFFSET] || " ")
+			col += 1
+			base += Phlex::TUI::Canvas::CELL_STRIDE
+		end
+
+		buffer << RESET if reset && (flags != 0 || color || bg)
+		buffer
+	end
+
 	def default_state
 		State.new(
 			bold: false,
@@ -76,28 +109,28 @@ class Phlex::TUI::AnsiEncoder
 		buffer << SGR_PREFIX
 		first = true
 
-		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::BOLD)
-			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::BOLD) ? 1 : 22)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Canvas::BOLD)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Canvas::BOLD) ? 1 : 22)
 		end
 
-		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::ITALIC)
-			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::ITALIC) ? 3 : 23)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Canvas::ITALIC)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Canvas::ITALIC) ? 3 : 23)
 		end
 
-		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::UNDERLINE)
-			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::UNDERLINE) ? 4 : 24)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Canvas::UNDERLINE)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Canvas::UNDERLINE) ? 4 : 24)
 		end
 
-		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::BLINK)
-			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::BLINK) ? 5 : 25)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Canvas::BLINK)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Canvas::BLINK) ? 5 : 25)
 		end
 
-		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::INVERSE)
-			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::INVERSE) ? 7 : 27)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Canvas::INVERSE)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Canvas::INVERSE) ? 7 : 27)
 		end
 
-		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::STRIKETHROUGH)
-			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::STRIKETHROUGH) ? 9 : 29)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Canvas::STRIKETHROUGH)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Canvas::STRIKETHROUGH) ? 9 : 29)
 		end
 
 		if color != next_color
@@ -121,12 +154,12 @@ class Phlex::TUI::AnsiEncoder
 
 	private def flags_from_state(state)
 		flags = 0
-		flags |= Phlex::TUI::Cell::BOLD if state.bold
-		flags |= Phlex::TUI::Cell::ITALIC if state.italic
-		flags |= Phlex::TUI::Cell::UNDERLINE if state.underline
-		flags |= Phlex::TUI::Cell::BLINK if state.blink
-		flags |= Phlex::TUI::Cell::INVERSE if state.inverse
-		flags |= Phlex::TUI::Cell::STRIKETHROUGH if state.strikethrough
+		flags |= Phlex::TUI::Canvas::BOLD if state.bold
+		flags |= Phlex::TUI::Canvas::ITALIC if state.italic
+		flags |= Phlex::TUI::Canvas::UNDERLINE if state.underline
+		flags |= Phlex::TUI::Canvas::BLINK if state.blink
+		flags |= Phlex::TUI::Canvas::INVERSE if state.inverse
+		flags |= Phlex::TUI::Canvas::STRIKETHROUGH if state.strikethrough
 		flags
 	end
 

@@ -136,15 +136,11 @@ class TUIEmbedTest < Quickdraw::Test
 		renderer = Phlex::TUI::Render.new(AnsiEmbedExample.new.call, width: :fit, height: :fit)
 		renderer.call
 
-		first = renderer.canvas.raw_cell(0, 0)
-		second = renderer.canvas.raw_cell(0, 1)
-		third = renderer.canvas.raw_cell(0, 2)
-
-		assert_equal "A", first.character
-		assert_equal Phlex::TUI::Terminal.color(:red), first.color
-		assert_equal "B", second.character
-		assert_equal Phlex::TUI::Terminal.color(:foreground), second.color
-		assert_equal " ", third.character
+		assert_equal "A", renderer.canvas.cell_character(0, 0)
+		assert_equal Phlex::TUI::Terminal.color(:red), renderer.canvas.cell_color(0, 0)
+		assert_equal "B", renderer.canvas.cell_character(0, 1)
+		assert_equal Phlex::TUI::Terminal.color(:foreground), renderer.canvas.cell_color(0, 1)
+		assert_equal " ", renderer.canvas.cell_character(0, 2)
 	end
 
 	test "embed allows blocks that accept only width" do

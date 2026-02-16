@@ -1,6 +1,20 @@
 # frozen_string_literal: true
 
 class Phlex::TUI::Canvas
+	CELL_STRIDE = 5
+	CELL_CHARACTER_OFFSET = 0
+	CELL_LINE_OFFSET = 1
+	CELL_FLAGS_OFFSET = 2
+	CELL_COLOR_OFFSET = 3
+	CELL_BG_OFFSET = 4
+
+	BOLD = Phlex::TUI::Cell::BOLD
+	ITALIC = Phlex::TUI::Cell::ITALIC
+	UNDERLINE = Phlex::TUI::Cell::UNDERLINE
+	BLINK = Phlex::TUI::Cell::BLINK
+	INVERSE = Phlex::TUI::Cell::INVERSE
+	STRIKETHROUGH = Phlex::TUI::Cell::STRIKETHROUGH
+
 	LINE_STYLE = {
 		:thin => 1,
 		:thick => 2,
@@ -131,11 +145,18 @@ class Phlex::TUI::Canvas
 		@clip_stack = [{ top: 0, left: 0, bottom: height, right: width }]
 
 		@cells = Array.new(height) {
-			Array.new(width) {
-				Phlex::TUI::Cell.new(
-					character: fill,
-				)
-			}
+			row = Array.new(width * CELL_STRIDE)
+			col = 0
+			base = 0
+
+			while col < width
+				row[base + CELL_CHARACTER_OFFSET] = fill
+				row[base + CELL_FLAGS_OFFSET] = 0
+				col += 1
+				base += CELL_STRIDE
+			end
+
+			row
 		}
 	end
 
@@ -237,14 +258,26 @@ class Phlex::TUI::Canvas
 	end
 
 	def lines
-		@cells.map { |row| row.map(&:character).join }
+		@cells.map do |row|
+			line = +""
+			col = 0
+			base = 0
+
+			while col < @width
+				line << (row[base + CELL_CHARACTER_OFFSET] || " ")
+				col += 1
+				base += CELL_STRIDE
+			end
+
+			line
+		end
 	end
 
 	def styled_lines
 		encoder = Phlex::TUI::AnsiEncoder.new
 
 		@cells.map do |row|
-			encoder.encode_cells(row, reset: true)
+			encoder.encode_packed_row(row, width: @width, reset: true)
 		end
 	end
 
@@ -296,19 +329,30 @@ class Phlex::TUI::Canvas
 
 	def paint_box_fill(row, col, width:, height:, bg:)
 		fill_alpha = normalize_color(bg).last
-		row_index = row
-		row_stop = row + height
+		clip = current_clip
+		row_index = [row, clip[:top], 0].max
+		row_stop = [row + height, clip[:bottom], @height].min
+		col_start = [col, clip[:left], 0].max
+		col_stop = [col + width, clip[:right], @width].min
+		default_bg = terminal_color(:background)
+		default_color = terminal_color(:foreground)
+
+		return if row_index >= row_stop || col_start >= col_stop
 
 		while row_index < row_stop
-			col_index = col
-			col_stop = col + width
+			row_data = @cells[row_index]
+			col_index = col_start
+			base = col_start * CELL_STRIDE
 
 			while col_index < col_stop
-				cell = cell(row_index, col_index)
-				cell.character = " " if fill_alpha == 1
-				cell.bg = blend(cell.bg || terminal_color(:background), bg)
-				cell.color = blend(cell.color || terminal_color(:foreground), bg) if cell.character != " "
+				row_data[base + CELL_CHARACTER_OFFSET] = " " if fill_alpha == 1
+				row_data[base + CELL_BG_OFFSET] = blend(row_data[base + CELL_BG_OFFSET] || default_bg, bg)
+				if row_data[base + CELL_CHARACTER_OFFSET] != " "
+					row_data[base + CELL_COLOR_OFFSET] = blend(row_data[base + CELL_COLOR_OFFSET] || default_color, bg)
+				end
+
 				col_index += 1
+				base += CELL_STRIDE
 			end
 
 			row_index += 1
@@ -400,50 +444,57 @@ class Phlex::TUI::Canvas
 	def paint_line_cell(row, col, line, color: nil)
 		t, r, b, l = line
 
-		if t > 0 && (up = raw_cell(row - 1, col)&.line)
+		if t > 0 && (up = raw_cell_line(row - 1, col))
 			new_up = merge_lines(up, [0, 0, t, 0])
 			set_line_cell(row - 1, col, new_up, color:, clipped: false) if new_up != up
 
 			line = merge_lines(line, [up[2], 0, 0, 0])
 		end
 
-		if r > 0 && (right = raw_cell(row, col + 1)&.line)
+		if r > 0 && (right = raw_cell_line(row, col + 1))
 			new_right = merge_lines(right, [0, 0, 0, r])
 			set_line_cell(row, col + 1, new_right, color:, clipped: false) if new_right != right
 
 			line = merge_lines(line, [0, right[3], 0, 0])
 		end
 
-		if b > 0 && (down = raw_cell(row + 1, col)&.line)
+		if b > 0 && (down = raw_cell_line(row + 1, col))
 			new_down = merge_lines(down, [b, 0, 0, 0])
 			set_line_cell(row + 1, col, new_down, color:, clipped: false) if new_down != down
 
 			line = merge_lines(line, [0, 0, down[0], 0])
 		end
 
-		if l > 0 && (left = raw_cell(row, col - 1)&.line)
+		if l > 0 && (left = raw_cell_line(row, col - 1))
 			new_left = merge_lines(left, [0, l, 0, 0])
 			set_line_cell(row, col - 1, new_left, color:, clipped: false) if new_left != left
 
 			line = merge_lines(line, [0, 0, 0, left[1]])
 		end
 
-		cell = cell(row, col)
-		line = merge_lines(cell.line, line) if cell&.line
+		existing = cell_line(row, col)
+		line = merge_lines(existing, line) if existing
 
 		set_line_cell(row, col, line, color:)
 	end
 
 	def set_line_cell(row, col, line, color: nil, clipped: true)
-		cell = clipped ? cell(row, col) : raw_cell(row, col)
-		return unless cell
+		return unless in_bounds?(row, col)
+		if clipped
+			clip = current_clip
+			return unless row >= clip[:top] && row < clip[:bottom]
+			return unless col >= clip[:left] && col < clip[:right]
+		end
 
 		character = LINE_CHARACTER[line]
 		return unless character
 
-		cell.line = line
-		cell.character = character
-		cell.color = resolve_rgb(color) if color
+		base = cell_base(col)
+		row_data = @cells[row]
+
+		row_data[base + CELL_LINE_OFFSET] = line
+		row_data[base + CELL_CHARACTER_OFFSET] = character
+		row_data[base + CELL_COLOR_OFFSET] = resolve_rgb(color) if color
 	end
 
 	def line_style(style)
@@ -488,16 +539,96 @@ class Phlex::TUI::Canvas
 		LINE_CHARACTER[merged] ? merged : a
 	end
 
-	def cell(row, col)
-		clip = current_clip
-		return unless row >= clip[:top] && row < clip[:bottom]
-		return unless col >= clip[:left] && col < clip[:right]
-
-		raw_cell(row, col)
+	def raw_row(row)
+		@cells[row]
 	end
 
-	def raw_cell(row, col)
-		@cells[row]&.[](col)
+	def cell_character(row, col)
+		read_cell_slot(row, col, CELL_CHARACTER_OFFSET)
+	end
+
+	def set_cell_character(row, col, character)
+		write_cell_slot(row, col, CELL_CHARACTER_OFFSET, character)
+	end
+
+	def cell_line(row, col)
+		read_cell_slot(row, col, CELL_LINE_OFFSET)
+	end
+
+	def set_cell_line(row, col, line)
+		write_cell_slot(row, col, CELL_LINE_OFFSET, line)
+	end
+
+	def cell_flags(row, col)
+		read_cell_slot(row, col, CELL_FLAGS_OFFSET)
+	end
+
+	def set_cell_flags(row, col, flags)
+		write_cell_slot(row, col, CELL_FLAGS_OFFSET, flags)
+	end
+
+	def get_cell_bold(row, col)
+		get_cell_flag(row, col, BOLD)
+	end
+
+	def set_cell_bold(row, col, value)
+		set_cell_flag(row, col, BOLD, value)
+	end
+
+	def get_cell_italic(row, col)
+		get_cell_flag(row, col, ITALIC)
+	end
+
+	def set_cell_italic(row, col, value)
+		set_cell_flag(row, col, ITALIC, value)
+	end
+
+	def get_cell_underline(row, col)
+		get_cell_flag(row, col, UNDERLINE)
+	end
+
+	def set_cell_underline(row, col, value)
+		set_cell_flag(row, col, UNDERLINE, value)
+	end
+
+	def get_cell_blink(row, col)
+		get_cell_flag(row, col, BLINK)
+	end
+
+	def set_cell_blink(row, col, value)
+		set_cell_flag(row, col, BLINK, value)
+	end
+
+	def get_cell_inverse(row, col)
+		get_cell_flag(row, col, INVERSE)
+	end
+
+	def set_cell_inverse(row, col, value)
+		set_cell_flag(row, col, INVERSE, value)
+	end
+
+	def get_cell_strikethrough(row, col)
+		get_cell_flag(row, col, STRIKETHROUGH)
+	end
+
+	def set_cell_strikethrough(row, col, value)
+		set_cell_flag(row, col, STRIKETHROUGH, value)
+	end
+
+	def cell_color(row, col)
+		read_cell_slot(row, col, CELL_COLOR_OFFSET)
+	end
+
+	def set_cell_color(row, col, color)
+		write_cell_slot(row, col, CELL_COLOR_OFFSET, color)
+	end
+
+	def cell_bg(row, col)
+		read_cell_slot(row, col, CELL_BG_OFFSET)
+	end
+
+	def set_cell_bg(row, col, bg)
+		write_cell_slot(row, col, CELL_BG_OFFSET, bg)
 	end
 
 	private def current_clip
@@ -523,25 +654,84 @@ class Phlex::TUI::Canvas
 			text = text.gsub(/[A-Za-z0-9]/, font)
 		end
 
+		return unless row >= 0 && row < @height
+		clip = current_clip
+		return unless row >= clip[:top] && row < clip[:bottom]
+
 		resolved_color = resolve_rgb(color || :foreground)
 		resolved_bg = bg ? resolve_rgb(bg) : nil
+		flag_mask = 0
+		flag_mask |= BOLD if bold
+		flag_mask |= ITALIC if italic
+		flag_mask |= UNDERLINE if underline
+		flag_mask |= BLINK if blink
+		flag_mask |= INVERSE if inverse
+		flag_mask |= STRIKETHROUGH if strikethrough
+		row_data = @cells[row]
 
-		text.each_char.with_index do |char, index|
-			cell = cell(row, col + index)
-			next unless cell
+		col_index = col
+		left = [clip[:left], 0].max
+		right = [clip[:right], @width].min
 
-			cell.line = nil
-			cell.character = char
-			cell.color = resolved_color
-			cell.bg = resolved_bg if resolved_bg
-			flags = cell.flags || 0
-			flags |= Phlex::TUI::Cell::BOLD if bold
-			flags |= Phlex::TUI::Cell::ITALIC if italic
-			flags |= Phlex::TUI::Cell::UNDERLINE if underline
-			flags |= Phlex::TUI::Cell::BLINK if blink
-			flags |= Phlex::TUI::Cell::INVERSE if inverse
-			flags |= Phlex::TUI::Cell::STRIKETHROUGH if strikethrough
-			cell.flags = flags
+		text.each_char do |char|
+			if col_index >= left && col_index < right
+				base = cell_base(col_index)
+				row_data[base + CELL_LINE_OFFSET] = nil
+				row_data[base + CELL_CHARACTER_OFFSET] = char
+				row_data[base + CELL_COLOR_OFFSET] = resolved_color
+				row_data[base + CELL_BG_OFFSET] = resolved_bg if resolved_bg
+				if flag_mask != 0
+					flags = row_data[base + CELL_FLAGS_OFFSET] || 0
+					row_data[base + CELL_FLAGS_OFFSET] = flags | flag_mask
+				end
+			end
+
+			col_index += 1
+		end
+	end
+
+	private def in_bounds?(row, col)
+		row >= 0 && row < @height && col >= 0 && col < @width
+	end
+
+	private def cell_base(col)
+		col * CELL_STRIDE
+	end
+
+	private def raw_cell_line(row, col)
+		return unless in_bounds?(row, col)
+
+		@cells[row][cell_base(col) + CELL_LINE_OFFSET]
+	end
+
+	private def read_cell_slot(row, col, offset)
+		return unless in_bounds?(row, col)
+
+		@cells[row][cell_base(col) + offset]
+	end
+
+	private def write_cell_slot(row, col, offset, value)
+		return unless in_bounds?(row, col)
+
+		@cells[row][cell_base(col) + offset] = value
+	end
+
+	private def get_cell_flag(row, col, mask)
+		flags = cell_flags(row, col) || 0
+		(flags & mask) != 0
+	end
+
+	private def set_cell_flag(row, col, mask, value)
+		return unless in_bounds?(row, col)
+
+		base = cell_base(col)
+		row_data = @cells[row]
+		flags = row_data[base + CELL_FLAGS_OFFSET] || 0
+
+		if value
+			row_data[base + CELL_FLAGS_OFFSET] = flags | mask
+		else
+			row_data[base + CELL_FLAGS_OFFSET] = flags & ~mask
 		end
 	end
 end
