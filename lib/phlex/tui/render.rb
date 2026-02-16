@@ -23,6 +23,11 @@ class Phlex::TUI::Render
 	end
 
 	def call
+		render_canvas
+		@canvas.to_s
+	end
+
+	def render_canvas
 		seed_root_canvas
 		layout_tree
 		resolve_canvas_dimensions
@@ -34,8 +39,7 @@ class Phlex::TUI::Render
 		end
 
 		draw_tree
-
-		@canvas.to_s
+		@canvas
 	end
 
 	private def seed_root_canvas

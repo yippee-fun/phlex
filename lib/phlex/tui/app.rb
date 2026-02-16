@@ -79,8 +79,7 @@ class Phlex::TUI::App < Phlex::TUI
 	private def render_lines(width:, height:)
 		tree = call(Phlex::TUI::Tree.new)
 		renderer = Phlex::TUI::Render.new(tree, width:, height:)
-		renderer.call
-		renderer.canvas.styled_lines
+		renderer.render_canvas.styled_lines
 	end
 
 	private def terminal_size
