@@ -24,37 +24,22 @@ class Phlex::TUI::AnsiEncoder
 	def encode_cells(cells, state: default_state, reset: false)
 		buffer = +""
 
-		bold, italic, underline, blink, inverse, strikethrough, color, bg = unpack_state(state)
+		flags, color, bg = unpack_state(state)
 
 		cells.each do |cell|
-			next_bold = !!cell.bold
-			next_italic = !!cell.italic
-			next_underline = !!cell.underline
-			next_blink = !!cell.blink
-			next_inverse = !!cell.inverse
-			next_strikethrough = !!cell.strikethrough
+			next_flags = cell.flags || 0
 			next_color = cell.color
 			next_bg = cell.bg
 
-			if bold != next_bold || italic != next_italic || underline != next_underline || blink != next_blink || inverse != next_inverse || strikethrough != next_strikethrough || color != next_color || bg != next_bg
+			if flags != next_flags || color != next_color || bg != next_bg
 				append_sgr(
 					buffer,
-					bold:, next_bold:,
-					italic:, next_italic:,
-					underline:, next_underline:,
-					blink:, next_blink:,
-					inverse:, next_inverse:,
-					strikethrough:, next_strikethrough:,
+					flags:, next_flags:,
 					color:, next_color:,
 					bg:, next_bg:
 				)
 
-				bold = next_bold
-				italic = next_italic
-				underline = next_underline
-				blink = next_blink
-				inverse = next_inverse
-				strikethrough = next_strikethrough
+				flags = next_flags
 				color = next_color
 				bg = next_bg
 			end
@@ -62,7 +47,7 @@ class Phlex::TUI::AnsiEncoder
 			buffer << cell.character
 		end
 
-		buffer << RESET if reset && (bold || italic || underline || blink || inverse || strikethrough || color || bg)
+		buffer << RESET if reset && (flags != 0 || color || bg)
 		buffer
 	end
 
@@ -81,47 +66,38 @@ class Phlex::TUI::AnsiEncoder
 
 	private def unpack_state(state)
 		if State === state
-			[
-				!!state.bold,
-				!!state.italic,
-				!!state.underline,
-				!!state.blink,
-				!!state.inverse,
-				!!state.strikethrough,
-				state.color,
-				state.bg,
-			]
+			[flags_from_state(state), state.color, state.bg]
 		else
-			[false, false, false, false, false, false, nil, nil]
+			[0, nil, nil]
 		end
 	end
 
-	private def append_sgr(buffer, bold:, next_bold:, italic:, next_italic:, underline:, next_underline:, blink:, next_blink:, inverse:, next_inverse:, strikethrough:, next_strikethrough:, color:, next_color:, bg:, next_bg:)
+	private def append_sgr(buffer, flags:, next_flags:, color:, next_color:, bg:, next_bg:)
 		buffer << SGR_PREFIX
 		first = true
 
-		if bold != next_bold
-			first = append_sgr_integer(buffer, first, next_bold ? 1 : 22)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::BOLD)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::BOLD) ? 1 : 22)
 		end
 
-		if italic != next_italic
-			first = append_sgr_integer(buffer, first, next_italic ? 3 : 23)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::ITALIC)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::ITALIC) ? 3 : 23)
 		end
 
-		if underline != next_underline
-			first = append_sgr_integer(buffer, first, next_underline ? 4 : 24)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::UNDERLINE)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::UNDERLINE) ? 4 : 24)
 		end
 
-		if blink != next_blink
-			first = append_sgr_integer(buffer, first, next_blink ? 5 : 25)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::BLINK)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::BLINK) ? 5 : 25)
 		end
 
-		if inverse != next_inverse
-			first = append_sgr_integer(buffer, first, next_inverse ? 7 : 27)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::INVERSE)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::INVERSE) ? 7 : 27)
 		end
 
-		if strikethrough != next_strikethrough
-			first = append_sgr_integer(buffer, first, next_strikethrough ? 9 : 29)
+		if flag_changed?(flags, next_flags, Phlex::TUI::Cell::STRIKETHROUGH)
+			first = append_sgr_integer(buffer, first, flag_set?(next_flags, Phlex::TUI::Cell::STRIKETHROUGH) ? 9 : 29)
 		end
 
 		if color != next_color
@@ -141,6 +117,25 @@ class Phlex::TUI::AnsiEncoder
 		end
 
 		buffer << SGR_SUFFIX
+	end
+
+	private def flags_from_state(state)
+		flags = 0
+		flags |= Phlex::TUI::Cell::BOLD if state.bold
+		flags |= Phlex::TUI::Cell::ITALIC if state.italic
+		flags |= Phlex::TUI::Cell::UNDERLINE if state.underline
+		flags |= Phlex::TUI::Cell::BLINK if state.blink
+		flags |= Phlex::TUI::Cell::INVERSE if state.inverse
+		flags |= Phlex::TUI::Cell::STRIKETHROUGH if state.strikethrough
+		flags
+	end
+
+	private def flag_set?(flags, mask)
+		(flags & mask) != 0
+	end
+
+	private def flag_changed?(flags, next_flags, mask)
+		((flags ^ next_flags) & mask) != 0
 	end
 
 	private def append_sgr_color(buffer, first, color, foreground:)

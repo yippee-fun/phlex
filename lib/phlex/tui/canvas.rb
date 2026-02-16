@@ -534,12 +534,14 @@ class Phlex::TUI::Canvas
 			cell.character = char
 			cell.color = resolved_color
 			cell.bg = resolved_bg if resolved_bg
-			cell.bold = bold if bold
-			cell.italic = italic if italic
-			cell.underline = underline if underline
-			cell.blink = blink if blink
-			cell.inverse = inverse if inverse
-			cell.strikethrough = strikethrough if strikethrough
+			flags = cell.flags || 0
+			flags |= Phlex::TUI::Cell::BOLD if bold
+			flags |= Phlex::TUI::Cell::ITALIC if italic
+			flags |= Phlex::TUI::Cell::UNDERLINE if underline
+			flags |= Phlex::TUI::Cell::BLINK if blink
+			flags |= Phlex::TUI::Cell::INVERSE if inverse
+			flags |= Phlex::TUI::Cell::STRIKETHROUGH if strikethrough
+			cell.flags = flags
 		end
 	end
 end
