@@ -169,6 +169,16 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	end
 
 	def grow_height(_renderer)
+		if direction == :horizontal
+			target_height = [height - inset_vertical, 0].max
+
+			each_flow_children do |child|
+				next unless child.requested_height == :grow
+
+				child.height = clamp(target_height, child.min_height, child.max_height)
+			end
+		end
+
 		remaining_height = available_internal_height
 		growables = []
 		each_flow_children do |child|
