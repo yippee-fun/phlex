@@ -93,6 +93,12 @@ class Phlex::TUI
 		nil
 	end
 
+	def embed(*, **, &)
+		node = Phlex::TUI::Embed.new(*, parent: @tree.current_parent, **, &)
+		@tree.attach(node)
+		nil
+	end
+
 	private def yield_content
 		return unless block_given?
 
