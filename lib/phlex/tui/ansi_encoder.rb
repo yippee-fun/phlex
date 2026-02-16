@@ -2,6 +2,9 @@
 
 class Phlex::TUI::AnsiEncoder
 	RESET = "\e[0m"
+	SGR_SEPARATOR = ";"
+	SGR_PREFIX = "\e["
+	SGR_SUFFIX = "m"
 
 	State = Data.define(
 		:bold,
@@ -20,8 +23,46 @@ class Phlex::TUI::AnsiEncoder
 
 	def encode_cells(cells, state: default_state, reset: false)
 		buffer = +""
-		state = render_cells(cells, buffer, state)
-		buffer << RESET if reset && state != default_state
+
+		bold, italic, underline, blink, inverse, strikethrough, color, bg = unpack_state(state)
+
+		cells.each do |cell|
+			next_bold = !!cell.bold
+			next_italic = !!cell.italic
+			next_underline = !!cell.underline
+			next_blink = !!cell.blink
+			next_inverse = !!cell.inverse
+			next_strikethrough = !!cell.strikethrough
+			next_color = cell.color
+			next_bg = cell.bg
+
+			if bold != next_bold || italic != next_italic || underline != next_underline || blink != next_blink || inverse != next_inverse || strikethrough != next_strikethrough || color != next_color || bg != next_bg
+				append_sgr(
+					buffer,
+					bold:, next_bold:,
+					italic:, next_italic:,
+					underline:, next_underline:,
+					blink:, next_blink:,
+					inverse:, next_inverse:,
+					strikethrough:, next_strikethrough:,
+					color:, next_color:,
+					bg:, next_bg:
+				)
+
+				bold = next_bold
+				italic = next_italic
+				underline = next_underline
+				blink = next_blink
+				inverse = next_inverse
+				strikethrough = next_strikethrough
+				color = next_color
+				bg = next_bg
+			end
+
+			buffer << cell.character
+		end
+
+		buffer << RESET if reset && (bold || italic || underline || blink || inverse || strikethrough || color || bg)
 		buffer
 	end
 
@@ -38,88 +79,91 @@ class Phlex::TUI::AnsiEncoder
 		)
 	end
 
-	private def next_state(cell)
-		State.new(
-			bold: !!cell.bold,
-			italic: !!cell.italic,
-			underline: !!cell.underline,
-			blink: !!cell.blink,
-			inverse: !!cell.inverse,
-			strikethrough: !!cell.strikethrough,
-			color: cell.color,
-			bg: cell.bg,
-		)
+	private def unpack_state(state)
+		if State === state
+			[
+				!!state.bold,
+				!!state.italic,
+				!!state.underline,
+				!!state.blink,
+				!!state.inverse,
+				!!state.strikethrough,
+				state.color,
+				state.bg,
+			]
+		else
+			[false, false, false, false, false, false, nil, nil]
+		end
 	end
 
-	private def sgr_codes(previous, cell)
-		next_style = next_state(cell)
-		return [] if previous == next_style
+	private def append_sgr(buffer, bold:, next_bold:, italic:, next_italic:, underline:, next_underline:, blink:, next_blink:, inverse:, next_inverse:, strikethrough:, next_strikethrough:, color:, next_color:, bg:, next_bg:)
+		buffer << SGR_PREFIX
+		first = true
 
-		codes = []
-
-		if previous.bold != next_style.bold
-			codes << (next_style.bold ? 1 : 22)
+		if bold != next_bold
+			first = append_sgr_integer(buffer, first, next_bold ? 1 : 22)
 		end
 
-		if previous.italic != next_style.italic
-			codes << (next_style.italic ? 3 : 23)
+		if italic != next_italic
+			first = append_sgr_integer(buffer, first, next_italic ? 3 : 23)
 		end
 
-		if previous.underline != next_style.underline
-			codes << (next_style.underline ? 4 : 24)
+		if underline != next_underline
+			first = append_sgr_integer(buffer, first, next_underline ? 4 : 24)
 		end
 
-		if previous.blink != next_style.blink
-			codes << (next_style.blink ? 5 : 25)
+		if blink != next_blink
+			first = append_sgr_integer(buffer, first, next_blink ? 5 : 25)
 		end
 
-		if previous.inverse != next_style.inverse
-			codes << (next_style.inverse ? 7 : 27)
+		if inverse != next_inverse
+			first = append_sgr_integer(buffer, first, next_inverse ? 7 : 27)
 		end
 
-		if previous.strikethrough != next_style.strikethrough
-			codes << (next_style.strikethrough ? 9 : 29)
+		if strikethrough != next_strikethrough
+			first = append_sgr_integer(buffer, first, next_strikethrough ? 9 : 29)
 		end
 
-		if previous.color != next_style.color
-			if next_style.color
-				codes.concat(ansi_color(next_style.color, foreground: true))
+		if color != next_color
+			if next_color
+				first = append_sgr_color(buffer, first, next_color, foreground: true)
 			else
-				codes << 39
+				first = append_sgr_integer(buffer, first, 39)
 			end
 		end
 
-		if previous.bg != next_style.bg
-			if next_style.bg
-				codes.concat(ansi_color(next_style.bg, foreground: false))
+		if bg != next_bg
+			if next_bg
+				first = append_sgr_color(buffer, first, next_bg, foreground: false)
 			else
-				codes << 49
+				first = append_sgr_integer(buffer, first, 49)
 			end
 		end
 
-		codes
+		buffer << SGR_SUFFIX
 	end
 
-	private def render_cells(cells, buffer, state)
-		cells.each do |cell|
-			codes = sgr_codes(state, cell)
-			buffer << "\e[#{codes.join(';')}m" if codes.any?
-			buffer << cell.character
-			state = next_state(cell)
-		end
-
-		state
-	end
-
-	private def ansi_color(color, foreground:)
+	private def append_sgr_color(buffer, first, color, foreground:)
 		code = foreground ? 38 : 48
 		r, g, b = color
 
 		if @truecolor
-			[code, 2, r, g, b]
+			first = append_sgr_integer(buffer, first, code)
+			first = append_sgr_integer(buffer, first, 2)
+			first = append_sgr_integer(buffer, first, r)
+			first = append_sgr_integer(buffer, first, g)
+			append_sgr_integer(buffer, first, b)
 		else
-			[code, 5, rgb_to_ansi256(r, g, b)]
+			first = append_sgr_integer(buffer, first, code)
+			first = append_sgr_integer(buffer, first, 5)
+			append_sgr_integer(buffer, first, rgb_to_ansi256(r, g, b))
 		end
+	end
+
+	private def append_sgr_integer(buffer, first, value)
+		buffer << SGR_SEPARATOR unless first
+		buffer << value.to_s
+		false
 	end
 
 	private def rgb_to_ansi256(r, g, b)
