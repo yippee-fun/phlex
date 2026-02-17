@@ -17,11 +17,18 @@ class TimerCard < Phlex::TUI
 	def view_template
 		elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC, :float_second) - @started_at
 		pulse = (@ticks % 2).zero? ? "*" : "."
+		minus_border = focused?(:minus) ? :thick : :rounded
+		plus_border = focused?(:plus) ? :thick : :rounded
 
 		box(border: :rounded, padding: 1, gap: 1) do
 			paragraph("Persistent Child Component", bold: true)
 			paragraph("tick: #{@ticks} #{pulse}", color: :bright_cyan)
 			paragraph("elapsed: #{format('%.1f', elapsed)}s")
+
+			hstack(gap: 1) do
+				box(focusable: true, name: :minus, border: minus_border, padding: [0, 1]) { "-" }
+				box(focusable: true, name: :plus, border: plus_border, padding: [0, 1]) { "+" }
+			end
 		end
 	end
 end
@@ -51,7 +58,7 @@ class DemoTUIApp < Phlex::TUI::App
 		box(width: :grow, height: :grow, border: :rounded, padding: 1, gap: 1) do
 			paragraph("Phlex::TUI Demo", bold: true)
 			paragraph("Queue loop + request_render!", color: :bright_cyan)
-			paragraph("Ctrl+C exits", color: :bright_black)
+			paragraph("Arrow keys move focus, Ctrl+C exits", color: :bright_black)
 			hr(border: :thin)
 			render(@timer_card)
 			hr(border: :thin)

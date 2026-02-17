@@ -55,14 +55,31 @@ class Phlex::TUI
 		end
 	end
 
-	def box(*, **)
-		node = Phlex::TUI::Box.new(*, parent: @tree.current_parent, **)
+	def box(*, focusable: false, name: nil, **)
+		if focusable && name.nil?
+			raise ArgumentError, "focusable boxes require a name"
+		end
+
+		pushed = false
+		node = Phlex::TUI::Box.new(*, parent: @tree.current_parent, owner: self, focusable:, name:, **)
 		@tree.attach(node)
 		@tree.stack << node
+		pushed = true
+
+		if focusable && runtime
+			runtime.register_element(id: focus_key(name), owner: self, focusable: true)
+		end
+
 		yield_content { yield } if block_given?
 		nil
 	ensure
-		@tree.stack.pop
+		@tree.stack.pop if pushed
+	end
+
+	def focused?(name)
+		return false unless runtime
+
+		runtime.focused?(focus_key(name))
 	end
 
 	def render(component, &)
@@ -123,6 +140,10 @@ class Phlex::TUI
 		content = yield
 
 		implicit_output(content) if parent.children.length == original_length
+	end
+
+	private def focus_key(name)
+		[object_id, name]
 	end
 
 	private def implicit_output(content)

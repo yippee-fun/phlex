@@ -293,9 +293,9 @@ class Phlex::TUI::App < Phlex::TUI
 		end
 
 		focus_changed = case key
-		when "\t"
+		when "\e[C", "\e[B"
 			@runtime.focus_next!
-		when "\e[Z"
+		when "\e[D", "\e[A"
 			@runtime.focus_previous!
 		else
 			false

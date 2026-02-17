@@ -35,7 +35,14 @@ class Phlex::TUI::Runtime
 			handlers: handlers.dup,
 		}
 
-		@focusables << id if focusable
+		if focusable
+			if @focusables.include?(id)
+				raise ArgumentError, "duplicate focus name for component: #{id.inspect}"
+			end
+
+			@focusables << id
+		end
+
 		id
 	end
 

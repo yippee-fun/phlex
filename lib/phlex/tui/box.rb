@@ -6,6 +6,9 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	def initialize(
 		align: :left,
 		bg: nil,
+		focusable: false,
+		name: nil,
+		owner: nil,
 		color: nil,
 		blink: nil,
 		bold: nil,
@@ -32,6 +35,9 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 		@children = []
 
 		@bg = bg
+		@focusable = focusable
+		@name = name
+		@owner = owner
 		@color = (nil == color) ? @parent&.color : color
 		@align = align
 		@border = Phlex::TUI::Border.parse(border)
@@ -64,6 +70,9 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	end
 
 	attr_reader :bg
+	attr_reader :focusable
+	attr_reader :name
+	attr_reader :owner
 	attr_reader :color
 	attr_reader :align
 	attr_reader :border
