@@ -4,15 +4,31 @@ class Phlex::TUI
 	def view_template
 	end
 
-	def call(tree = Phlex::TUI::Tree.new, &)
+	def call(tree = Phlex::TUI::Tree.new, context: nil, &)
 		@tree = tree
+		previous_context = @context
+		@context = context
 		previous_phlex_tui_component = Thread.current[:__phlex_tui_component__]
 		Thread.current[:__phlex_tui_component__] = self
 
 		yield_content { view_template(&) }
 		tree
 	ensure
+		@context = previous_context
 		Thread.current[:__phlex_tui_component__] = previous_phlex_tui_component
+	end
+
+	def app
+		@context
+	end
+
+	def request_render!
+		app&.request_render!
+		nil
+	end
+
+	def runtime
+		@context&.runtime
 	end
 
 	def hstack(*, **, &)
@@ -52,7 +68,7 @@ class Phlex::TUI
 	def render(component, &)
 		case component
 		in Phlex::TUI
-			component.call(@tree, &)
+			component.call(@tree, context: @context, &)
 		end
 	end
 

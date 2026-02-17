@@ -4,32 +4,83 @@
 require "bundler/setup"
 require "phlex"
 
+class TimerCard < Phlex::TUI
+	def initialize
+		@ticks = 0
+		@started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC, :float_second)
+	end
+
+	def tick!
+		@ticks += 1
+	end
+
+	def view_template
+		elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC, :float_second) - @started_at
+		pulse = (@ticks % 2).zero? ? "*" : "."
+
+		box(border: :rounded, padding: 1, gap: 1) do
+			paragraph("Persistent Child Component", bold: true)
+			paragraph("tick: #{@ticks} #{pulse}", color: :bright_cyan)
+			paragraph("elapsed: #{format('%.1f', elapsed)}s")
+		end
+	end
+end
+
 class DemoTUIApp < Phlex::TUI::App
 	def initialize(...)
 		super
-		@elapsed = 0.0
-		@frames = 0
-		@fps = 0.0
+		@renders = 0
+		@last_dt = 0.0
+		@pulse_thread = nil
+		@timer_card = TimerCard.new
+	end
+
+	def start(...)
+		start_pulse_thread
+		super
+	ensure
+		stop_pulse_thread
 	end
 
 	def update(dt)
-		@elapsed += dt
-		@frames += 1
-		if dt.positive?
-			instant = 1.0 / dt
-			@fps = (@fps * 0.9) + (instant * 0.1)
-		end
+		@last_dt = dt
+		@renders += 1
 	end
 
 	def view_template
 		box(width: :grow, height: :grow, border: :rounded, padding: 1, gap: 1) do
 			paragraph("Phlex::TUI Demo", bold: true)
-			paragraph("Unlimited render loop with row-level frame diffing")
-			paragraph("Resize terminal to trigger full redraw. Press Ctrl+C to exit.", color: :bright_black)
+			paragraph("Queue loop + request_render!", color: :bright_cyan)
+			paragraph("Ctrl+C exits", color: :bright_black)
+			hr(border: :thin)
+			render(@timer_card)
 			hr(border: :thin)
 
-			paragraph("fps=#{format('%.1f', @fps)}  frames=#{@frames}  time=#{format('%.2f', @elapsed)}s  size=#{cols}x#{rows}")
+			paragraph("renders: #{@renders}")
+			paragraph("dt: #{format('%.3f', @last_dt)}s")
+			paragraph("size: #{cols}x#{rows}")
 		end
+	end
+
+	private def start_pulse_thread
+		return if @pulse_thread
+
+		@pulse_thread = Thread.new do
+			loop do
+				sleep(1)
+				@timer_card.tick!
+				request_render!
+			end
+		end
+	end
+
+	private def stop_pulse_thread
+		thread = @pulse_thread
+		@pulse_thread = nil
+		return unless thread
+
+		thread.kill
+		thread.join(0.1)
 	end
 end
 
