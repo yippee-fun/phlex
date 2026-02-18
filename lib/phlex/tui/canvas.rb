@@ -673,21 +673,74 @@ class Phlex::TUI::Canvas
 		left = [clip[:left], 0].max
 		right = [clip[:right], @width].min
 
-		text.each_char do |char|
+		Phlex::TUI::TextWidth.each_grapheme(text) do |grapheme|
+			grapheme_width = Phlex::TUI::TextWidth.grapheme_width(grapheme)
+
 			if col_index >= left && col_index < right
+				next_col = col_index + grapheme_width - 1
+				break if next_col >= right || next_col >= @width
+
 				base = cell_base(col_index)
+				clear_previous_wide_overlap!(row_data, col_index)
+				clear_current_wide_tail!(row_data, col_index)
 				row_data[base + CELL_LINE_OFFSET] = nil
-				row_data[base + CELL_CHARACTER_OFFSET] = char
+				row_data[base + CELL_CHARACTER_OFFSET] = grapheme
 				row_data[base + CELL_COLOR_OFFSET] = resolved_color
 				row_data[base + CELL_BG_OFFSET] = resolved_bg if resolved_bg
 				if flag_mask != 0
 					flags = row_data[base + CELL_FLAGS_OFFSET] || 0
 					row_data[base + CELL_FLAGS_OFFSET] = flags | flag_mask
+				else
+					row_data[base + CELL_FLAGS_OFFSET] = 0
+				end
+
+				if grapheme_width == 2
+					continuation_base = cell_base(col_index + 1)
+					row_data[continuation_base + CELL_LINE_OFFSET] = nil
+					row_data[continuation_base + CELL_CHARACTER_OFFSET] = nil
+					row_data[continuation_base + CELL_COLOR_OFFSET] = resolved_color
+					row_data[continuation_base + CELL_BG_OFFSET] = resolved_bg if resolved_bg
+					row_data[continuation_base + CELL_FLAGS_OFFSET] = flag_mask
 				end
 			end
 
-			col_index += 1
+			col_index += grapheme_width
 		end
+	end
+
+	private def clear_previous_wide_overlap!(row_data, col_index)
+		return unless col_index.positive?
+
+		base = cell_base(col_index)
+		return unless row_data[base + CELL_CHARACTER_OFFSET].nil?
+
+		previous_col = col_index - 1
+		previous_base = cell_base(previous_col)
+		previous_char = row_data[previous_base + CELL_CHARACTER_OFFSET]
+		return unless String === previous_char
+		return unless Phlex::TUI::TextWidth.grapheme_width(previous_char) == 2
+
+		row_data[previous_base + CELL_CHARACTER_OFFSET] = " "
+		row_data[previous_base + CELL_LINE_OFFSET] = nil
+		row_data[previous_base + CELL_FLAGS_OFFSET] = 0
+		row_data[base + CELL_CHARACTER_OFFSET] = " "
+		row_data[base + CELL_FLAGS_OFFSET] = 0
+	end
+
+	private def clear_current_wide_tail!(row_data, col_index)
+		return if col_index + 1 >= @width
+
+		base = cell_base(col_index)
+		current_char = row_data[base + CELL_CHARACTER_OFFSET]
+		return unless String === current_char
+		return unless Phlex::TUI::TextWidth.grapheme_width(current_char) == 2
+
+		tail_base = cell_base(col_index + 1)
+		return unless row_data[tail_base + CELL_CHARACTER_OFFSET].nil?
+
+		row_data[tail_base + CELL_CHARACTER_OFFSET] = " "
+		row_data[tail_base + CELL_LINE_OFFSET] = nil
+		row_data[tail_base + CELL_FLAGS_OFFSET] = 0
 	end
 
 	private def in_bounds?(row, col)

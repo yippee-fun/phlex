@@ -5,13 +5,15 @@ class Phlex::TUI::Popover < Phlex::TUI::Box
 	VERTICAL_SIDES = [:top, :middle, :bottom].freeze
 	HORIZONTAL_SIDES = [:left, :center, :right].freeze
 
-	def initialize(anchor: :canvas, top: nil, middle: nil, bottom: nil, left: nil, center: nil, right: nil, z: 0, **)
+	def initialize(anchor: :canvas, top: nil, middle: nil, bottom: nil, left: nil, center: nil, right: nil, z: 0, dialog: false, name: nil, **)
 		super(**)
 		@base_max_width = max_width
 		@base_max_height = max_height
 
 		@anchor = validate_anchor(anchor)
 		@z = validate_z(z)
+		@dialog = validate_dialog(dialog)
+		@name = name
 		@vertical_constraints = normalize_constraints(
 			top:,
 			middle:,
@@ -30,9 +32,23 @@ class Phlex::TUI::Popover < Phlex::TUI::Box
 
 	attr_reader :anchor
 	attr_reader :z
+	attr_reader :dialog
+	attr_reader :name
 
 	def popover?
 		true
+	end
+
+	def dialog?
+		@dialog
+	end
+
+	def dialog_scope_key
+		return nil unless dialog?
+
+		owner_id = owner&.object_id || object_id
+		dialog_name = name || :default
+		[owner_id, :dialog, dialog_name]
 	end
 
 	def fit_width(renderer)
@@ -278,6 +294,12 @@ class Phlex::TUI::Popover < Phlex::TUI::Box
 		return z if Integer === z
 
 		raise ArgumentError, "z must be an Integer"
+	end
+
+	private def validate_dialog(dialog)
+		return dialog if dialog == true || dialog == false
+
+		raise ArgumentError, "dialog must be true or false"
 	end
 
 	private def clamp(value, min, max)

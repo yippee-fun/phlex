@@ -44,7 +44,7 @@ class Phlex::TUI::AnsiEncoder
 				bg = next_bg
 			end
 
-			buffer << cell.character
+			buffer << cell.character if cell.character
 		end
 
 		buffer << RESET if reset && (flags != 0 || color || bg)
@@ -75,7 +75,8 @@ class Phlex::TUI::AnsiEncoder
 				bg = next_bg
 			end
 
-			buffer << (row[base + Phlex::TUI::Canvas::CELL_CHARACTER_OFFSET] || " ")
+			character = row[base + Phlex::TUI::Canvas::CELL_CHARACTER_OFFSET]
+			buffer << character unless character.nil?
 			col += 1
 			base += Phlex::TUI::Canvas::CELL_STRIDE
 		end

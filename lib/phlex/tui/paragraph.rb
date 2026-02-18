@@ -32,8 +32,8 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		validate_structure!
 
 		content = plain_content
-		natural_width = content.lines.map(&:chomp).map(&:length).max || 0
-		longest_word = content.split(/\s+/).map(&:length).max || 0
+		natural_width = content.lines.map(&:chomp).map { |line| Phlex::TUI::TextWidth.string_width(line) }.max || 0
+		longest_word = content.split(/\s+/).map { |word| Phlex::TUI::TextWidth.string_width(word) }.max || 0
 		natural_height = content.lines.size
 		available_parent_width = if parent
 			[parent.width - parent.inset_horizontal, 0].max
@@ -115,7 +115,7 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 
 		@wrapped_lines.each_with_index do |line_runs, index|
 			clipped_runs = clip_runs(line_runs, render_width)
-			visible_length = clipped_runs.sum { |run| run[:text].length }
+			visible_length = clipped_runs.sum { |run| Phlex::TUI::TextWidth.string_width(run[:text]) }
 			effective_align = parent&.text_align || :left
 			offset = case effective_align
 				when :left then 0
@@ -140,7 +140,7 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 					inverse: run[:inverse],
 					strikethrough: run[:strikethrough]
 				)
-				cursor += run[:text].length
+				cursor += Phlex::TUI::TextWidth.string_width(run[:text])
 			end
 		end
 	end
@@ -194,8 +194,8 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 	private def append_pending_word!(lines, current_line, current_length, pending_spaces, pending_word)
 		return [current_line, current_length] if pending_word.empty?
 
-		spaces_length = pending_spaces.sum { |run| run[:text].length }
-		word_length = pending_word.sum { |run| run[:text].length }
+		spaces_length = pending_spaces.sum { |run| Phlex::TUI::TextWidth.string_width(run[:text]) }
+		word_length = pending_word.sum { |run| Phlex::TUI::TextWidth.string_width(run[:text]) }
 
 		if current_line.empty?
 			current_line.concat(pending_word)
@@ -272,7 +272,7 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		runs.each do |run|
 			break if remaining <= 0
 
-			text = run[:text][0, remaining]
+			text = Phlex::TUI::TextWidth.take_by_width(run[:text], remaining)
 			next if text.empty?
 
 			clipped << {
@@ -288,7 +288,7 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 				strikethrough: run[:strikethrough],
 			}
 
-			remaining -= text.length
+			remaining -= Phlex::TUI::TextWidth.string_width(text)
 		end
 
 		clipped

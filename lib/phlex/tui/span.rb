@@ -16,9 +16,9 @@ class Phlex::TUI::Span < Phlex::TUI::Node
 		@requested_width = :fit
 		@requested_height = :fit
 
-		natural_width = @content.lines.map(&:chomp).map(&:length).max || 0
+		natural_width = @content.lines.map(&:chomp).map { |line| Phlex::TUI::TextWidth.string_width(line) }.max || 0
 		natural_height = @content.lines.size
-		longest_word = @content.split(/\s+/).map(&:length).max || 0
+		longest_word = @content.split(/\s+/).map { |word| Phlex::TUI::TextWidth.string_width(word) }.max || 0
 
 		initialize_geometry(
 			width: natural_width,

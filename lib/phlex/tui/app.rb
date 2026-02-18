@@ -9,6 +9,8 @@ class Phlex::TUI::App < Phlex::TUI
 	ENTER_ALT_SCREEN = "\e[?1049h"
 	EXIT_ALT_SCREEN = "\e[?1049l"
 	RESET_STYLE = "\e[0m"
+	ENABLE_MOUSE_TRACKING = "\e[?1000h\e[?1003h\e[?1006h"
+	DISABLE_MOUSE_TRACKING = "\e[?1006l\e[?1003l\e[?1000l"
 
 	def initialize(stdout: $stdout)
 		@stdout = stdout
@@ -28,11 +30,18 @@ class Phlex::TUI::App < Phlex::TUI
 		@input_thread = nil
 		@input_mode_saved = nil
 		@input_mode_active = false
+		@hovered_path = []
+		@last_frame_duration = nil
+		@last_render_duration = nil
+		@last_draw_duration = nil
 	end
 
 	attr_reader :rows
 	attr_reader :cols
 	attr_reader :runtime
+	attr_reader :last_frame_duration
+	attr_reader :last_render_duration
+	attr_reader :last_draw_duration
 
 	def app
 		self
@@ -48,6 +57,9 @@ class Phlex::TUI::App < Phlex::TUI
 		@frame_interval = fps ? (1.0 / fps) : nil
 		@last_frame_time = nil
 		@last_render_at = nil
+		@last_frame_duration = nil
+		@last_render_duration = nil
+		@last_draw_duration = nil
 		@render_requested = false
 		@render_signal_pending = false
 		@event_queue = Queue.new
@@ -63,6 +75,7 @@ class Phlex::TUI::App < Phlex::TUI
 		while @running
 			event = @event_queue.pop
 			handle_event(event)
+			drain_pending_events
 			next unless @running
 			next unless render_requested?
 
@@ -78,8 +91,11 @@ class Phlex::TUI::App < Phlex::TUI
 
 			dt = frame_delta(frame_started_at)
 			update(dt)
+			draw_started_at = monotonic_time
+				render_started_at = monotonic_time
 
 			current_lines = render_lines(width: cols, height: rows)
+			@last_render_duration = monotonic_time - render_started_at
 			output = if resized || previous_lines.empty?
 				@differ.full(current_lines, clear: true)
 			else
@@ -91,7 +107,10 @@ class Phlex::TUI::App < Phlex::TUI
 				@stdout.flush
 			end
 
+			@last_draw_duration = monotonic_time - draw_started_at
+
 			previous_lines = current_lines
+			@last_frame_duration = monotonic_time - frame_started_at
 			@last_render_at = frame_started_at
 
 			@queue_mutex.synchronize do
@@ -128,11 +147,14 @@ class Phlex::TUI::App < Phlex::TUI
 	end
 
 	private def render_lines(width:, height:)
+		previous_focused_id = @runtime.focused_id
 		@runtime.begin_frame!
 		tree = call(Phlex::TUI::Tree.new, context: self)
 		renderer = Phlex::TUI::Render.new(tree, width:, height:)
 		lines = renderer.render_canvas.styled_lines
 		@runtime.finalize_frame!
+		cleanup_hover_target
+		dispatch_focus_transition(previous_focused_id, @runtime.focused_id)
 		lines
 	end
 
@@ -154,6 +176,7 @@ class Phlex::TUI::App < Phlex::TUI
 		@session_active = true
 		@stdout.write(ENTER_ALT_SCREEN)
 		@stdout.write(CURSOR_HIDE)
+		@stdout.write(ENABLE_MOUSE_TRACKING)
 		@stdout.write("\e[H\e[2J")
 		@stdout.flush
 	end
@@ -162,6 +185,7 @@ class Phlex::TUI::App < Phlex::TUI
 		return unless @session_active
 
 		@stdout.write(RESET_STYLE)
+		@stdout.write(DISABLE_MOUSE_TRACKING)
 		@stdout.write(CURSOR_SHOW)
 		@stdout.write(EXIT_ALT_SCREEN)
 		@stdout.flush
@@ -242,7 +266,7 @@ class Phlex::TUI::App < Phlex::TUI
 			break if chunk == :wait_readable || chunk.nil?
 
 			buffer << chunk
-			break if buffer.length >= 3
+			break if buffer.length >= 64
 		end
 
 		buffer
@@ -286,21 +310,155 @@ class Phlex::TUI::App < Phlex::TUI
 		end
 	end
 
+	private def drain_pending_events
+		loop do
+			event = @event_queue.pop(true)
+			handle_event(event)
+			break unless @running
+		end
+	rescue ThreadError
+		nil
+	end
+
 	private def handle_input(key)
 		if key == "\u0003"
 			stop
 			return
 		end
 
+		mouse_event = parse_mouse_event(key)
+		if mouse_event
+			handle_mouse_event(mouse_event)
+			return
+		end
+
+		event = @runtime.dispatch_bubbled(@runtime.focused_id, type: :key_down, key:, raw: key)
+
+		if navigation_key?(key)
+			handle_navigation_key(key) unless event&.default_prevented?
+			return
+		end
+
+		request_render! if event&.dispatched?
+	end
+
+	private def navigation_key?(key)
+		key == "\e[C" || key == "\e[B" || key == "\e[D" || key == "\e[A"
+	end
+
+	private def handle_navigation_key(key)
+		previous_focused_id = @runtime.focused_id
 		focus_changed = case key
 		when "\e[C", "\e[B"
 			@runtime.focus_next!
 		when "\e[D", "\e[A"
 			@runtime.focus_previous!
-		else
-			false
 		end
 
-		request_render! if focus_changed
+		return unless focus_changed
+
+		dispatch_focus_transition(previous_focused_id, @runtime.focused_id)
+		request_render!
+	end
+
+	private def dispatch_focus_transition(previous_focused_id, current_focused_id)
+		return if previous_focused_id == current_focused_id
+
+		@runtime.dispatch(previous_focused_id, type: :blur) if previous_focused_id
+		@runtime.dispatch(current_focused_id, type: :focus) if current_focused_id
+	end
+
+	private def parse_mouse_event(key)
+		match = /\A\e\[<(\d+);(\d+);(\d+)([Mm])\z/.match(key)
+		return nil unless match
+
+		code = match[1].to_i
+		col = match[2].to_i - 1
+		row = match[3].to_i - 1
+		action = match[4]
+
+		type = if action == "M" && (code & 0b100000) != 0
+			:mouse_move
+		elsif action == "M"
+			:mouse_down
+		else
+			:mouse_up
+		end
+
+		{
+			type:,
+			button: (code & 0b11),
+			shift: (code & 0b100) != 0,
+			alt: (code & 0b1000) != 0,
+			ctrl: (code & 0b1_0000) != 0,
+			col:,
+			row:,
+			raw: key,
+		}
+	end
+
+	private def handle_mouse_event(mouse_event)
+		target_id = @runtime.hit_test(col: mouse_event[:col], row: mouse_event[:row])
+		dispatch_hover_transition(@runtime.event_path_for(target_id))
+		return unless target_id
+
+		handler_type = mouse_event[:type]
+		event = @runtime.dispatch_bubbled(target_id, type: handler_type, **mouse_event)
+		request_render! if event&.dispatched?
+	end
+
+	private def dispatch_hover_transition(next_path)
+		previous_path = @hovered_path
+		next_path ||= []
+		return if previous_path == next_path
+
+		common_tail = common_tail_length(previous_path, next_path)
+		leaving_ids = previous_path[0...(previous_path.length - common_tail)] || []
+		entering_ids = next_path[0...(next_path.length - common_tail)] || []
+
+		leave_dispatched = false
+		leaving_ids.each do |id|
+			dispatched = @runtime.dispatch(id, type: :mouse_leave)
+			leave_dispatched = true if dispatched
+		end
+
+		enter_dispatched = false
+		entering_ids.each do |id|
+			dispatched = @runtime.dispatch(id, type: :mouse_enter)
+			enter_dispatched = true if dispatched
+		end
+
+		@hovered_path = next_path
+		request_render! if leave_dispatched || enter_dispatched
+	end
+
+	private def cleanup_hover_target
+		return if @hovered_path.empty?
+
+		all_present = @hovered_path.all? { |id| @runtime.event_for(id) }
+		return if all_present
+
+		leave_dispatched = false
+		@hovered_path.each do |id|
+			dispatched = @runtime.dispatch(id, type: :mouse_leave)
+			leave_dispatched = true if dispatched
+		end
+
+		@hovered_path = []
+		request_render! if leave_dispatched
+	end
+
+	private def common_tail_length(left, right)
+		length = 0
+		left_index = left.length - 1
+		right_index = right.length - 1
+
+		while left_index >= 0 && right_index >= 0 && left[left_index] == right[right_index]
+			length += 1
+			left_index -= 1
+			right_index -= 1
+		end
+
+		length
 	end
 end

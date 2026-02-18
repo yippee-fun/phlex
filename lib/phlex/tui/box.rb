@@ -2,6 +2,7 @@
 
 class Phlex::TUI::Box < Phlex::TUI::Node
 	BORDER_MODES = [:separate, :collapse].freeze
+	POINTER_EVENTS_MODES = [:auto, :none].freeze
 
 	def initialize(
 		align: :left,
@@ -27,6 +28,7 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 		min_height: nil,
 		min_width: nil,
 		padding: 0,
+		pointer_events: :auto,
 		parent: nil,
 		vertical_align: :top,
 		width: :fit
@@ -47,6 +49,7 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 		@direction = direction
 		@text_align = text_align
 		@padding = Phlex::TUI::Padding.parse(padding)
+		@pointer_events = validate_pointer_events(pointer_events)
 		@vertical_align = vertical_align
 		@requested_width = width
 		@bold = (nil == bold) ? @parent&.bold : bold
@@ -84,6 +87,7 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	attr_reader :direction
 	attr_reader :text_align
 	attr_reader :padding
+	attr_reader :pointer_events
 	attr_reader :vertical_align
 	attr_reader :children
 	attr_reader :bold
@@ -476,6 +480,14 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	private def validate_border_mode(value)
 		unless BORDER_MODES.include?(value)
 			raise ArgumentError, "Unknown border mode: #{value.inspect}"
+		end
+
+		value
+	end
+
+	private def validate_pointer_events(value)
+		unless POINTER_EVENTS_MODES.include?(value)
+			raise ArgumentError, "Unknown pointer_events mode: #{value.inspect}"
 		end
 
 		value

@@ -55,25 +55,48 @@ class Phlex::TUI
 		end
 	end
 
-	def box(*, focusable: false, name: nil, **)
+	def box(*, focusable: false, name: nil, pointer_events: :auto, on_focus: nil, on_blur: nil, on_key_down: nil, on_key_up: nil, on_mouse_down: nil, on_mouse_up: nil, on_mouse_move: nil, on_mouse_enter: nil, on_mouse_leave: nil, **)
+		handlers = {
+			focus: on_focus,
+			blur: on_blur,
+			key_down: on_key_down,
+			key_up: on_key_up,
+			mouse_down: on_mouse_down,
+			mouse_up: on_mouse_up,
+			mouse_move: on_mouse_move,
+			mouse_enter: on_mouse_enter,
+			mouse_leave: on_mouse_leave,
+		}.compact
+
+		if !handlers.empty? && name.nil?
+			raise ArgumentError, "boxes with event handlers require a name"
+		end
+
+		requires_focus = !on_focus.nil? || !on_blur.nil? || !on_key_down.nil? || !on_key_up.nil?
+		if requires_focus && !focusable
+			raise ArgumentError, "boxes with event handlers must be focusable"
+		end
+
 		if focusable && name.nil?
 			raise ArgumentError, "focusable boxes require a name"
 		end
 
-		pushed = false
-		node = Phlex::TUI::Box.new(*, parent: @tree.current_parent, owner: self, focusable:, name:, **)
+		node = Phlex::TUI::Box.new(*, parent: @tree.current_parent, owner: self, focusable:, name:, pointer_events:, **)
 		@tree.attach(node)
 		@tree.stack << node
-		pushed = true
 
-		if focusable && runtime
-			runtime.register_element(id: focus_key(name), owner: self, focusable: true)
+		begin
+			if runtime && (focusable || !handlers.empty?)
+				element_id = focus_key(name)
+				runtime.register_element(id: element_id, owner: self, handlers:, focusable:, scope: focus_scope_for(node))
+				runtime.update_element_node(element_id, node)
+			end
+
+			yield_content { yield } if block_given?
+			nil
+		ensure
+			@tree.stack.pop
 		end
-
-		yield_content { yield } if block_given?
-		nil
-	ensure
-		@tree.stack.pop if pushed
 	end
 
 	def focused?(name)
@@ -89,8 +112,26 @@ class Phlex::TUI
 		end
 	end
 
-	def popover(...)
-		container(Phlex::TUI::Popover, ...)
+	def popover(*, dialog: false, name: nil, **)
+		if dialog && name.nil?
+			raise ArgumentError, "dialog popovers require a name"
+		end
+
+		node = Phlex::TUI::Popover.new(*, parent: @tree.current_parent, owner: self, dialog:, name:, **)
+		@tree.attach(node)
+
+		if dialog && runtime
+			runtime.register_dialog_scope(scope: node.dialog_scope_key, z: node.z)
+		end
+
+		@tree.stack << node
+
+		begin
+			yield_content { yield } if block_given?
+			nil
+		ensure
+			@tree.stack.pop
+		end
 	end
 
 	def table(...)
@@ -144,6 +185,20 @@ class Phlex::TUI
 
 	private def focus_key(name)
 		[object_id, name]
+	end
+
+	private def focus_scope_for(node)
+		current = node
+
+		while current
+			if Phlex::TUI::Popover === current && current.dialog?
+				return current.dialog_scope_key
+			end
+
+			current = current.parent
+		end
+
+		:root
 	end
 
 	private def implicit_output(content)
