@@ -12,6 +12,29 @@ class Phlex::TUI::App < Phlex::TUI
 	ENABLE_MOUSE_TRACKING = "\e[?1000h\e[?1003h\e[?1006h"
 	DISABLE_MOUSE_TRACKING = "\e[?1006l\e[?1003l\e[?1000l"
 
+	KEY_NAMES = {
+		"\e[A" => :up,
+		"\eOA" => :up,
+		"\e[B" => :down,
+		"\eOB" => :down,
+		"\e[C" => :right,
+		"\eOC" => :right,
+		"\e[D" => :left,
+		"\eOD" => :left,
+		"\e[5~" => :page_up,
+		"\e[6~" => :page_down,
+		"\e[H" => :home,
+		"\e[1~" => :home,
+		"\e[7~" => :home,
+		"\e[F" => :end,
+		"\e[4~" => :end,
+		"\e[8~" => :end,
+		"\r" => :enter,
+		"\n" => :enter,
+		"\t" => :tab,
+		"\177" => :backspace,
+	}.freeze
+
 	def initialize(stdout: $stdout)
 		@stdout = stdout
 		@running = false
@@ -32,6 +55,8 @@ class Phlex::TUI::App < Phlex::TUI
 		@input_mode_saved = nil
 		@input_mode_active = false
 		@hovered_path = []
+		@last_pointer_col = nil
+		@last_pointer_row = nil
 		@last_frame_duration = nil
 		@last_render_duration = nil
 		@last_draw_duration = nil
@@ -418,14 +443,14 @@ class Phlex::TUI::App < Phlex::TUI
 	private def coalesce_wheel_event(current, incoming)
 		return incoming unless current
 
-		current_delta = current[:delta_y]
-		incoming_delta = incoming[:delta_y]
+		current_delta = current.delta_y
+		incoming_delta = incoming.delta_y
 
 		if Integer === current_delta && Integer === incoming_delta
 			if (current_delta < 0) != (incoming_delta < 0)
 				incoming
 			else
-				incoming.merge(delta_y: current_delta + incoming_delta)
+				incoming.with_delta(current_delta + incoming_delta)
 			end
 		else
 			incoming
@@ -438,52 +463,66 @@ class Phlex::TUI::App < Phlex::TUI
 		handle_mouse_event(event)
 	end
 
-	private def handle_input(key)
-		if key == "\u0003"
+	private def handle_input(raw_key)
+		if raw_key == "\u0003"
 			stop
 			return
 		end
 
-		mouse_event = parse_mouse_event(key)
+		mouse_event = parse_mouse_event(raw_key)
 		if mouse_event
 			handle_mouse_event(mouse_event)
 			return
 		end
 
-		event = @runtime.dispatch_bubbled(@runtime.focused_id, type: :key_down, key:, raw: key)
+		key = normalize_key(raw_key)
+		event = Phlex::TUI::KeyDownEvent.new(key:, raw: raw_key)
+
+		event = @runtime.dispatch_bubbled(@runtime.focused_id, event)
 
 		if navigation_key?(key)
 			handle_navigation_key(key) unless event&.default_prevented?
-			return
+			nil
 		end
-
-		request_render! if event&.dispatched?
 	end
 
 	private def navigation_key?(key)
-		key == "\e[C" || key == "\e[B" || key == "\e[D" || key == "\e[A"
+		key == :right || key == :down || key == :left || key == :up
 	end
 
 	private def handle_navigation_key(key)
 		previous_focused_id = @runtime.focused_id
 		focus_changed = case key
-		when "\e[C", "\e[B"
+		when :right, :down
 			@runtime.focus_next!
-		when "\e[D", "\e[A"
+		when :left, :up
 			@runtime.focus_previous!
 		end
 
 		return unless focus_changed
 
 		dispatch_focus_transition(previous_focused_id, @runtime.focused_id)
-		request_render!
 	end
 
 	private def dispatch_focus_transition(previous_focused_id, current_focused_id)
 		return if previous_focused_id == current_focused_id
 
-		@runtime.dispatch(previous_focused_id, type: :blur) if previous_focused_id
-		@runtime.dispatch(current_focused_id, type: :focus) if current_focused_id
+		@runtime.dispatch(previous_focused_id, Phlex::TUI::BlurEvent.new) if previous_focused_id
+		@runtime.dispatch(current_focused_id, Phlex::TUI::FocusEvent.new) if current_focused_id
+	end
+
+	private def normalize_key(raw_key)
+		named = KEY_NAMES[raw_key]
+		return named if named
+
+		if raw_key.bytesize == 1
+			char = raw_key.downcase
+			if /\A[[:alnum:]]\z/.match?(char)
+				return char.to_sym
+			end
+		end
+
+		:unknown
 	end
 
 	private def parse_mouse_event(key)
@@ -495,41 +534,56 @@ class Phlex::TUI::App < Phlex::TUI
 		row = match[3].to_i - 1
 		action = match[4]
 
-		type = if action == "M" && (code & 0b1_000000) != 0
-			:mouse_wheel
-		elsif action == "M" && (code & 0b100000) != 0
-			:mouse_move
-		elsif action == "M"
-			:mouse_down
-		else
-			:mouse_up
-		end
+		is_wheel = action == "M" && (code & 0b1_000000) != 0
+		is_move = action == "M" && (code & 0b100000) != 0
 
-		delta_y = if type == :mouse_wheel
+		delta_y = if is_wheel
 			((code & 0b1) == 0) ? -1 : 1
 		end
 
-		{
-			type:,
-			button: (code & 0b11),
-			shift: (code & 0b100) != 0,
-			alt: (code & 0b1000) != 0,
-			ctrl: (code & 0b1_0000) != 0,
-			delta_y:,
-			col:,
-			row:,
-			raw: key,
-		}
+		button = (code & 0b11)
+		shift = (code & 0b100) != 0
+		alt = (code & 0b1000) != 0
+		ctrl = (code & 0b1_0000) != 0
+
+		if is_wheel
+			Phlex::TUI::MouseWheelEvent.new(delta_y:, col:, row:, button:, shift:, alt:, ctrl:, raw: key)
+		elsif is_move
+			Phlex::TUI::MouseMoveEvent.new(col:, row:, button:, shift:, alt:, ctrl:, raw: key)
+		elsif action == "M"
+			Phlex::TUI::MouseDownEvent.new(col:, row:, button:, shift:, alt:, ctrl:, raw: key)
+		else
+			Phlex::TUI::MouseUpEvent.new(col:, row:, button:, shift:, alt:, ctrl:, raw: key)
+		end
 	end
 
 	private def handle_mouse_event(mouse_event)
-		target_id = @runtime.hit_test(col: mouse_event[:col], row: mouse_event[:row])
+		col = mouse_event.col
+		row = mouse_event.row
+		previous_col = @last_pointer_col
+		previous_row = @last_pointer_row
+
+		if Integer === col && Integer === row
+			@last_pointer_col = col
+			@last_pointer_row = row
+		end
+
+		target_id = @runtime.hit_test(col:, row:)
+
+		if Phlex::TUI::MouseWheelEvent === mouse_event && target_id.nil?
+			last_col = previous_col
+			last_row = previous_row
+			if Integer === last_col && Integer === last_row
+				target_id = @runtime.hit_test(col: last_col, row: last_row)
+			end
+
+			target_id ||= @hovered_path.first
+		end
+
 		dispatch_hover_transition(@runtime.event_path_for(target_id))
 		return unless target_id
 
-		handler_type = mouse_event[:type]
-		event = @runtime.dispatch_bubbled(target_id, type: handler_type, **mouse_event)
-		request_render! if event&.dispatched?
+		@runtime.dispatch_bubbled(target_id, mouse_event)
 	end
 
 	private def dispatch_hover_transition(next_path)
@@ -541,20 +595,15 @@ class Phlex::TUI::App < Phlex::TUI
 		leaving_ids = previous_path[0...(previous_path.length - common_tail)] || []
 		entering_ids = next_path[0...(next_path.length - common_tail)] || []
 
-		leave_dispatched = false
 		leaving_ids.each do |id|
-			dispatched = @runtime.dispatch(id, type: :mouse_leave)
-			leave_dispatched = true if dispatched
+			@runtime.dispatch(id, Phlex::TUI::MouseLeaveEvent.new)
 		end
 
-		enter_dispatched = false
 		entering_ids.each do |id|
-			dispatched = @runtime.dispatch(id, type: :mouse_enter)
-			enter_dispatched = true if dispatched
+			@runtime.dispatch(id, Phlex::TUI::MouseEnterEvent.new)
 		end
 
 		@hovered_path = next_path
-		request_render! if leave_dispatched || enter_dispatched
 	end
 
 	private def cleanup_hover_target
@@ -563,14 +612,11 @@ class Phlex::TUI::App < Phlex::TUI
 		all_present = @hovered_path.all? { |id| @runtime.event_for(id) }
 		return if all_present
 
-		leave_dispatched = false
 		@hovered_path.each do |id|
-			dispatched = @runtime.dispatch(id, type: :mouse_leave)
-			leave_dispatched = true if dispatched
+			@runtime.dispatch(id, Phlex::TUI::MouseLeaveEvent.new)
 		end
 
 		@hovered_path = []
-		request_render! if leave_dispatched
 	end
 
 	private def common_tail_length(left, right)

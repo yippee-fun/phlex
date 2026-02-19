@@ -7,12 +7,10 @@ require "phlex"
 class ScrollerShowcase < Phlex::TUI
 	def initialize
 		@scroller = Phlex::Tux::Scroller.new(
-			name: :demo_scroller,
 			border: :rounded,
 			padding: [0, 1],
 			height: 14,
-			width: :grow,
-			step: 1
+			width: :grow
 		)
 	end
 

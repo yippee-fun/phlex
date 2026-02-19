@@ -6,15 +6,13 @@ class Phlex::TUI
 
 	def call(tree = Phlex::TUI::Tree.new, context: nil, &)
 		@tree = tree
-		previous_context = @context
-		@context = context
+		@context = context unless context.nil?
 		previous_phlex_tui_component = Thread.current[:__phlex_tui_component__]
 		Thread.current[:__phlex_tui_component__] = self
 
 		yield_content { view_template(&) }
 		tree
 	ensure
-		@context = previous_context
 		Thread.current[:__phlex_tui_component__] = previous_phlex_tui_component
 	end
 

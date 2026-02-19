@@ -22,6 +22,7 @@ module Phlex
 		)
 
 		loader.collapse("#{__dir__}/phlex/errors")
+		loader.collapse("#{__dir__}/phlex/tui/events")
 		loader.setup
 	end
 

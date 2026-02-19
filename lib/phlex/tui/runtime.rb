@@ -1,66 +1,6 @@
 # frozen_string_literal: true
 
 class Phlex::TUI::Runtime
-	class Event
-		def initialize(type:, target:, target_owner:, target_name:, timestamp:, payload:)
-			@data = {
-				type:,
-				target:,
-				target_owner:,
-				target_name:,
-				timestamp:,
-				**payload,
-			}
-			@propagation_stopped = false
-			@default_prevented = false
-			@dispatched = false
-		end
-
-		def [](key)
-			@data[key]
-		end
-
-		def []=(key, value)
-			@data[key] = value
-		end
-
-		def stop_propagation!
-			@propagation_stopped = true
-			nil
-		end
-
-		def propagation_stopped?
-			@propagation_stopped
-		end
-
-		def prevent_default!
-			@default_prevented = true
-			nil
-		end
-
-		def default_prevented?
-			@default_prevented
-		end
-
-		def dispatched?
-			@dispatched
-		end
-
-		def set_current_target!(id:, owner:, name:)
-			@data[:current_target] = id
-			@data[:current_owner] = owner
-			@data[:current_name] = name
-			@data[:owner] = owner
-			@data[:name] = name
-			nil
-		end
-
-		def mark_dispatched!
-			@dispatched = true
-			nil
-		end
-	end
-
 	def initialize
 		@events = {}
 		@event_ids_by_scope = {}
@@ -153,26 +93,31 @@ class Phlex::TUI::Runtime
 		@events[id]
 	end
 
-	def dispatch(id, type:, **payload)
+	def dispatch(id, event)
 		entry = @events[id]
-		return false unless entry
+		return nil unless entry
 
-		handler = entry[:handlers][type]
-		return false unless handler
+		handler_key = handler_key_for(event)
+		return nil unless handler_key
 
-		event = build_event(type:, target_id: id, entry:, payload:)
-		event.set_current_target!(id:, owner: entry[:owner], name: extract_name(id))
+		handler = entry[:handlers][handler_key]
+		return nil unless handler
+
+		event.set_target!(id:, owner: entry[:owner], name: extract_name(id))
 
 		invoke_handler(entry[:owner], handler, event)
-		true
+		event.mark_dispatched!
+		event
 	end
 
-	def dispatch_bubbled(id, type:, scope: @active_scope, **payload)
+	def dispatch_bubbled(id, event, scope: @active_scope)
 		entry = @events[id]
 		return nil unless entry
 		return nil unless entry[:scope] == scope
+		handler_key = handler_key_for(event)
+		return nil unless handler_key
 
-		event = build_event(type:, target_id: id, entry:, payload:)
+		event.set_target!(id:, owner: entry[:owner], name: extract_name(id))
 		path = event_path_for(id, scope:)
 
 		path.each do |current_id|
@@ -180,7 +125,7 @@ class Phlex::TUI::Runtime
 			next unless current_entry
 			next unless current_entry[:scope] == scope
 
-			handler = current_entry[:handlers][type]
+			handler = current_entry[:handlers][handler_key]
 			next unless handler
 
 			event.set_current_target!(id: current_id, owner: current_entry[:owner], name: extract_name(current_id))
@@ -307,15 +252,29 @@ class Phlex::TUI::Runtime
 		end
 	end
 
-	private def build_event(type:, target_id:, entry:, payload:)
-		Event.new(
-			type:,
-			target: target_id,
-			target_owner: entry[:owner],
-			target_name: extract_name(target_id),
-			timestamp: Process.clock_gettime(Process::CLOCK_MONOTONIC, :float_second),
-			payload:
-		)
+	private def handler_key_for(event)
+		case event
+		in Phlex::TUI::FocusEvent
+			:focus
+		in Phlex::TUI::BlurEvent
+			:blur
+		in Phlex::TUI::KeyDownEvent
+			:key_down
+		in Phlex::TUI::MouseDownEvent
+			:mouse_down
+		in Phlex::TUI::MouseUpEvent
+			:mouse_up
+		in Phlex::TUI::MouseMoveEvent
+			:mouse_move
+		in Phlex::TUI::MouseWheelEvent
+			:mouse_wheel
+		in Phlex::TUI::MouseEnterEvent
+			:mouse_enter
+		in Phlex::TUI::MouseLeaveEvent
+			:mouse_leave
+		else
+			nil
+		end
 	end
 
 	private def event_id_for_node(node, scope)

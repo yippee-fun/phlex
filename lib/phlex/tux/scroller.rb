@@ -1,23 +1,12 @@
 # frozen_string_literal: true
 
 class Phlex::Tux::Scroller < Phlex::TUI
-	KEY_UP = ["\e[A", "\eOA", "k"].freeze
-	KEY_DOWN = ["\e[B", "\eOB", "j"].freeze
-	KEY_PAGE_UP = "\e[5~"
-	KEY_PAGE_DOWN = "\e[6~"
-	KEY_HOME = ["\e[H", "\e[1~", "\e[7~"].freeze
-	KEY_END = ["\e[F", "\e[4~", "\e[8~"].freeze
+	LINE_STEP = 1
 
-	def initialize(step: 1, page_step: nil, auto_focus: true, name: :scroller, thumb: nil, track: nil, **attributes)
+	def initialize(**attributes)
 		@scroll_position = 0
-		@step = [step, 1].max
-		@page_step = page_step
-		@auto_focus = auto_focus
-		@auto_focused = false
-		@name = name
-		@thumb_renderer = thumb
-		@track_renderer = track
 		@attributes = attributes
+		@name = :scroller
 		@viewport_height = 0
 		@content_height = 0
 		@max_scroll = 0
@@ -28,7 +17,7 @@ class Phlex::Tux::Scroller < Phlex::TUI
 		@container_node = nil
 		@viewport_node = nil
 		@content_node = nil
-		@scrollbar_node = nil
+		@scrollbar = Scrollbar.new
 	end
 
 	attr_reader :scroll_position
@@ -39,6 +28,7 @@ class Phlex::Tux::Scroller < Phlex::TUI
 	def view_template(&content)
 		update_metrics_from_previous_frame!
 		apply_pending_wheel_scroll!
+		update_scrollbar!
 
 		container_attributes = @attributes.merge(
 			focusable: true,
@@ -53,22 +43,20 @@ class Phlex::Tux::Scroller < Phlex::TUI
 			hstack(width: :grow, height: :grow) do
 				@viewport_node = box(width: :grow, height: :grow, overflow: :none, padding: 0) do
 					@content_node = box(width: :grow, padding: { top: -@scroll_position }) do
-						yield_content { yield } if block_given?
+						yield_content { content.call } if content
 					end
 				end
 
-				render_scrollbar
+				render(@scrollbar)
 			end
 		end
-
-		auto_focus_if_needed!
 	end
 
-	def scroll_down(amount = @step)
+	def scroll_down(amount = LINE_STEP)
 		scroll_to(@scroll_position + amount)
 	end
 
-	def scroll_up(amount = @step)
+	def scroll_up(amount = LINE_STEP)
 		scroll_to(@scroll_position - amount)
 	end
 
@@ -82,23 +70,22 @@ class Phlex::Tux::Scroller < Phlex::TUI
 	end
 
 	private def handle_key_down(event)
-		handled = case event[:key]
-		when *KEY_UP
+		handled = if event.key?(:up, :k)
 			scroll_up
 			true
-		when *KEY_DOWN
+		elsif event.key?(:down, :j)
 			scroll_down
 			true
-		when KEY_PAGE_UP
+		elsif event.key?(:page_up)
 			scroll_up(page_amount)
 			true
-		when KEY_PAGE_DOWN
+		elsif event.key?(:page_down)
 			scroll_down(page_amount)
 			true
-		when *KEY_HOME
+		elsif event.key?(:home)
 			scroll_to(0)
 			true
-		when *KEY_END
+		elsif event.key?(:end)
 			scroll_to(@max_scroll)
 			true
 		else
@@ -109,11 +96,11 @@ class Phlex::Tux::Scroller < Phlex::TUI
 	end
 
 	private def handle_mouse_wheel(event)
-		delta = event[:delta_y]
+		delta = event.delta_y
 		return unless Integer === delta && delta != 0
 
 		if @metrics_ready
-			scroll_by(delta * @step)
+			scroll_by(delta * LINE_STEP)
 		else
 			@pending_wheel_delta += delta
 			request_render!
@@ -140,87 +127,41 @@ class Phlex::Tux::Scroller < Phlex::TUI
 	end
 
 	private def page_amount
-		return @page_step if @page_step
 		return @viewport_height - 1 if @viewport_height > 1
 
 		1
 	end
 
-	private def render_scrollbar
-		@scrollbar_node = box(
-			width: 1,
-			height: :grow,
-			padding: 0,
-			name: scrollbar_name,
-			on_mouse_down: :handle_scrollbar_mouse_down
-		) do
-			track_height = [@viewport_height, 0].max
-
-			if track_height <= 0 || @content_height <= @viewport_height
-				paragraph(" ")
-				next
-			end
-
-			thumb_height = [(track_height.to_f * track_height / @content_height).round, 1].max
-			thumb_height = [thumb_height, track_height].min
-			travel = [track_height - thumb_height, 0].max
-			thumb_top = if @max_scroll.zero?
-				0
-			else
-				((@scroll_position.to_f / @max_scroll) * travel).round
-			end
-
-			track_height.times do |index|
-				thumb = index >= thumb_top && index < (thumb_top + thumb_height)
-				cell = scrollbar_cell(
-					thumb:,
-					index:,
-					thumb_top:,
-					thumb_height:,
-					track_height:
-				)
-				paragraph(cell[:text], **cell[:style])
-			end
-		end
+	private def update_scrollbar!
+		@scrollbar.update(
+			viewport_height: @viewport_height,
+			content_height: @content_height,
+			scroll_position: @scroll_position,
+			max_scroll: @max_scroll,
+			on_thumb_drag_start: -> (offset) { start_thumb_drag(offset) },
+			on_page_up: -> { scroll_up(page_amount) },
+			on_page_down: -> { scroll_down(page_amount) }
+		)
 	end
 
-	private def handle_scrollbar_mouse_down(event)
-		return unless @metrics_ready
-		node = @scrollbar_node
-		return unless node
+	private def start_thumb_drag(offset)
+		return unless Integer === offset
 
-		geometry = scrollbar_geometry
-		return unless geometry
-
-		row = event[:row]
-		return unless Integer === row
-
-		relative_row = row - node.row
-		return unless relative_row >= 0 && relative_row < geometry[:track_height]
-
-		if relative_row >= geometry[:thumb_top] && relative_row < (geometry[:thumb_top] + geometry[:thumb_height])
-			@dragging_thumb = true
-			@drag_offset = relative_row - geometry[:thumb_top]
-		elsif relative_row < geometry[:thumb_top]
-			scroll_up(page_amount)
-		elsif relative_row >= (geometry[:thumb_top] + geometry[:thumb_height])
-			scroll_down(page_amount)
-		end
-
-		event.prevent_default!
+		@dragging_thumb = true
+		@drag_offset = offset
 	end
 
 	private def handle_drag_mouse_move(event)
 		return unless @dragging_thumb
 		return unless @metrics_ready
 
-		node = @scrollbar_node
+		node = @scrollbar.node
 		return unless node
 
-		geometry = scrollbar_geometry
+		geometry = @scrollbar.geometry
 		return unless geometry
 
-		row = event[:row]
+		row = event.row
 		return unless Integer === row
 
 		relative_row = row - node.row
@@ -245,79 +186,6 @@ class Phlex::Tux::Scroller < Phlex::TUI
 		event.prevent_default!
 	end
 
-	private def scrollbar_name
-		[@name, :scrollbar]
-	end
-
-	private def scrollbar_cell(thumb:, index:, thumb_top:, thumb_height:, track_height:)
-		renderer = thumb ? @thumb_renderer : @track_renderer
-		default_text = thumb ? "█" : "│"
-		default_style = { color: :bright_black }
-
-		return { text: default_text, style: default_style } unless renderer
-
-		result = renderer.call(
-			index:,
-			thumb:,
-			thumb_top:,
-			thumb_height:,
-			track_height:,
-			scroll_position: @scroll_position,
-			viewport_height: @viewport_height,
-			content_height: @content_height,
-			max_scroll: @max_scroll,
-		)
-
-		case result
-		in nil
-			{ text: default_text, style: default_style }
-		in String => text
-			{ text:, style: default_style }
-		in [String => text, Hash => style]
-			{ text:, style: default_style.merge(style) }
-		in Hash
-			text = result[:text] || default_text
-			style = result.dup
-			style.delete(:text)
-			{ text:, style: default_style.merge(style) }
-		else
-			{ text: default_text, style: default_style }
-		end
-	end
-
-	private def scrollbar_geometry
-		track_height = [@viewport_height, 0].max
-		return nil if track_height <= 0 || @content_height <= @viewport_height
-
-		thumb_height = [(track_height.to_f * track_height / @content_height).round, 1].max
-		thumb_height = [thumb_height, track_height].min
-		travel = [track_height - thumb_height, 0].max
-		thumb_top = if @max_scroll.zero? || travel.zero?
-			0
-		else
-			((@scroll_position.to_f / @max_scroll) * travel).round
-		end
-
-		{
-			track_height:,
-			thumb_height:,
-			travel:,
-			thumb_top:,
-		}
-	end
-
-	private def auto_focus_if_needed!
-		return unless @auto_focus
-		return if @auto_focused
-		return unless runtime
-		return unless runtime.focused_id.nil?
-
-		element_id = [object_id, @name]
-		changed = runtime.focus!(element_id)
-		@auto_focused = runtime.focused?(element_id)
-		request_render! if changed
-	end
-
 	private def update_metrics_from_previous_frame!
 		container_node = @container_node
 		viewport_node = @viewport_node
@@ -337,6 +205,6 @@ class Phlex::Tux::Scroller < Phlex::TUI
 		return unless @metrics_ready
 
 		@pending_wheel_delta = 0
-		scroll_by(delta * @step)
+		scroll_by(delta * LINE_STEP)
 	end
 end

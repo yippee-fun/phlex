@@ -33,7 +33,7 @@ class TUIEventsTest < Quickdraw::Test
 			id: [:owner, :field],
 			owner:,
 			handlers: {
-				key_down: -> (event) { @key_down_events << event[:key] },
+				key_down: -> (event) { @key_down_events << event.key },
 			},
 			focusable: true,
 			scope: :root
@@ -43,7 +43,7 @@ class TUIEventsTest < Quickdraw::Test
 
 		app.__send__(:handle_input, "a")
 
-		assert_equal ["a"], owner.key_down_events
+		assert_equal [:a], owner.key_down_events
 	end
 
 	test "navigation keys dispatch on_key_down and move focus by default" do
@@ -56,7 +56,7 @@ class TUIEventsTest < Quickdraw::Test
 			id: [:owner, :first],
 			owner:,
 			handlers: {
-				key_down: -> (event) { @key_down_events << event[:key] },
+				key_down: -> (event) { @key_down_events << event.key },
 			},
 			focusable: true,
 			scope: :root
@@ -72,7 +72,7 @@ class TUIEventsTest < Quickdraw::Test
 
 		app.__send__(:handle_input, "\e[C")
 
-		assert_equal ["\e[C"], owner.key_down_events
+		assert_equal [:right], owner.key_down_events
 		assert_equal [:owner, :second], runtime.focused_id
 	end
 
@@ -87,8 +87,8 @@ class TUIEventsTest < Quickdraw::Test
 			owner: first_owner,
 			handlers: {
 				key_down: -> (event) do
-					@key_down_events << event[:key]
-					event.prevent_default! if event[:key] == "\e[C"
+					@key_down_events << event.key
+					event.prevent_default! if event.key?(:right)
 				end,
 			},
 			focusable: true,
@@ -105,7 +105,7 @@ class TUIEventsTest < Quickdraw::Test
 
 		app.__send__(:handle_input, "\e[C")
 
-		assert_equal ["\e[C"], first_owner.key_down_events
+		assert_equal [:right], first_owner.key_down_events
 		assert_equal [:owner, :first], runtime.focused_id
 	end
 
@@ -120,7 +120,7 @@ class TUIEventsTest < Quickdraw::Test
 			id: [:owner, :first],
 			owner: first_owner,
 			handlers: {
-				blur: -> (event) { @blur_events << event[:name] },
+				blur: -> (event) { @blur_events << event.name },
 			},
 			focusable: true,
 			scope: :root
@@ -129,7 +129,7 @@ class TUIEventsTest < Quickdraw::Test
 			id: [:owner, :second],
 			owner: second_owner,
 			handlers: {
-				focus: -> (event) { @focus_events << event[:name] },
+				focus: -> (event) { @focus_events << event.name },
 			},
 			focusable: true,
 			scope: :root
@@ -173,7 +173,7 @@ class TUIEventsTest < Quickdraw::Test
 			id: [:owner, :mouse_target],
 			owner:,
 			handlers: {
-				mouse_down: -> (event) { @mouse_events << [event[:type], event[:col], event[:row]] },
+				mouse_down: -> (event) { @mouse_events << [event.class, event.col, event.row] },
 			},
 			scope: :root
 		)
@@ -182,7 +182,7 @@ class TUIEventsTest < Quickdraw::Test
 
 		app.__send__(:handle_input, "\e[<0;2;2M")
 
-		assert_equal [[:mouse_down, 1, 1]], owner.mouse_events
+		assert_equal [[Phlex::TUI::MouseDownEvent, 1, 1]], owner.mouse_events
 	end
 
 	test "hit testing uses final node geometry at frame finalize" do
@@ -334,7 +334,7 @@ class TUIEventsTest < Quickdraw::Test
 			id: [:owner, :parent],
 			owner: parent_owner,
 			handlers: {
-				key_down: -> (event) { @bubble_events << [event[:current_name], event[:target_name], event[:key]] },
+				key_down: -> (event) { @bubble_events << [event.current_name, event.target_name, event.key] },
 			},
 			focusable: true,
 			scope: :root
@@ -345,7 +345,7 @@ class TUIEventsTest < Quickdraw::Test
 			id: [:owner, :child],
 			owner: child_owner,
 			handlers: {
-				key_down: -> (event) { @bubble_events << [event[:current_name], event[:target_name], event[:key]] },
+				key_down: -> (event) { @bubble_events << [event.current_name, event.target_name, event.key] },
 			},
 			focusable: true,
 			scope: :root
@@ -357,8 +357,8 @@ class TUIEventsTest < Quickdraw::Test
 		runtime.focus_next!
 		app.__send__(:handle_input, "x")
 
-		assert_equal [[:child, :child, "x"]], child_owner.bubble_events
-		assert_equal [[:parent, :child, "x"]], parent_owner.bubble_events
+		assert_equal [[:child, :child, :x]], child_owner.bubble_events
+		assert_equal [[:parent, :child, :x]], parent_owner.bubble_events
 	end
 
 	test "mouse_down bubbles from child to parent" do
@@ -376,7 +376,7 @@ class TUIEventsTest < Quickdraw::Test
 			id: [:owner, :parent],
 			owner: parent_owner,
 			handlers: {
-				mouse_down: -> (event) { @bubble_events << [event[:current_name], event[:target_name]] },
+				mouse_down: -> (event) { @bubble_events << [event.current_name, event.target_name] },
 			},
 			scope: :root
 		)
@@ -386,7 +386,7 @@ class TUIEventsTest < Quickdraw::Test
 			id: [:owner, :child],
 			owner: child_owner,
 			handlers: {
-				mouse_down: -> (event) { @bubble_events << [event[:current_name], event[:target_name]] },
+				mouse_down: -> (event) { @bubble_events << [event.current_name, event.target_name] },
 			},
 			scope: :root
 		)
@@ -502,7 +502,7 @@ class TUIEventsTest < Quickdraw::Test
 		runtime = app.runtime
 
 		owner.define_singleton_method(:record_key_down) do |event|
-			@key_down_events << event[:key]
+			@key_down_events << event.key
 		end
 
 		runtime.begin_frame!
@@ -520,7 +520,57 @@ class TUIEventsTest < Quickdraw::Test
 
 		app.__send__(:handle_input, "z")
 
-		assert_equal ["z"], owner.key_down_events
+		assert_equal [:z], owner.key_down_events
+	end
+
+	test "dispatch does not request render unless handler does" do
+		app = Phlex::TUI::App.new
+		owner = EventOwner.new
+		runtime = app.runtime
+
+		runtime.begin_frame!
+		runtime.register_element(
+			id: [:owner, :field],
+			owner:,
+			handlers: {
+				key_down: -> (event) { @key_down_events << event.key },
+			},
+			focusable: true,
+			scope: :root
+		)
+		runtime.finalize_frame!
+		runtime.focus_next!
+
+		assert_equal false, app.__send__(:render_requested?)
+
+		app.__send__(:handle_input, "a")
+
+		assert_equal [:a], owner.key_down_events
+		assert_equal false, app.__send__(:render_requested?)
+	end
+
+	test "handlers can request render explicitly" do
+		app = Phlex::TUI::App.new
+		runtime = app.runtime
+
+		runtime.begin_frame!
+		runtime.register_element(
+			id: [:owner, :field],
+			owner: self,
+			handlers: {
+				key_down: -> (_event) { app.request_render! },
+			},
+			focusable: true,
+			scope: :root
+		)
+		runtime.finalize_frame!
+		runtime.focus_next!
+
+		assert_equal false, app.__send__(:render_requested?)
+
+		app.__send__(:handle_input, "a")
+
+		assert_equal true, app.__send__(:render_requested?)
 	end
 
 	test "on_mouse_down maps to mouse_down handler" do
