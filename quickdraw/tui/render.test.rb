@@ -46,6 +46,26 @@ class TUIRenderTest < Quickdraw::Test
 		end
 	end
 
+	class FixedParentGrowChildExample < Phlex::TUI
+		def view_template
+			box(width: 10, height: 4) do
+				box(width: :grow, height: :grow) do
+					5.times do |index|
+						paragraph("line #{index}")
+					end
+				end
+			end
+		end
+	end
+
+	class WrappedParagraphExample < Phlex::TUI
+		def view_template
+			box(width: 8) do
+				paragraph("hello world test")
+			end
+		end
+	end
+
 	test "fit canvas uses resolved canvas for canvas-anchored popovers" do
 		tree = Example.new.call
 		renderer = Phlex::TUI::Render.new(tree, width: :fit, height: :fit)
@@ -95,5 +115,27 @@ class TUIRenderTest < Quickdraw::Test
 		output = renderer.call.gsub(/\e\[[\d;]*m/, "")
 
 		assert_equal "A  ", output
+	end
+
+	test "grow children can shrink inside fixed-size parent" do
+		tree = FixedParentGrowChildExample.new.call
+		renderer = Phlex::TUI::Render.new(tree, width: :fit, height: :fit)
+		renderer.call
+
+		parent = tree.root.children.first
+		child = parent.children.first
+
+		assert_equal 10, parent.width
+		assert_equal 4, parent.height
+		assert_equal 10, child.width
+		assert_equal 4, child.height
+	end
+
+	test "wrapped paragraph draws all wrapped lines" do
+		tree = WrappedParagraphExample.new.call
+		renderer = Phlex::TUI::Render.new(tree, width: :fit, height: :fit)
+		output = renderer.call.gsub(/\e\[[\d;]*m/, "")
+
+		assert_equal "hello   \nworld   \ntest    ", output
 	end
 end

@@ -11,6 +11,7 @@ class Phlex::Tux::Scroller < Phlex::TUI
 		@content_height = 0
 		@max_scroll = 0
 		@metrics_ready = false
+		@overflowing = false
 		@pending_wheel_delta = 0
 		@dragging_thumb = false
 		@drag_offset = 0
@@ -26,6 +27,7 @@ class Phlex::Tux::Scroller < Phlex::TUI
 	attr_reader :max_scroll
 
 	def view_template(&content)
+		first_frame = @container_node.nil?
 		update_metrics_from_previous_frame!
 		apply_pending_wheel_scroll!
 		update_scrollbar!
@@ -47,9 +49,11 @@ class Phlex::Tux::Scroller < Phlex::TUI
 					end
 				end
 
-				render(@scrollbar)
+				render(@scrollbar) if scroll_enabled?
 			end
 		end
+
+		request_render! if first_frame
 	end
 
 	def scroll_down(amount = LINE_STEP)
@@ -70,6 +74,8 @@ class Phlex::Tux::Scroller < Phlex::TUI
 	end
 
 	private def handle_key_down(event)
+		return unless scroll_enabled?
+
 		handled = if event.key?(:up, :k)
 			scroll_up
 			true
@@ -96,6 +102,8 @@ class Phlex::Tux::Scroller < Phlex::TUI
 	end
 
 	private def handle_mouse_wheel(event)
+		return unless scroll_enabled?
+
 		delta = event.delta_y
 		return unless Integer === delta && delta != 0
 
@@ -110,6 +118,7 @@ class Phlex::Tux::Scroller < Phlex::TUI
 	end
 
 	private def scroll_by(amount)
+		return unless scroll_enabled?
 		return if amount.zero?
 
 		previous = @scroll_position
@@ -187,24 +196,38 @@ class Phlex::Tux::Scroller < Phlex::TUI
 	end
 
 	private def update_metrics_from_previous_frame!
-		container_node = @container_node
 		viewport_node = @viewport_node
 		content_node = @content_node
-		return unless container_node && viewport_node && content_node
+		return unless viewport_node && content_node
 
-		@viewport_height = [container_node.viewport_height, 0].max
+		@viewport_height = [viewport_node.viewport_height, 0].max
 		@content_height = [content_node.natural_content_height, 0].max
 		@max_scroll = [@content_height - @viewport_height, 0].max
 		@metrics_ready = true
+		previous_overflowing = @overflowing
+		@overflowing = @content_height > @viewport_height
+
+		if !@overflowing && !@scroll_position.zero?
+			@scroll_position = 0
+		end
+
 		clamp_scroll!
+
+		if previous_overflowing != @overflowing
+			request_render!
+		end
 	end
 
 	private def apply_pending_wheel_scroll!
 		delta = @pending_wheel_delta
 		return if delta.zero?
-		return unless @metrics_ready
+		return unless scroll_enabled?
 
 		@pending_wheel_delta = 0
 		scroll_by(delta * LINE_STEP)
+	end
+
+	private def scroll_enabled?
+		@metrics_ready && @overflowing
 	end
 end

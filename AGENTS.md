@@ -50,20 +50,41 @@ It has three main parts:
   - Diffs previous vs current frame lines.
   - Writes only changed terminal output for performance.
 
+- `Phlex::TUI::ElementRef`
+  - `Data.define(:owner, :name)` — identifies an interactive element by owner reference + name.
+  - Replaces old `[object_id, name]` tuples for focus keys and mouse capture tracking.
+  - Created via `runtime.element_ref(owner:, name:)` or `Phlex::TUI::ElementRef.new(owner:, name:)`.
+
+- `Phlex::TUI::TextRun`
+  - Shared text wrapping engine used by `Paragraph` and `Text`.
+  - Supports `:word` mode (default paragraph behavior, trims trailing whitespace) and `:grapheme` mode (preserves whitespace, used for editor-like rendering).
+  - Class methods: `wrap_runs`, `wrap_word_runs`, `wrap_grapheme_runs`.
+
 - `Phlex::TUI::Event` + typed events
-  - Strongly-typed event objects (e.g. `KeyDownEvent`, `MouseDownEvent`, `MouseWheelEvent`).
+  - Strongly-typed event objects (e.g. `KeyDownEvent`, `MouseDownEvent`, `MouseWheelEvent`, `TextInputEvent`).
   - No hash-style `event[:key]` API.
-  - Exposes clear fields/methods (`event.key`, `event.row`, `event.col`, `event.delta_y`, `event.prevent_default!`, `event.stop_propagation!`).
+  - Exposes clear fields/methods (`event.key`, `event.row`, `event.col`, `event.delta_y`, `event.text`, `event.prevent_default!`, `event.stop_propagation!`).
 
 ### Event model
 
 - Mouse events
   - Hit-test target from runtime hit map using event coordinates.
   - Dispatch to target, then bubble through parent chain until propagation is stopped.
+  - Mouse capture: on mouse down, app stores `@mouse_capture_ref`. Subsequent move/up events dispatch to the captured target even if the pointer leaves the element. Released on mouse up.
 
 - Keyboard events
   - Target is the currently focused element.
   - Dispatch + bubble with the same propagation model.
+  - Printable keys dispatch `KeyDownEvent` first, then `TextInputEvent` (unless default was prevented).
+  - `Ctrl+C` dispatches a `KeyDownEvent` with `key: :ctrl_c`; app stops only if default is not prevented.
+
+- Bracketed paste
+  - App enables bracketed paste mode in the terminal session.
+  - Paste content between `\e[200~` and `\e[201~` is coalesced into a single `TextInputEvent`.
+
+- Clipboard
+  - `app.copy_to_clipboard(text)` stores text and writes OSC 52 to the terminal (best effort).
+  - `app.paste_from_clipboard` returns the stored clipboard text.
 
 - Rendering rule
   - Event dispatch itself never implies rerender.
@@ -89,10 +110,39 @@ class Example < Phlex::TUI
 end
 ```
 
+### Tux components
+
+- `Phlex::Tux::Text`
+  - Selection and rendering model for text content.
+  - Handles mouse-based selection, word/line boundaries, vertical navigation across wrapped lines.
+  - Focusable by default; selection collapses on blur.
+  - Accepts `cursor_index` hint from parent (e.g. `Input`) to render a visible cursor.
+  - Does not handle keyboard editing — that belongs in `Input`.
+
+- `Phlex::Tux::Input`
+  - Editable text field that composes `Text` internally.
+  - Owns all keyboard editing behavior: typing, backspace, delete, word/line deletion, cut/copy/paste, enter for multiline.
+  - Supports `placeholder`, `readonly`, `multiline`, `on_change` callbacks.
+  - The inner `Text` is `focusable: false`; the `Input` wrapper box owns focus.
+
+### Known terminal key realities
+
+- `Cmd` shortcuts are terminal-dependent and unreliable in most terminal emulators.
+- `Ctrl+Y` can trigger job control suspend in some shells (e.g. `fish`), so it is unsuitable as a default shortcut.
+- `Alt+C` on macOS composes `ç`, so it is unreliable as a copy shortcut on macOS.
+- Current copy shortcut is `Ctrl+G`.
+
 ## Testing
 
 Run the full suite with `bundle exec qt`.
 Do not run individual tests unless explicitly requested.
+
+### Test status
+
+- 2 known pre-existing failures in `quickdraw/tui/render.test.rb`:
+  - "overflow none clips children before border"
+  - "overflow border allows children to draw on border"
+- These are render baseline tests, not regressions from recent work.
 
 ## Coding style
 

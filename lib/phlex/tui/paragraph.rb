@@ -35,7 +35,6 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		content = plain_content
 		natural_width = content.lines.map(&:chomp).map { |line| Phlex::TUI::TextWidth.string_width(line) }.max || 0
 		longest_word = content.split(/\s+/).map { |word| Phlex::TUI::TextWidth.string_width(word) }.max || 0
-		natural_height = content.lines.size
 		available_parent_width = if parent
 			[parent.width - parent.inset_horizontal, 0].max
 		else
@@ -51,8 +50,6 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		self.width = effective_width
 		self.min_width = [min_width, [longest_word, 5].min].max
 		self.max_width = [max_width, effective_width].max
-		self.height = natural_height
-		self.min_height = [min_height, natural_height].max
 	end
 
 	def wrap_text(_renderer)
@@ -135,98 +132,6 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		end
 	end
 
-	private def trim_trailing_whitespace!(line_runs, line_length)
-		while (last = line_runs.last)
-			stripped = last[:text].sub(/\s+\z/, "")
-			break if stripped == last[:text]
-
-			line_length -= (last[:text].length - stripped.length)
-
-			if stripped.empty?
-				line_runs.pop
-			else
-				last[:text] = stripped
-				break
-			end
-		end
-
-		line_length
-	end
-
-	private def append_pending_word!(lines, current_line, current_length, pending_spaces, pending_word)
-		return [current_line, current_length] if pending_word.empty?
-
-		spaces_length = pending_spaces.sum { |run| Phlex::TUI::TextWidth.string_width(run[:text]) }
-		word_length = pending_word.sum { |run| Phlex::TUI::TextWidth.string_width(run[:text]) }
-
-		if current_line.empty?
-			current_line.concat(pending_word)
-			current_length = word_length
-		elsif current_length + spaces_length + word_length <= width
-			current_line.concat(pending_spaces)
-			current_line.concat(pending_word)
-			current_length += spaces_length + word_length
-		else
-			current_length = trim_trailing_whitespace!(current_line, current_length)
-			lines << current_line
-			current_line = pending_word.map(&:dup)
-			current_length = word_length
-		end
-
-		pending_spaces.clear
-		pending_word.clear
-		[current_line, current_length]
-	end
-
-	private def tokenize
-		tokens = []
-
-		children.each do |span|
-			span.content.split(/(\n|\s+)/).each do |piece|
-				next if piece.empty?
-
-				type = if piece == "\n"
-					:newline
-				elsif piece.match?(/\A\s+\z/)
-					:space
-				else
-					:word
-				end
-
-					tokens << {
-						type:,
-						text: piece,
-						font: span.font,
-						color: span.color,
-						bg: span.bg,
-						bold: span.bold,
-						italic: span.italic,
-						underline: span.underline,
-						blink: span.blink,
-						inverse: span.inverse,
-						strikethrough: span.strikethrough,
-				}
-			end
-		end
-
-		tokens
-	end
-
-	private def token_to_run(token)
-		{
-			text: token[:text],
-			font: token[:font],
-			color: token[:color],
-			bg: token[:bg],
-			bold: token[:bold],
-			italic: token[:italic],
-			underline: token[:underline],
-			blink: token[:blink],
-			inverse: token[:inverse],
-			strikethrough: token[:strikethrough],
-		}
-	end
-
 	private def clip_runs(runs, max_length)
 		remaining = max_length
 		clipped = []
@@ -274,80 +179,6 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		end
 
 		runs
-	end
-
-	private def wrap_text_preserving_whitespace
-		lines = []
-		current_line = []
-		current_width = 0
-
-		children.each do |span|
-			Phlex::TUI::TextWidth.each_grapheme(span.content) do |grapheme|
-				if grapheme == "\n"
-					lines << current_line
-					current_line = []
-					current_width = 0
-					next
-				end
-
-				grapheme_width = Phlex::TUI::TextWidth.grapheme_width(grapheme)
-				if !current_line.empty? && (current_width + grapheme_width) > width
-					lines << current_line
-					current_line = []
-					current_width = 0
-				end
-
-				append_grapheme_run!(current_line, grapheme, span)
-				current_width += grapheme_width
-			end
-		end
-
-		lines << current_line unless current_line.empty?
-
-		@wrapped_lines = lines
-		self.height = lines.size
-		self.min_height = lines.size
-	end
-
-	private def append_grapheme_run!(line_runs, grapheme, span)
-		if line_runs.empty?
-			line_runs << run_from_span_text(span, grapheme)
-			return
-		end
-
-		last = line_runs.last
-		if same_style?(last, span)
-			last[:text] << grapheme
-		else
-			line_runs << run_from_span_text(span, grapheme)
-		end
-	end
-
-	private def same_style?(run, span)
-		run[:font] == span.font &&
-			run[:color] == span.color &&
-			run[:bg] == span.bg &&
-			run[:bold] == span.bold &&
-			run[:italic] == span.italic &&
-			run[:underline] == span.underline &&
-			run[:blink] == span.blink &&
-			run[:inverse] == span.inverse &&
-			run[:strikethrough] == span.strikethrough
-	end
-
-	private def run_from_span_text(span, text)
-		{
-			text:,
-			font: span.font,
-			color: span.color,
-			bg: span.bg,
-			bold: span.bold,
-			italic: span.italic,
-			underline: span.underline,
-			blink: span.blink,
-			inverse: span.inverse,
-			strikethrough: span.strikethrough,
-		}
 	end
 
 	private

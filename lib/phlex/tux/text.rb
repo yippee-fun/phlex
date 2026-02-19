@@ -521,15 +521,23 @@ class Phlex::Tux::Text < Phlex::TUI
 
 	private def line_index_for(index)
 		i = 0
-		while i < @layout.length
+		max = @layout.length
+		while i < max
 			line = @layout[i]
 			if index >= line[:start_index] && index <= line[:end_index]
+				# At a soft-wrap boundary, the caret belongs to the next line
+				# (where start_index == index), not the current one.
+				if index == line[:end_index] && (i + 1) < max && @layout[i + 1][:start_index] == index
+					i += 1
+					next
+				end
+
 				return i
 			end
 			i += 1
 		end
 
-		[@layout.length - 1, 0].max
+		[max - 1, 0].max
 	end
 
 	private def line_for_index(index)

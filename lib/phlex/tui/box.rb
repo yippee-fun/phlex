@@ -133,7 +133,9 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	def fit_width(_renderer)
 		return unless requested_width in :fit | :grow
 
-		self.min_width = [min_width, inset_horizontal + min_width_of_child_nodes].max
+		if requested_width == :fit
+			self.min_width = [min_width, inset_horizontal + min_width_of_child_nodes].max
+		end
 		@natural_content_width = width_of_child_nodes
 		@natural_width = inset_horizontal + @natural_content_width
 		self.width = clamp(@natural_width, min_width, max_width)
@@ -213,7 +215,9 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	def fit_height(_renderer)
 		return unless requested_height in :fit | :grow
 
-		self.min_height = [min_height, inset_vertical + min_height_of_child_nodes].max
+		if requested_height == :fit
+			self.min_height = [min_height, inset_vertical + min_height_of_child_nodes].max
+		end
 		@natural_content_height = height_of_child_nodes
 		@natural_height = inset_vertical + @natural_content_height
 		self.height = clamp(@natural_height, min_height, max_height)
