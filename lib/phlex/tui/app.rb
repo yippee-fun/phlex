@@ -28,6 +28,7 @@ class Phlex::TUI::App < Phlex::TUI
 		@event_queue = Queue.new
 		@queue_mutex = Mutex.new
 		@input_thread = nil
+		@input_io = nil
 		@input_mode_saved = nil
 		@input_mode_active = false
 		@hovered_path = []
@@ -66,9 +67,11 @@ class Phlex::TUI::App < Phlex::TUI
 		previous_lines = []
 		last_size = nil
 		previous_winch_handler = nil
+		previous_int_handler = nil
 
 		enter_terminal_session
 		previous_winch_handler = install_winch_handler
+		previous_int_handler = install_int_handler
 		start_input_thread
 		request_render!
 
@@ -121,8 +124,10 @@ class Phlex::TUI::App < Phlex::TUI
 		@running = false
 	ensure
 		restore_winch_handler(previous_winch_handler)
+		restore_int_handler(previous_int_handler)
 		stop_input_thread
 		disable_input_mode
+		close_input_io
 		exit_terminal_session
 	end
 
@@ -218,6 +223,12 @@ class Phlex::TUI::App < Phlex::TUI
 		nil
 	end
 
+	private def install_int_handler
+		Signal.trap("INT") { stop }
+	rescue ArgumentError, ThreadError
+		nil
+	end
+
 	private def restore_winch_handler(handler)
 		return unless handler
 
@@ -226,8 +237,16 @@ class Phlex::TUI::App < Phlex::TUI
 		nil
 	end
 
+	private def restore_int_handler(handler)
+		return unless handler
+
+		Signal.trap("INT", handler)
+	rescue ArgumentError, ThreadError
+		nil
+	end
+
 	private def start_input_thread
-		console = IO.console
+		console = open_input_io
 		return unless console&.tty?
 		return unless enable_input_mode
 
@@ -253,6 +272,34 @@ class Phlex::TUI::App < Phlex::TUI
 		thread.join(0.1)
 	end
 
+	private def open_input_io
+		return @input_io if @input_io
+		if $stdin.tty?
+			@input_io = $stdin
+			return @input_io
+		end
+
+		console = IO.console
+		if console&.tty?
+			@input_io = console
+			return @input_io
+		end
+
+		@input_io = File.open("/dev/tty", "r+")
+	rescue SystemCallError
+		nil
+	end
+
+	private def close_input_io
+		io = @input_io
+		@input_io = nil
+		return unless io
+
+		io.close unless io.closed? || io.equal?(IO.console) || io.equal?($stdin)
+	rescue IOError
+		nil
+	end
+
 	private def read_key(io)
 		return nil unless io.wait_readable(0.05)
 
@@ -261,24 +308,41 @@ class Phlex::TUI::App < Phlex::TUI
 		return key unless key == "\e"
 
 		buffer = +"\e"
-		while io.wait_readable(0.001)
+		while io.wait_readable(0.01)
 			chunk = io.read_nonblock(1, exception: false)
 			break if chunk == :wait_readable || chunk.nil?
 
 			buffer << chunk
+			break if complete_escape_sequence?(buffer)
 			break if buffer.length >= 64
 		end
 
 		buffer
 	end
 
+	private def complete_escape_sequence?(buffer)
+		return false if buffer == "\e"
+
+		if buffer.start_with?("\e[")
+			return !!(%r{\A\e\[[0-?]*[ -/]*[@-~]\z}.match(buffer))
+		end
+
+		if buffer.start_with?("\eO")
+			return buffer.length >= 3
+		end
+
+		buffer.length >= 2
+	end
+
 	private def enable_input_mode
 		return true if @input_mode_active
+		io = open_input_io
+		return false unless io
 
-		@input_mode_saved = `stty -g`.chomp
+		@input_mode_saved = read_stty_mode(io)
 		return false if @input_mode_saved.empty?
 
-		@input_mode_active = system("stty", "-icanon", "-echo", "min", "1", "time", "0")
+		@input_mode_active = system("stty", "-icanon", "-echo", "isig", "min", "1", "time", "0", in: io)
 	rescue SystemCallError
 		false
 	end
@@ -286,11 +350,19 @@ class Phlex::TUI::App < Phlex::TUI
 	private def disable_input_mode
 		return unless @input_mode_active
 		return unless @input_mode_saved && !@input_mode_saved.empty?
+		io = @input_io
+		return unless io
 
-		system("stty", @input_mode_saved)
+		system("stty", @input_mode_saved, in: io)
 	ensure
 		@input_mode_saved = nil
 		@input_mode_active = false
+	end
+
+	private def read_stty_mode(io)
+		IO.popen(["stty", "-g"], in: io, &:read).to_s.chomp
+	rescue SystemCallError
+		""
 	end
 
 	private def enqueue_event(event)
@@ -311,13 +383,59 @@ class Phlex::TUI::App < Phlex::TUI
 	end
 
 	private def drain_pending_events
+		pending_wheel_event = nil
+
 		loop do
 			event = @event_queue.pop(true)
+
+			if wheel_event_input?(event)
+				mouse_event = parse_mouse_event(event[1])
+				if mouse_event
+					pending_wheel_event = coalesce_wheel_event(pending_wheel_event, mouse_event)
+					next
+				end
+			end
+
+			flush_pending_wheel_event(pending_wheel_event)
+			pending_wheel_event = nil
 			handle_event(event)
 			break unless @running
 		end
 	rescue ThreadError
+		flush_pending_wheel_event(pending_wheel_event)
 		nil
+	end
+
+	private def wheel_event_input?(event)
+		return false unless Array === event
+		return false unless event[0] == :input
+		return false unless String === event[1]
+
+		key = event[1]
+		key.start_with?("\e[<") && key.end_with?("M")
+	end
+
+	private def coalesce_wheel_event(current, incoming)
+		return incoming unless current
+
+		current_delta = current[:delta_y]
+		incoming_delta = incoming[:delta_y]
+
+		if Integer === current_delta && Integer === incoming_delta
+			if (current_delta < 0) != (incoming_delta < 0)
+				incoming
+			else
+				incoming.merge(delta_y: current_delta + incoming_delta)
+			end
+		else
+			incoming
+		end
+	end
+
+	private def flush_pending_wheel_event(event)
+		return unless event
+
+		handle_mouse_event(event)
 	end
 
 	private def handle_input(key)
@@ -377,12 +495,18 @@ class Phlex::TUI::App < Phlex::TUI
 		row = match[3].to_i - 1
 		action = match[4]
 
-		type = if action == "M" && (code & 0b100000) != 0
+		type = if action == "M" && (code & 0b1_000000) != 0
+			:mouse_wheel
+		elsif action == "M" && (code & 0b100000) != 0
 			:mouse_move
 		elsif action == "M"
 			:mouse_down
 		else
 			:mouse_up
+		end
+
+		delta_y = if type == :mouse_wheel
+			((code & 0b1) == 0) ? -1 : 1
 		end
 
 		{
@@ -391,6 +515,7 @@ class Phlex::TUI::App < Phlex::TUI
 			shift: (code & 0b100) != 0,
 			alt: (code & 0b1000) != 0,
 			ctrl: (code & 0b1_0000) != 0,
+			delta_y:,
 			col:,
 			row:,
 			raw: key,

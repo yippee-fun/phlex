@@ -252,6 +252,16 @@ class Phlex::TUI::Runtime
 		changed
 	end
 
+	def focus!(id)
+		entry = @events[id]
+		return false unless entry
+		return false unless entry[:scope] == @active_scope
+
+		changed = @focused_id != id
+		@focused_id = id
+		changed
+	end
+
 	private def resolve_active_scope
 		dialog = @dialog_scopes.max_by { |entry| [entry[:z], entry[:order]] }
 		dialog ? dialog[:scope] : :root

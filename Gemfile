@@ -21,6 +21,9 @@ group :development do
 	gem "irb"
 	gem "markly"
 	gem "kramdown"
+	gem "tty-table"
+	gem "tty-markdown"
+	gem "glamour"
 end
 
 gem "refract", github: "yippee-fun/refract"

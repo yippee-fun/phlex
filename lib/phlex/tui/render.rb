@@ -142,7 +142,9 @@ class Phlex::TUI::Render
 
 		canvas.with_clip(**node_bounds(node)) do
 			node.draw(self)
+		end
 
+		canvas.with_clip(**children_bounds(node)) do
 			node.children.each do |child|
 				traverse_static_draw(child, popover_ancestor:)
 			end
@@ -152,7 +154,9 @@ class Phlex::TUI::Render
 	private def draw_popover_subtree(node)
 		canvas.with_clip(**node_bounds(node)) do
 			node.draw(self)
+		end
 
+		canvas.with_clip(**children_bounds(node)) do
 			node.each_flow_children do |child|
 				draw_popover_subtree(child)
 			end
@@ -161,5 +165,18 @@ class Phlex::TUI::Render
 
 	private def node_bounds(node)
 		{ row: node.row, col: node.col, width: node.width, height: node.height }
+	end
+
+	private def children_bounds(node)
+		if Phlex::TUI::Box === node && node.overflow == :none
+			{
+				row: node.row + node.border_top_width,
+				col: node.col + node.border_left_width,
+				width: [node.width - node.border_horizontal, 0].max,
+				height: [node.height - node.border_vertical, 0].max,
+			}
+		else
+			node_bounds(node)
+		end
 	end
 end

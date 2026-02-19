@@ -3,6 +3,7 @@
 class Phlex::TUI::Box < Phlex::TUI::Node
 	BORDER_MODES = [:separate, :collapse].freeze
 	POINTER_EVENTS_MODES = [:auto, :none].freeze
+	OVERFLOW_MODES = [:none, :border].freeze
 
 	def initialize(
 		align: :left,
@@ -29,6 +30,7 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 		min_width: nil,
 		padding: 0,
 		pointer_events: :auto,
+		overflow: :none,
 		parent: nil,
 		vertical_align: :top,
 		width: :fit
@@ -50,6 +52,7 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 		@text_align = text_align
 		@padding = Phlex::TUI::Padding.parse(padding)
 		@pointer_events = validate_pointer_events(pointer_events)
+		@overflow = validate_overflow(overflow)
 		@vertical_align = vertical_align
 		@requested_width = width
 		@bold = (nil == bold) ? @parent&.bold : bold
@@ -70,6 +73,13 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 			max_width: max_width || ((Integer === width) ? width : Float::INFINITY),
 			max_height: max_height || ((Integer === height) ? height : Float::INFINITY)
 		)
+
+		@natural_content_width = 0
+		@natural_content_height = 0
+		@natural_width = 0
+		@natural_height = 0
+		@viewport_width = [@width - inset_horizontal, 0].max
+		@viewport_height = [@height - inset_vertical, 0].max
 	end
 
 	attr_reader :bg
@@ -88,6 +98,7 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	attr_reader :text_align
 	attr_reader :padding
 	attr_reader :pointer_events
+	attr_reader :overflow
 	attr_reader :vertical_align
 	attr_reader :children
 	attr_reader :bold
@@ -96,13 +107,21 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	attr_reader :blink
 	attr_reader :inverse
 	attr_reader :strikethrough
+	attr_reader :natural_content_width
+	attr_reader :natural_content_height
+	attr_reader :natural_width
+	attr_reader :natural_height
+	attr_reader :viewport_width
+	attr_reader :viewport_height
 
 	def fit_width(_renderer)
 		return unless requested_width in :fit | :grow
 
 		self.min_width = [min_width, inset_horizontal + min_width_of_child_nodes].max
-		natural_width = inset_horizontal + width_of_child_nodes
-		self.width = clamp(natural_width, min_width, max_width)
+		@natural_content_width = width_of_child_nodes
+		@natural_width = inset_horizontal + @natural_content_width
+		self.width = clamp(@natural_width, min_width, max_width)
+		refresh_viewport_dimensions!
 	end
 
 	def grow_width(_renderer)
@@ -171,14 +190,18 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 
 			shrinkables.reject! { |it| it.width <= it.min_width }
 		end
+
+		refresh_viewport_dimensions!
 	end
 
 	def fit_height(_renderer)
 		return unless requested_height in :fit | :grow
 
 		self.min_height = [min_height, inset_vertical + min_height_of_child_nodes].max
-		natural_height = inset_vertical + height_of_child_nodes
-		self.height = clamp(natural_height, min_height, max_height)
+		@natural_content_height = height_of_child_nodes
+		@natural_height = inset_vertical + @natural_content_height
+		self.height = clamp(@natural_height, min_height, max_height)
+		refresh_viewport_dimensions!
 	end
 
 	def grow_height(_renderer)
@@ -247,6 +270,8 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 
 			shrinkables.reject! { |it| it.height <= it.min_height }
 		end
+
+		refresh_viewport_dimensions!
 	end
 
 	def position(_renderer)
@@ -287,6 +312,8 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 
 			previous_child = child
 		end
+
+		refresh_viewport_dimensions!
 	end
 
 	def draw(renderer)
@@ -306,6 +333,14 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 
 	def available_internal_height
 		height - border_vertical - padding.vertical - height_of_child_nodes
+	end
+
+	def actual_width
+		width
+	end
+
+	def actual_height
+		height
 	end
 
 	def border_top_width
@@ -493,6 +528,14 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 		value
 	end
 
+	private def validate_overflow(value)
+		unless OVERFLOW_MODES.include?(value)
+			raise ArgumentError, "Unknown overflow mode: #{value.inspect}"
+		end
+
+		value
+	end
+
 	private def align_offset(align, available, content)
 		available_space = [available - content, 0].max
 
@@ -512,5 +555,10 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 		return max if min > max
 
 		value.clamp(min, max)
+	end
+
+	private def refresh_viewport_dimensions!
+		@viewport_width = [width - inset_horizontal, 0].max
+		@viewport_height = [height - inset_vertical, 0].max
 	end
 end

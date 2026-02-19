@@ -55,7 +55,7 @@ class Phlex::TUI
 		end
 	end
 
-	def box(*, focusable: false, name: nil, pointer_events: :auto, on_focus: nil, on_blur: nil, on_key_down: nil, on_key_up: nil, on_mouse_down: nil, on_mouse_up: nil, on_mouse_move: nil, on_mouse_enter: nil, on_mouse_leave: nil, **)
+	def box(*, focusable: false, name: nil, pointer_events: :auto, overflow: :none, on_focus: nil, on_blur: nil, on_key_down: nil, on_key_up: nil, on_mouse_down: nil, on_mouse_up: nil, on_mouse_move: nil, on_mouse_wheel: nil, on_mouse_enter: nil, on_mouse_leave: nil, **)
 		handlers = {
 			focus: on_focus,
 			blur: on_blur,
@@ -64,6 +64,7 @@ class Phlex::TUI
 			mouse_down: on_mouse_down,
 			mouse_up: on_mouse_up,
 			mouse_move: on_mouse_move,
+			mouse_wheel: on_mouse_wheel,
 			mouse_enter: on_mouse_enter,
 			mouse_leave: on_mouse_leave,
 		}.compact
@@ -81,7 +82,7 @@ class Phlex::TUI
 			raise ArgumentError, "focusable boxes require a name"
 		end
 
-		node = Phlex::TUI::Box.new(*, parent: @tree.current_parent, owner: self, focusable:, name:, pointer_events:, **)
+		node = Phlex::TUI::Box.new(*, parent: @tree.current_parent, owner: self, focusable:, name:, pointer_events:, overflow:, **)
 		@tree.attach(node)
 		@tree.stack << node
 
@@ -93,7 +94,7 @@ class Phlex::TUI
 			end
 
 			yield_content { yield } if block_given?
-			nil
+			node
 		ensure
 			@tree.stack.pop
 		end
@@ -128,7 +129,7 @@ class Phlex::TUI
 
 		begin
 			yield_content { yield } if block_given?
-			nil
+			node
 		ensure
 			@tree.stack.pop
 		end
