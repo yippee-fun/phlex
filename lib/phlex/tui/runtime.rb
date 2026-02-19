@@ -93,6 +93,18 @@ class Phlex::TUI::Runtime
 		@events[id]
 	end
 
+	def element_ref(owner:, name:)
+		Phlex::TUI::ElementRef.new(owner:, name:)
+	end
+
+	def focus_element(owner:, name:)
+		focus!(element_ref(owner:, name:))
+	end
+
+	def focused_element?(owner:, name:)
+		focused?(element_ref(owner:, name:))
+	end
+
 	def dispatch(id, event)
 		entry = @events[id]
 		return nil unless entry
@@ -236,6 +248,7 @@ class Phlex::TUI::Runtime
 	end
 
 	private def extract_name(id)
+		return id.name if Phlex::TUI::ElementRef === id
 		return id[1] if Array === id && id.length > 1
 
 		id
@@ -260,6 +273,8 @@ class Phlex::TUI::Runtime
 			:blur
 		in Phlex::TUI::KeyDownEvent
 			:key_down
+		in Phlex::TUI::TextInputEvent
+			:text_input
 		in Phlex::TUI::MouseDownEvent
 			:mouse_down
 		in Phlex::TUI::MouseUpEvent

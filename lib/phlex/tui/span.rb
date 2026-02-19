@@ -3,7 +3,7 @@
 class Phlex::TUI::Span < Phlex::TUI::Node
 	def initialize(content:, parent:, font: nil, color: nil, bg: nil, bold: nil, italic: nil, underline: nil, blink: nil, inverse: nil, strikethrough: nil)
 		@parent = parent
-		@content = content.to_s
+		@content = normalize_utf8(content.to_s)
 		@font = font
 		@color = (nil == color) ? @parent&.color : color
 		@bg = (nil == bg) ? @parent&.bg : bg
@@ -33,6 +33,14 @@ class Phlex::TUI::Span < Phlex::TUI::Node
 	attr_reader :content, :font, :color, :bg, :bold, :italic, :underline, :blink, :inverse, :strikethrough, :requested_width, :requested_height
 
 	private
+
+	def normalize_utf8(text)
+		value = text.dup
+		value = value.force_encoding(Encoding::UTF_8) unless value.encoding == Encoding::UTF_8
+		return value if value.valid_encoding?
+
+		value.scrub
+	end
 
 	attr_reader :parent
 end

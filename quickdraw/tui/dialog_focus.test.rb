@@ -37,10 +37,10 @@ class TUIDialogFocusTest < Quickdraw::Test
 		assert_equal [component.object_id, :dialog, :settings], runtime.active_scope
 
 		runtime.focus_next!
-		assert_equal [component.object_id, :dialog_first], runtime.focused_id
+		assert_equal runtime.element_ref(owner: component, name: :dialog_first), runtime.focused_id
 
 		runtime.focus_next!
-		assert_equal [component.object_id, :dialog_second], runtime.focused_id
+		assert_equal runtime.element_ref(owner: component, name: :dialog_second), runtime.focused_id
 	end
 
 	test "non-dialog popover does not trap focus" do
@@ -55,7 +55,7 @@ class TUIDialogFocusTest < Quickdraw::Test
 		assert_equal :root, runtime.active_scope
 
 		runtime.focus_next!
-		assert_equal [component.object_id, :root], runtime.focused_id
+		assert_equal runtime.element_ref(owner: component, name: :root), runtime.focused_id
 	end
 
 	test "focus returns to root scope when dialog closes" do
@@ -67,7 +67,7 @@ class TUIDialogFocusTest < Quickdraw::Test
 		component.call(Phlex::TUI::Tree.new, context:)
 		runtime.finalize_frame!
 		runtime.focus_next!
-		assert_equal [component.object_id, :dialog_first], runtime.focused_id
+		assert_equal runtime.element_ref(owner: component, name: :dialog_first), runtime.focused_id
 
 		component.hide_dialog!
 		runtime.begin_frame!
@@ -75,7 +75,7 @@ class TUIDialogFocusTest < Quickdraw::Test
 		runtime.finalize_frame!
 
 		assert_equal :root, runtime.active_scope
-		assert_equal [component.object_id, :root], runtime.focused_id
+		assert_equal runtime.element_ref(owner: component, name: :root), runtime.focused_id
 	end
 
 	test "dialog popovers require a name" do

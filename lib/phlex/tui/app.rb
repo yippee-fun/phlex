@@ -2,6 +2,7 @@
 
 require "io/console"
 require "thread"
+require "base64"
 
 class Phlex::TUI::App < Phlex::TUI
 	CURSOR_HIDE = "\e[?25l"
@@ -11,6 +12,10 @@ class Phlex::TUI::App < Phlex::TUI
 	RESET_STYLE = "\e[0m"
 	ENABLE_MOUSE_TRACKING = "\e[?1000h\e[?1003h\e[?1006h"
 	DISABLE_MOUSE_TRACKING = "\e[?1006l\e[?1003l\e[?1000l"
+	ENABLE_BRACKETED_PASTE = "\e[?2004h"
+	DISABLE_BRACKETED_PASTE = "\e[?2004l"
+	BRACKETED_PASTE_START = "\e[200~"
+	BRACKETED_PASTE_END = "\e[201~"
 
 	KEY_NAMES = {
 		"\e[A" => :up,
@@ -21,6 +26,24 @@ class Phlex::TUI::App < Phlex::TUI
 		"\eOC" => :right,
 		"\e[D" => :left,
 		"\eOD" => :left,
+		"\eb" => :alt_left,
+		"\ef" => :alt_right,
+		"\e[1;2A" => :shift_up,
+		"\e[1;2B" => :shift_down,
+		"\e[1;2C" => :shift_right,
+		"\e[1;2D" => :shift_left,
+		"\e[1;3D" => :alt_left,
+		"\e[1;3C" => :alt_right,
+		"\e[1;4D" => :shift_alt_left,
+		"\e[1;4C" => :shift_alt_right,
+		"\e[1;9D" => :cmd_left,
+		"\e[1;9C" => :cmd_right,
+		"\e[1;10D" => :shift_cmd_left,
+		"\e[1;10C" => :shift_cmd_right,
+		"\e\b" => :alt_backspace,
+		"\e\u007f" => :alt_backspace,
+		"\ec" => :alt_c,
+		"\eC" => :alt_c,
 		"\e[5~" => :page_up,
 		"\e[6~" => :page_down,
 		"\e[H" => :home,
@@ -32,7 +55,12 @@ class Phlex::TUI::App < Phlex::TUI
 		"\r" => :enter,
 		"\n" => :enter,
 		"\t" => :tab,
+		"\u0016" => :ctrl_v,
+		"\u0018" => :ctrl_x,
+		"\u0007" => :ctrl_g,
+		"\u0015" => :cmd_backspace,
 		"\177" => :backspace,
+		"\e[3~" => :delete,
 	}.freeze
 
 	def initialize(stdout: $stdout)
@@ -57,9 +85,13 @@ class Phlex::TUI::App < Phlex::TUI
 		@hovered_path = []
 		@last_pointer_col = nil
 		@last_pointer_row = nil
+		@mouse_capture_ref = nil
 		@last_frame_duration = nil
 		@last_render_duration = nil
 		@last_draw_duration = nil
+		@paste_mode = false
+		@paste_buffer = +""
+		@clipboard = +""
 	end
 
 	attr_reader :rows
@@ -68,6 +100,31 @@ class Phlex::TUI::App < Phlex::TUI
 	attr_reader :last_frame_duration
 	attr_reader :last_render_duration
 	attr_reader :last_draw_duration
+
+	def focus_element(owner:, name:)
+		element_id = @runtime.element_ref(owner:, name:)
+		previous_focused_id = @runtime.focused_id
+		changed = @runtime.focus!(element_id)
+		return false unless changed
+
+		dispatch_focus_transition(previous_focused_id, @runtime.focused_id)
+		request_render!
+		true
+	end
+
+	def focused_element?(owner:, name:)
+		@runtime.focused_element?(owner:, name:)
+	end
+
+	def copy_to_clipboard(text)
+		@clipboard = text.to_s.dup
+		write_osc52_copy(@clipboard)
+		nil
+	end
+
+	def paste_from_clipboard
+		@clipboard.dup
+	end
 
 	def app
 		self
@@ -89,6 +146,9 @@ class Phlex::TUI::App < Phlex::TUI
 		@render_requested = false
 		@render_signal_pending = false
 		@event_queue = Queue.new
+		@paste_mode = false
+		@paste_buffer = +""
+		@mouse_capture_ref = nil
 		previous_lines = []
 		last_size = nil
 		previous_winch_handler = nil
@@ -207,6 +267,7 @@ class Phlex::TUI::App < Phlex::TUI
 		@stdout.write(ENTER_ALT_SCREEN)
 		@stdout.write(CURSOR_HIDE)
 		@stdout.write(ENABLE_MOUSE_TRACKING)
+		@stdout.write(ENABLE_BRACKETED_PASTE)
 		@stdout.write("\e[H\e[2J")
 		@stdout.flush
 	end
@@ -216,6 +277,7 @@ class Phlex::TUI::App < Phlex::TUI
 
 		@stdout.write(RESET_STYLE)
 		@stdout.write(DISABLE_MOUSE_TRACKING)
+		@stdout.write(DISABLE_BRACKETED_PASTE)
 		@stdout.write(CURSOR_SHOW)
 		@stdout.write(EXIT_ALT_SCREEN)
 		@stdout.flush
@@ -330,7 +392,7 @@ class Phlex::TUI::App < Phlex::TUI
 
 		key = io.read_nonblock(1, exception: false)
 		return nil if key == :wait_readable || key.nil?
-		return key unless key == "\e"
+		return decode_text_key(io, key) unless key == "\e"
 
 		buffer = +"\e"
 		while io.wait_readable(0.01)
@@ -343,6 +405,38 @@ class Phlex::TUI::App < Phlex::TUI
 		end
 
 		buffer
+			.dup
+			.force_encoding(Encoding::UTF_8)
+	end
+
+	private def decode_text_key(io, key)
+		byte = key.getbyte(0)
+		return key.dup.force_encoding(Encoding::UTF_8) unless byte && byte >= 0x80
+
+		expected = utf8_sequence_length(byte)
+		buffer = key.b
+
+		while buffer.bytesize < expected && io.wait_readable(0.001)
+			chunk = io.read_nonblock(1, exception: false)
+			break if chunk == :wait_readable || chunk.nil?
+
+			buffer << chunk
+		end
+
+		text = buffer.dup.force_encoding(Encoding::UTF_8)
+		text.valid_encoding? ? text : text.scrub
+	end
+
+	private def utf8_sequence_length(first_byte)
+		if (first_byte & 0b1110_0000) == 0b1100_0000
+			2
+		elsif (first_byte & 0b1111_0000) == 0b1110_0000
+			3
+		elsif (first_byte & 0b1111_1000) == 0b1111_0000
+			4
+		else
+			1
+		end
 	end
 
 	private def complete_escape_sequence?(buffer)
@@ -436,8 +530,7 @@ class Phlex::TUI::App < Phlex::TUI
 		return false unless event[0] == :input
 		return false unless String === event[1]
 
-		key = event[1]
-		key.start_with?("\e[<") && key.end_with?("M")
+		Phlex::TUI::MouseWheelEvent === parse_mouse_event(event[1])
 	end
 
 	private def coalesce_wheel_event(current, incoming)
@@ -464,8 +557,30 @@ class Phlex::TUI::App < Phlex::TUI
 	end
 
 	private def handle_input(raw_key)
+		if @paste_mode
+			if raw_key == BRACKETED_PASTE_END
+				dispatch_text_input(@paste_buffer)
+				@paste_buffer = +""
+				@paste_mode = false
+			else
+				@paste_buffer << raw_key
+			end
+
+			return
+		end
+
+		if raw_key == BRACKETED_PASTE_START
+			@paste_mode = true
+			@paste_buffer = +""
+			return
+		end
+
 		if raw_key == "\u0003"
-			stop
+			event = Phlex::TUI::KeyDownEvent.new(key: :ctrl_c, raw: raw_key)
+			event = @runtime.dispatch_bubbled(@runtime.focused_id, event)
+			unless event&.default_prevented?
+				stop
+			end
 			return
 		end
 
@@ -480,10 +595,42 @@ class Phlex::TUI::App < Phlex::TUI
 
 		event = @runtime.dispatch_bubbled(@runtime.focused_id, event)
 
+		if text_input?(raw_key)
+			dispatch_text_input(raw_key) unless event&.default_prevented?
+			return
+		end
+
 		if navigation_key?(key)
 			handle_navigation_key(key) unless event&.default_prevented?
 			nil
 		end
+	end
+
+	private def text_input?(raw_key)
+		return false if raw_key.empty?
+		return false if raw_key.start_with?("\e")
+		return false if raw_key == "\n" || raw_key == "\r" || raw_key == "\t"
+
+		text = raw_key.dup
+		text = text.force_encoding(Encoding::UTF_8) unless text.encoding == Encoding::UTF_8
+		return false unless text.valid_encoding?
+
+		text.each_codepoint do |codepoint|
+			return false if codepoint < 32 || codepoint == 127
+		end
+
+		true
+	end
+
+	private def dispatch_text_input(text)
+		return if text.nil? || text.empty?
+
+		normalized = text.dup
+		normalized = normalized.force_encoding(Encoding::UTF_8) unless normalized.encoding == Encoding::UTF_8
+		normalized = normalized.scrub unless normalized.valid_encoding?
+
+		event = Phlex::TUI::TextInputEvent.new(text: normalized, raw: normalized)
+		@runtime.dispatch_bubbled(@runtime.focused_id, event)
 	end
 
 	private def navigation_key?(key)
@@ -514,6 +661,19 @@ class Phlex::TUI::App < Phlex::TUI
 	private def normalize_key(raw_key)
 		named = KEY_NAMES[raw_key]
 		return named if named
+
+		if raw_key.start_with?("\e\e[")
+			case raw_key[2..]
+			in "[D"
+				return :alt_left
+			in "[C"
+				return :alt_right
+			in "[A"
+				return :alt_up
+			in "[B"
+				return :alt_down
+			end
+		end
 
 		if raw_key.bytesize == 1
 			char = raw_key.downcase
@@ -568,22 +728,49 @@ class Phlex::TUI::App < Phlex::TUI
 			@last_pointer_row = row
 		end
 
-		target_id = @runtime.hit_test(col:, row:)
+		hit_target_id = @runtime.hit_test(col:, row:)
+		capture_id = @mouse_capture_ref
+		if capture_id && !@runtime.event_for(capture_id)
+			@mouse_capture_ref = nil
+			capture_id = nil
+		end
 
-		if Phlex::TUI::MouseWheelEvent === mouse_event && target_id.nil?
+		target_id = case mouse_event
+		in Phlex::TUI::MouseDownEvent
+			hit_target_id
+		in Phlex::TUI::MouseMoveEvent | Phlex::TUI::MouseUpEvent
+			capture_id || hit_target_id
+		else
+			hit_target_id
+		end
+
+		if Phlex::TUI::MouseWheelEvent === mouse_event && hit_target_id.nil?
 			last_col = previous_col
 			last_row = previous_row
 			if Integer === last_col && Integer === last_row
-				target_id = @runtime.hit_test(col: last_col, row: last_row)
+				hit_target_id = @runtime.hit_test(col: last_col, row: last_row)
 			end
 
-			target_id ||= @hovered_path.first
+			hit_target_id ||= @hovered_path.first
+			target_id = hit_target_id
 		end
 
-		dispatch_hover_transition(@runtime.event_path_for(target_id))
-		return unless target_id
+		dispatch_hover_transition(@runtime.event_path_for(hit_target_id))
+		unless target_id
+			@mouse_capture_ref = nil if Phlex::TUI::MouseUpEvent === mouse_event
+			return
+		end
 
 		@runtime.dispatch_bubbled(target_id, mouse_event)
+
+		case mouse_event
+		in Phlex::TUI::MouseDownEvent
+			@mouse_capture_ref = target_id
+		in Phlex::TUI::MouseUpEvent
+			@mouse_capture_ref = nil
+		else
+			nil
+		end
 	end
 
 	private def dispatch_hover_transition(next_path)
@@ -631,5 +818,16 @@ class Phlex::TUI::App < Phlex::TUI
 		end
 
 		length
+	end
+
+	private def write_osc52_copy(text)
+		return unless @session_active
+		return if text.empty?
+
+		encoded = Base64.strict_encode64(text)
+		@stdout.write("\e]52;c;#{encoded}\a")
+		@stdout.flush
+	rescue IOError, SystemCallError
+		nil
 	end
 end

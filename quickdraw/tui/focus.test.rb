@@ -42,10 +42,10 @@ class TUIFocusTest < Quickdraw::Test
 		runtime.finalize_frame!
 
 		runtime.focus_next!
-		assert_equal [root.left.object_id, :field], runtime.focused_id
+		assert_equal runtime.element_ref(owner: root.left, name: :field), runtime.focused_id
 
 		runtime.focus_next!
-		assert_equal [root.right.object_id, :field], runtime.focused_id
+		assert_equal runtime.element_ref(owner: root.right, name: :field), runtime.focused_id
 	end
 
 	test "focusable box requires a name" do

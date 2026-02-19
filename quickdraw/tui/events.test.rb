@@ -6,6 +6,7 @@ class TUIEventsTest < Quickdraw::Test
 	class EventOwner
 		def initialize
 			@key_down_events = []
+			@text_input_events = []
 			@focus_events = []
 			@blur_events = []
 			@mouse_events = []
@@ -14,6 +15,7 @@ class TUIEventsTest < Quickdraw::Test
 		end
 
 		attr_reader :key_down_events
+		attr_reader :text_input_events
 		attr_reader :focus_events
 		attr_reader :blur_events
 		attr_reader :mouse_events
@@ -44,6 +46,57 @@ class TUIEventsTest < Quickdraw::Test
 		app.__send__(:handle_input, "a")
 
 		assert_equal [:a], owner.key_down_events
+	end
+
+	test "printable keys dispatch text_input to focused element" do
+		app = Phlex::TUI::App.new
+		owner = EventOwner.new
+		runtime = app.runtime
+
+		runtime.begin_frame!
+		runtime.register_element(
+			id: [:owner, :field],
+			owner:,
+			handlers: {
+				text_input: -> (event) { @text_input_events << event.text },
+			},
+			focusable: true,
+			scope: :root
+		)
+		runtime.finalize_frame!
+		runtime.focus_next!
+
+		app.__send__(:handle_input, "a")
+
+		assert_equal ["a"], owner.text_input_events
+	end
+
+	test "bracketed paste dispatches one text_input event" do
+		app = Phlex::TUI::App.new
+		owner = EventOwner.new
+		runtime = app.runtime
+
+		runtime.begin_frame!
+		runtime.register_element(
+			id: [:owner, :field],
+			owner:,
+			handlers: {
+				text_input: -> (event) { @text_input_events << event.text },
+			},
+			focusable: true,
+			scope: :root
+		)
+		runtime.finalize_frame!
+		runtime.focus_next!
+
+		app.__send__(:handle_input, "\e[200~")
+		app.__send__(:handle_input, "h")
+		app.__send__(:handle_input, "i")
+		app.__send__(:handle_input, "\n")
+		app.__send__(:handle_input, "x")
+		app.__send__(:handle_input, "\e[201~")
+
+		assert_equal ["hi\nx"], owner.text_input_events
 	end
 
 	test "navigation keys dispatch on_key_down and move focus by default" do
@@ -183,6 +236,30 @@ class TUIEventsTest < Quickdraw::Test
 		app.__send__(:handle_input, "\e[<0;2;2M")
 
 		assert_equal [[Phlex::TUI::MouseDownEvent, 1, 1]], owner.mouse_events
+	end
+
+	test "mouse up dispatches to captured target when released outside" do
+		app = Phlex::TUI::App.new
+		owner = EventOwner.new
+		runtime = app.runtime
+
+		runtime.begin_frame!
+		runtime.register_element(
+			id: [:owner, :mouse_target],
+			owner:,
+			handlers: {
+				mouse_down: -> (_event) { @mouse_events << :down },
+				mouse_up: -> (_event) { @mouse_events << :up },
+			},
+			scope: :root
+		)
+		runtime.update_element_node([:owner, :mouse_target], Node.new(1, 1, 4, 2, :auto))
+		runtime.finalize_frame!
+
+		app.__send__(:handle_input, "\e[<0;2;2M")
+		app.__send__(:handle_input, "\e[<0;30;20m")
+
+		assert_equal [:down, :up], owner.mouse_events
 	end
 
 	test "hit testing uses final node geometry at frame finalize" do
@@ -590,7 +667,7 @@ class TUIEventsTest < Quickdraw::Test
 		component.call(Phlex::TUI::Tree.new, context:)
 		runtime.finalize_frame!
 
-		event = runtime.event_for([component.object_id, :plus])
+		event = runtime.event_for(runtime.element_ref(owner: component, name: :plus))
 		assert_equal :increment, event[:handlers][:mouse_down]
 	end
 end

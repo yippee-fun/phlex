@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class Phlex::TUI::Paragraph < Phlex::TUI::Node
-	def initialize(parent:, color: nil, bg: nil, bold: nil, italic: nil, underline: nil, blink: nil, inverse: nil, strikethrough: nil)
+	def initialize(parent:, color: nil, bg: nil, bold: nil, italic: nil, underline: nil, blink: nil, inverse: nil, strikethrough: nil, trim_trailing_whitespace: true)
 		@parent = parent
 		@children = []
 		@color = (nil == color) ? @parent&.color : color
@@ -15,6 +15,7 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		@requested_width = :fit
 		@requested_height = :fit
 		@wrapped_lines = []
+		@trim_trailing_whitespace = trim_trailing_whitespace
 
 		initialize_geometry(
 			width: 0,
@@ -57,54 +58,15 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 	def wrap_text(_renderer)
 		return if width <= 0
 
-		lines = []
-		current_line = []
-		current_length = 0
-		pending_spaces = []
-		pending_word = []
-
-		tokenize.each do |token|
-			case token[:type]
-			in :newline
-				current_line, current_length = append_pending_word!(
-					lines,
-					current_line,
-					current_length,
-					pending_spaces,
-					pending_word
-				)
-				pending_spaces.clear
-				current_length = trim_trailing_whitespace!(current_line, current_length)
-				lines << current_line
-				current_line = []
-				current_length = 0
-			in :space
-				current_line, current_length = append_pending_word!(
-					lines,
-					current_line,
-					current_length,
-					pending_spaces,
-					pending_word
-				)
-				pending_spaces << token_to_run(token)
-			in :word
-				pending_word << token_to_run(token)
-			end
-		end
-
-		current_line, current_length = append_pending_word!(
-			lines,
-			current_line,
-			current_length,
-			pending_spaces,
-			pending_word
+		mode = @trim_trailing_whitespace ? :word : :grapheme
+		@wrapped_lines = Phlex::TUI::TextRun.wrap_runs(
+			runs: styled_runs,
+			width:,
+			mode:,
+			trim_trailing_whitespace: @trim_trailing_whitespace
 		)
-		current_length = trim_trailing_whitespace!(current_line, current_length)
-		lines << current_line unless current_line.empty?
-
-		@wrapped_lines = lines
-		self.height = lines.size
-		self.min_height = lines.size
+		self.height = @wrapped_lines.size
+		self.min_height = @wrapped_lines.size
 	end
 
 	def draw(renderer)
@@ -292,6 +254,100 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		end
 
 		clipped
+	end
+
+	private def styled_runs
+		runs = []
+		children.each do |span|
+			runs << {
+				text: span.content,
+				font: span.font,
+				color: span.color,
+				bg: span.bg,
+				bold: span.bold,
+				italic: span.italic,
+				underline: span.underline,
+				blink: span.blink,
+				inverse: span.inverse,
+				strikethrough: span.strikethrough,
+			}
+		end
+
+		runs
+	end
+
+	private def wrap_text_preserving_whitespace
+		lines = []
+		current_line = []
+		current_width = 0
+
+		children.each do |span|
+			Phlex::TUI::TextWidth.each_grapheme(span.content) do |grapheme|
+				if grapheme == "\n"
+					lines << current_line
+					current_line = []
+					current_width = 0
+					next
+				end
+
+				grapheme_width = Phlex::TUI::TextWidth.grapheme_width(grapheme)
+				if !current_line.empty? && (current_width + grapheme_width) > width
+					lines << current_line
+					current_line = []
+					current_width = 0
+				end
+
+				append_grapheme_run!(current_line, grapheme, span)
+				current_width += grapheme_width
+			end
+		end
+
+		lines << current_line unless current_line.empty?
+
+		@wrapped_lines = lines
+		self.height = lines.size
+		self.min_height = lines.size
+	end
+
+	private def append_grapheme_run!(line_runs, grapheme, span)
+		if line_runs.empty?
+			line_runs << run_from_span_text(span, grapheme)
+			return
+		end
+
+		last = line_runs.last
+		if same_style?(last, span)
+			last[:text] << grapheme
+		else
+			line_runs << run_from_span_text(span, grapheme)
+		end
+	end
+
+	private def same_style?(run, span)
+		run[:font] == span.font &&
+			run[:color] == span.color &&
+			run[:bg] == span.bg &&
+			run[:bold] == span.bold &&
+			run[:italic] == span.italic &&
+			run[:underline] == span.underline &&
+			run[:blink] == span.blink &&
+			run[:inverse] == span.inverse &&
+			run[:strikethrough] == span.strikethrough
+	end
+
+	private def run_from_span_text(span, text)
+		{
+			text:,
+			font: span.font,
+			color: span.color,
+			bg: span.bg,
+			bold: span.bold,
+			italic: span.italic,
+			underline: span.underline,
+			blink: span.blink,
+			inverse: span.inverse,
+			strikethrough: span.strikethrough,
+		}
 	end
 
 	private

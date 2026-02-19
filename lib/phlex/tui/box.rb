@@ -114,6 +114,22 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	attr_reader :viewport_width
 	attr_reader :viewport_height
 
+	def focus
+		return false unless focusable
+		return false unless owner
+		return false unless name
+
+		owner.app&.focus_element(owner:, name:) || false
+	end
+
+	def focused?
+		return false unless focusable
+		return false unless owner
+		return false unless name
+
+		owner.app&.focused_element?(owner:, name:) || false
+	end
+
 	def fit_width(_renderer)
 		return unless requested_width in :fit | :grow
 

@@ -53,12 +53,13 @@ class Phlex::TUI
 		end
 	end
 
-	def box(*, focusable: false, name: nil, pointer_events: :auto, overflow: :none, on_focus: nil, on_blur: nil, on_key_down: nil, on_key_up: nil, on_mouse_down: nil, on_mouse_up: nil, on_mouse_move: nil, on_mouse_wheel: nil, on_mouse_enter: nil, on_mouse_leave: nil, **)
+	def box(*, focusable: false, name: nil, pointer_events: :auto, overflow: :none, on_focus: nil, on_blur: nil, on_key_down: nil, on_key_up: nil, on_text_input: nil, on_mouse_down: nil, on_mouse_up: nil, on_mouse_move: nil, on_mouse_wheel: nil, on_mouse_enter: nil, on_mouse_leave: nil, **)
 		handlers = {
 			focus: on_focus,
 			blur: on_blur,
 			key_down: on_key_down,
 			key_up: on_key_up,
+			text_input: on_text_input,
 			mouse_down: on_mouse_down,
 			mouse_up: on_mouse_up,
 			mouse_move: on_mouse_move,
@@ -99,9 +100,19 @@ class Phlex::TUI
 	end
 
 	def focused?(name)
-		return false unless runtime
+		if Phlex::TUI::App === app
+			return app.focused_element?(owner: self, name:)
+		end
 
-		runtime.focused?(focus_key(name))
+		runtime&.focused_element?(owner: self, name:) || false
+	end
+
+	def focus(name)
+		if Phlex::TUI::App === app
+			return app.focus_element(owner: self, name:)
+		end
+
+		runtime&.focus_element(owner: self, name:)
 	end
 
 	def render(component, &)
@@ -146,9 +157,10 @@ class Phlex::TUI
 	end
 
 	def paragraph(value = nil, **options)
-		span_options = options
+		span_options = options.dup
 		paragraph_options = options.dup
 		paragraph_options.delete(:font)
+		span_options.delete(:trim_trailing_whitespace)
 
 		node = Phlex::TUI::Paragraph.new(parent: @tree.current_parent, **paragraph_options)
 		@tree.attach(node)
@@ -183,7 +195,7 @@ class Phlex::TUI
 	end
 
 	private def focus_key(name)
-		[object_id, name]
+		Phlex::TUI::ElementRef.new(owner: self, name:)
 	end
 
 	private def focus_scope_for(node)

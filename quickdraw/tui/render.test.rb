@@ -40,6 +40,12 @@ class TUIRenderTest < Quickdraw::Test
 		end
 	end
 
+	class PreserveTrailingWhitespaceExample < Phlex::TUI
+		def view_template
+			paragraph("A  ", trim_trailing_whitespace: false)
+		end
+	end
+
 	test "fit canvas uses resolved canvas for canvas-anchored popovers" do
 		tree = Example.new.call
 		renderer = Phlex::TUI::Render.new(tree, width: :fit, height: :fit)
@@ -80,5 +86,14 @@ class TUIRenderTest < Quickdraw::Test
 		lines = renderer.call.gsub(/\e\[[\d;]*m/, "").split("\n")
 
 		assert_equal true, lines.first.include?("HELLO")
+	end
+
+	test "paragraph can preserve trailing whitespace" do
+		tree = PreserveTrailingWhitespaceExample.new.call
+		renderer = Phlex::TUI::Render.new(tree, width: :fit, height: :fit)
+
+		output = renderer.call.gsub(/\e\[[\d;]*m/, "")
+
+		assert_equal "A  ", output
 	end
 end

@@ -4,35 +4,60 @@
 require "bundler/setup"
 require "phlex"
 
-class ScrollerShowcase < Phlex::TUI
+class InputShowcase < Phlex::TUI
 	def initialize
-		@scroller = Phlex::Tux::Scroller.new(
+		@single = Phlex::Tux::Input.new(
+			value: "hello world",
+			placeholder: "Type here...",
 			border: :rounded,
 			padding: [0, 1],
-			height: 14,
-			width: :grow
+			height: 3,
+			width: :grow,
+			on_change: -> (value) { @single_value = value }
+		)
+
+		@multiline = Phlex::Tux::Input.new(
+			multiline: true,
+			placeholder: "Multiline input (paste with Cmd+V)",
+			border: :rounded,
+			padding: [0, 1],
+			height: 6,
+			width: :grow,
+			on_change: -> (value) { @multiline_value = value }
+		)
+
+		@single_value = @single.value
+		@multiline_value = @multiline.value
+
+		@selectable = Phlex::Tux::Text.new(
+			value: "This is selectable text. Drag to select and press Ctrl+C to copy.\nIt is read-only but still focusable.",
+			border: :rounded,
+			padding: [0, 1],
+			height: 3,
+			width: :grow,
 		)
 	end
 
 	def view_template
 		box(width: :grow, height: :grow, border: :rounded, padding: 1, gap: 1) do
-			paragraph("Phlex::Tux::Scroller Demo", bold: true)
-			paragraph("Use arrow keys, PageUp/PageDown, Home/End, or mouse wheel", color: :bright_cyan)
+			paragraph("Phlex::Tux::Input Demo", bold: true)
+			paragraph("Click an input to focus. Arrow/Home/End/Alt+Arrow work.", color: :bright_cyan)
+			paragraph("Paste with Cmd+V. Ctrl+V pastes internal clipboard. Ctrl+G copies selection. Ctrl+C exits.", color: :bright_cyan)
 
-			render(@scroller) do
-				paragraph("A focused demo with overflowing content.")
-				paragraph("")
+			paragraph("Single line", bold: true)
+			render(@single)
 
-				50.times do |index|
-					paragraph("Row #{(index + 1).to_s.rjust(2, '0')} - Scroll me")
-				end
+			paragraph("Multiline", bold: true)
+			render(@multiline)
+
+			paragraph("Selectable Text (read-only)", bold: true)
+			render(@selectable)
+
+			box(border: :rounded, padding: [0, 1], height: :grow, width: :grow) do
+				paragraph("Live values", bold: true)
+				paragraph("single=#{@single_value.inspect}", color: :bright_black)
+				paragraph("multiline=#{@multiline_value.inspect}", color: :bright_black)
 			end
-
-			paragraph(
-				"scroll=#{@scroller.scroll_position} viewport=#{@scroller.viewport_height} content=#{@scroller.content_height} max=#{@scroller.max_scroll}",
-				color: :bright_black
-			)
-			paragraph("Ctrl+C exits", color: :bright_black)
 		end
 	end
 end
@@ -40,7 +65,7 @@ end
 class DemoTUIApp < Phlex::TUI::App
 	def initialize(...)
 		super
-		@showcase = ScrollerShowcase.new
+		@showcase = InputShowcase.new
 	end
 
 	def view_template
