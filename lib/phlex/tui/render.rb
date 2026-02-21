@@ -170,10 +170,10 @@ class Phlex::TUI::Render
 	private def children_bounds(node)
 		if Phlex::TUI::Box === node && node.overflow == :none
 			{
-					row: node.row + node.border_top_width,
-					col: node.col + node.border_left_width,
-					width: [node.width - node.border_horizontal, 0].max,
-					height: [node.height - node.border_vertical, 0].max,
+				row: node.row + node.border_top_width,
+				col: node.col + node.border_left_width,
+				width: [node.width - node.border_horizontal, 0].max,
+				height: [node.height - node.border_vertical, 0].max,
 			}
 		else
 			node_bounds(node)
