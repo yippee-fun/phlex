@@ -184,6 +184,12 @@ class Phlex::TUI
 		nil
 	end
 
+	def canvas(*, **, &)
+		node = Phlex::TUI::CanvasNode.new(*, parent: @tree.current_parent, **, &)
+		@tree.attach(node)
+		nil
+	end
+
 	private def yield_content
 		return unless block_given?
 

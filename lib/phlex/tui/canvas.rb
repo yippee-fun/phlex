@@ -16,11 +16,11 @@ class Phlex::TUI::Canvas
 	STRIKETHROUGH = Phlex::TUI::Cell::STRIKETHROUGH
 
 	LINE_STYLE = {
-		:thin => 1,
-		:thick => 2,
-		:double => 3,
-		:rounded => 4,
-		:transparent => 0,
+		thin: 1,
+		thick: 2,
+		double: 3,
+		rounded: 4,
+		transparent: 0,
 	}.freeze
 
 	LINE_CHARACTER = {
@@ -708,6 +708,30 @@ class Phlex::TUI::Canvas
 		end
 	end
 
+	def paint_rows(row:, col:, rows:, limit: nil, color: nil, bg: nil, bold: false, italic: false, underline: false, blink: false, inverse: false, strikethrough: false)
+		row_count = rows.length
+		row_count = [row_count, limit].min if Integer === limit
+
+		i = 0
+		while i < row_count
+			text = rows[i]
+			paint_text(
+				row: row + i,
+				col:,
+				text:,
+				color:,
+				bg:,
+				bold:,
+				italic:,
+				underline:,
+				blink:,
+				inverse:,
+				strikethrough:
+			)
+			i += 1
+		end
+	end
+
 	private def clear_previous_wide_overlap!(row_data, col_index)
 		return unless col_index.positive?
 
@@ -781,10 +805,10 @@ class Phlex::TUI::Canvas
 		row_data = @cells[row]
 		flags = row_data[base + CELL_FLAGS_OFFSET] || 0
 
-		if value
-			row_data[base + CELL_FLAGS_OFFSET] = flags | mask
+		row_data[base + CELL_FLAGS_OFFSET] = if value
+			flags | mask
 		else
-			row_data[base + CELL_FLAGS_OFFSET] = flags & ~mask
+			flags & ~mask
 		end
 	end
 end

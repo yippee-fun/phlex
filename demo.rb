@@ -27,18 +27,11 @@ class Demo < Phlex::TUI
 
 	def view_template
 		vstack(padding: [1, 2]) do
-			
-			
-			
-			
 			Table(@users) do |t|
 				t.column("Name", &:name)
 				t.column("Age", &:age)
 				t.column("Role", &:role)
 			end
-			
-			
-			
 
 			Markdown(<<~MD)
 				# Hello

@@ -32,9 +32,7 @@ class Phlex::TUI::Span < Phlex::TUI::Node
 
 	attr_reader :content, :font, :color, :bg, :bold, :italic, :underline, :blink, :inverse, :strikethrough, :requested_width, :requested_height
 
-	private
-
-	def normalize_utf8(text)
+	private def normalize_utf8(text)
 		value = text.dup
 		value = value.force_encoding(Encoding::UTF_8) unless value.encoding == Encoding::UTF_8
 		return value if value.valid_encoding?

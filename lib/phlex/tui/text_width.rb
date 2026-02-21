@@ -3,9 +3,7 @@
 require "unicode/display_width"
 
 module Phlex::TUI::TextWidth
-	module_function
-
-	def each_grapheme(text)
+	module_function def each_grapheme(text)
 		return enum_for(__method__, text) unless block_given?
 
 		if text.respond_to?(:each_grapheme_cluster)
@@ -15,20 +13,20 @@ module Phlex::TUI::TextWidth
 		end
 	end
 
-	def grapheme_width(grapheme)
+	module_function def grapheme_width(grapheme)
 		width = Unicode::DisplayWidth.of(grapheme)
 		width = 1 if width < 1
 		width = 2 if width > 2
 		width
 	end
 
-	def string_width(text)
+	module_function def string_width(text)
 		total = 0
 		each_grapheme(text) { |grapheme| total += grapheme_width(grapheme) }
 		total
 	end
 
-	def take_by_width(text, max_width)
+	module_function def take_by_width(text, max_width)
 		return "" if max_width <= 0
 
 		result = +""
