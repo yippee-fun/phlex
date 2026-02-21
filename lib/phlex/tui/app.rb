@@ -17,124 +17,111 @@ class Phlex::TUI::App < Phlex::TUI
 	BRACKETED_PASTE_END = "\e[201~"
 
 	KEY_NAMES = {
-	"\e[A" => :up,
-	"\eOA" => :up,
-	"\e[B" => :down,
-	"\eOB" => :down,
-	"\e[C" => :right,
-	"\eOC" => :right,
-	"\e[D" => :left,
-	"\eOD" => :left,
-	"\eb" => :alt_left,
-	"\ef" => :alt_right,
-	"\e[1;2A" => :shift_up,
-	"\e[1;2B" => :shift_down,
-	"\e[1;2C" => :shift_right,
-	"\e[1;2D" => :shift_left,
-	"\e[1;3D" => :alt_left,
-	"\e[1;3C" => :alt_right,
-	"\e[1;4D" => :shift_alt_left,
-	"\e[1;4C" => :shift_alt_right,
-	"\e[1;9D" => :cmd_left,
-	"\e[1;9C" => :cmd_right,
-	"\e[1;10D" => :shift_cmd_left,
-	"\e[1;10C" => :shift_cmd_right,
-	"\e\b" => :alt_backspace,
-	"\e\u007f" => :alt_backspace,
-	"\ec" => :alt_c,
-	"\eC" => :alt_c,
-	"\e[5~" => :page_up,
-	"\e[6~" => :page_down,
-	"\e[H" => :home,
-	"\e[1~" => :home,
-	"\e[7~" => :home,
-	"\e[F" => :end,
-	"\e[4~" => :end,
-	"\e[8~" => :end,
-	"\r" => :enter,
-	"\n" => :enter,
-	"\t" => :tab,
-	"\u0016" => :ctrl_v,
-	"\u0018" => :ctrl_x,
-	"\u0011" => :ctrl_q,
-	"\u0007" => :ctrl_g,
-	"\u0015" => :cmd_backspace,
-	"\177" => :backspace,
-	"\e[3~" => :delete,
+			"\e[A" => :up,
+			"\eOA" => :up,
+			"\e[B" => :down,
+			"\eOB" => :down,
+			"\e[C" => :right,
+			"\eOC" => :right,
+			"\e[D" => :left,
+			"\eOD" => :left,
+			"\eb" => :alt_left,
+			"\ef" => :alt_right,
+			"\e[1;2A" => :shift_up,
+			"\e[1;2B" => :shift_down,
+			"\e[1;2C" => :shift_right,
+			"\e[1;2D" => :shift_left,
+			"\e[1;3D" => :alt_left,
+			"\e[1;3C" => :alt_right,
+			"\e[1;4D" => :shift_alt_left,
+			"\e[1;4C" => :shift_alt_right,
+			"\e[1;9D" => :cmd_left,
+			"\e[1;9C" => :cmd_right,
+			"\e[1;10D" => :shift_cmd_left,
+			"\e[1;10C" => :shift_cmd_right,
+			"\e\b" => :alt_backspace,
+			"\e\u007f" => :alt_backspace,
+			"\ec" => :alt_c,
+			"\eC" => :alt_c,
+			"\e[5~" => :page_up,
+			"\e[6~" => :page_down,
+			"\e[H" => :home,
+			"\e[1~" => :home,
+			"\e[7~" => :home,
+			"\e[F" => :end,
+			"\e[4~" => :end,
+			"\e[8~" => :end,
+			"\r" => :enter,
+			"\n" => :enter,
+			"\t" => :tab,
+			"\u0016" => :ctrl_v,
+			"\u0018" => :ctrl_x,
+			"\u0011" => :ctrl_q,
+			"\u0007" => :ctrl_g,
+			"\u0015" => :cmd_backspace,
+			"\177" => :backspace,
+			"\e[3~" => :delete,
 	}.freeze
-
-	def initialize(stdout: $stdout)
-		@stdout = stdout
-		@running = false
-		@differ = Phlex::TUI::FrameDiffer.new
-		@runtime = Phlex::TUI::Runtime.new
-		@last_frame_time = nil
-		@last_render_at = nil
-		@session_active = false
-		@rows = 24
-		@cols = 80
-		@frame_interval = nil
-		@render_request_version = 0
-		@rendered_version = 0
-		@render_signal_pending = false
-		@event_queue = Queue.new
-		@queue_mutex = Mutex.new
-		@pending_mouse_move_raw = nil
-		@mouse_move_signal_pending = false
-		@input_thread = nil
-		@input_io = nil
-		@input_mode_saved = nil
-		@input_mode_active = false
-		@hovered_path = []
-		@last_pointer_col = nil
-		@last_pointer_row = nil
-		@mouse_capture_ref = nil
-		@last_frame_duration = nil
-		@last_render_duration = nil
-		@last_draw_duration = nil
-		@paste_mode = false
-		@paste_buffer = +""
-		@clipboard = +""
-		@input_buffer = +""
-	end
 
 	attr_reader :rows
 	attr_reader :cols
-	attr_reader :runtime
 	attr_reader :last_frame_duration
 	attr_reader :last_render_duration
 	attr_reader :last_draw_duration
+	attr_reader :component_tick_dt
+
+	def runtime
+		@runtime ||= Phlex::TUI::Runtime.new
+	end
 
 	def focus_element(owner:, name:)
-		element_id = @runtime.element_ref(owner:, name:)
-		previous_focused_id = @runtime.focused_id
-		changed = @runtime.focus!(element_id)
+		ensure_defaults!
+		element_id = runtime.element_ref(owner:, name:)
+		previous_focused_id = runtime.focused_id
+		changed = runtime.focus!(element_id)
 		return false unless changed
 
-		dispatch_focus_transition(previous_focused_id, @runtime.focused_id)
+		dispatch_focus_transition(previous_focused_id, runtime.focused_id)
 		request_render!
 		true
 	end
 
 	def focused_element?(owner:, name:)
-		@runtime.focused_element?(owner:, name:)
+		ensure_defaults!
+		runtime.focused_element?(owner:, name:)
 	end
 
 	def copy_to_clipboard(text)
+		ensure_defaults!
 		@clipboard = text.to_s.dup
 		write_osc52_copy(@clipboard)
 		nil
 	end
 
 	def paste_from_clipboard
-		@clipboard.dup
+		ensure_defaults!
+		(@clipboard || +"").dup
 	end
 
 	def app
 		self
 	end
 
+	def register_rendered_component(component)
+		ensure_defaults!
+		@rendered_components ||= []
+		@rendered_component_set ||= {}.compare_by_identity
+		return nil if @rendered_component_set[component]
+
+		@rendered_component_set[component] = true
+		@rendered_components << component
+		nil
+	end
+
 	def start(fps: nil)
+		ensure_defaults!
+		@stdout ||= $stdout
+
 		if fps
 			raise ArgumentError, "fps must be greater than zero" unless fps.positive?
 		end
@@ -157,6 +144,9 @@ class Phlex::TUI::App < Phlex::TUI
 		@paste_buffer = +""
 		@input_buffer = +""
 		@mouse_capture_ref = nil
+		@component_tick_dt = 0.0
+		@rendered_components.clear
+		@rendered_component_set.clear
 		previous_lines = []
 		last_size = nil
 		previous_winch_handler = nil
@@ -187,6 +177,7 @@ class Phlex::TUI::App < Phlex::TUI
 
 			dt = frame_delta(frame_started_at)
 			update(dt)
+			@component_tick_dt = dt
 			draw_started_at = monotonic_time
 			render_started_at = monotonic_time
 
@@ -231,11 +222,20 @@ class Phlex::TUI::App < Phlex::TUI
 	end
 
 	def stop
+		ensure_defaults!
+		@event_queue ||= Queue.new
 		@running = false
 		@event_queue << :stop
 	end
 
 	def request_render!
+		ensure_defaults!
+		@queue_mutex ||= Mutex.new
+		@event_queue ||= Queue.new
+		@render_request_version ||= 0
+		@render_signal_pending ||= false
+		@rendered_version ||= 0
+
 		@queue_mutex.synchronize do
 			@render_request_version += 1
 			next if @render_signal_pending
@@ -251,18 +251,35 @@ class Phlex::TUI::App < Phlex::TUI
 	end
 
 	private def render_lines(width:, height:)
-		previous_focused_id = @runtime.focused_id
-		@runtime.begin_frame!
+		ensure_defaults!
+		previous_focused_id = runtime.focused_id
+		runtime.begin_frame!
+		@rendered_components.clear
+		@rendered_component_set.clear
 		tree = call(Phlex::TUI::Tree.new, context: self)
 		renderer = Phlex::TUI::Render.new(tree, width:, height:)
 		lines = renderer.render_canvas.styled_lines
-		@runtime.finalize_frame!
+		runtime.finalize_frame!
 		cleanup_hover_target
-		dispatch_focus_transition(previous_focused_id, @runtime.focused_id)
+		dispatch_focus_transition(previous_focused_id, runtime.focused_id)
+		tick_rendered_components!
 		lines
 	end
 
+	private def tick_rendered_components!
+		dt = @component_tick_dt
+		components = @rendered_components
+		i = 0
+		max = components.length
+
+		while i < max
+			components[i].tick(dt)
+			i += 1
+		end
+	end
+
 	private def render_requested?
+		ensure_defaults!
 		@queue_mutex.synchronize { @render_request_version > @rendered_version }
 	end
 
@@ -568,18 +585,18 @@ class Phlex::TUI::App < Phlex::TUI
 			mouse_event = input_mouse_event(event)
 			if mouse_event
 				case mouse_event
-					in Phlex::TUI::MouseMoveEvent
-						pending_mouse_move_event = mouse_event
-					in Phlex::TUI::MouseWheelEvent
-						flush_pending_mouse_move_event(pending_mouse_move_event)
-						pending_mouse_move_event = nil
-						pending_wheel_event = coalesce_wheel_event(pending_wheel_event, mouse_event)
-					else
-						flush_pending_mouse_move_event(pending_mouse_move_event)
-						pending_mouse_move_event = nil
-						flush_pending_wheel_event(pending_wheel_event)
-						pending_wheel_event = nil
-						handle_mouse_event(mouse_event)
+				in Phlex::TUI::MouseMoveEvent
+					pending_mouse_move_event = mouse_event
+				in Phlex::TUI::MouseWheelEvent
+					flush_pending_mouse_move_event(pending_mouse_move_event)
+					pending_mouse_move_event = nil
+					pending_wheel_event = coalesce_wheel_event(pending_wheel_event, mouse_event)
+				else
+					flush_pending_mouse_move_event(pending_mouse_move_event)
+					pending_mouse_move_event = nil
+					flush_pending_wheel_event(pending_wheel_event)
+					pending_wheel_event = nil
+					handle_mouse_event(mouse_event)
 				end
 				return
 			end
@@ -650,6 +667,7 @@ class Phlex::TUI::App < Phlex::TUI
 	end
 
 	private def handle_input(raw_key)
+		ensure_defaults!
 		if @paste_mode
 			if raw_key == BRACKETED_PASTE_END
 				dispatch_text_input(@paste_buffer)
@@ -670,7 +688,7 @@ class Phlex::TUI::App < Phlex::TUI
 
 		if raw_key == "\u0003"
 			event = Phlex::TUI::KeyDownEvent.new(key: :ctrl_c, raw: raw_key)
-			event = @runtime.dispatch_bubbled(@runtime.focused_id, event)
+			event = runtime.dispatch_bubbled(runtime.focused_id, event)
 			unless event&.default_prevented?
 				stop
 			end
@@ -686,7 +704,7 @@ class Phlex::TUI::App < Phlex::TUI
 		key = normalize_key(raw_key)
 		event = Phlex::TUI::KeyDownEvent.new(key:, raw: raw_key)
 
-		event = @runtime.dispatch_bubbled(@runtime.focused_id, event)
+		event = runtime.dispatch_bubbled(runtime.focused_id, event)
 
 		if text_input?(raw_key)
 			dispatch_text_input(raw_key) unless event&.default_prevented?
@@ -723,7 +741,7 @@ class Phlex::TUI::App < Phlex::TUI
 		normalized = normalized.scrub unless normalized.valid_encoding?
 
 		event = Phlex::TUI::TextInputEvent.new(text: normalized, raw: normalized)
-		@runtime.dispatch_bubbled(@runtime.focused_id, event)
+		runtime.dispatch_bubbled(runtime.focused_id, event)
 	end
 
 	private def navigation_key?(key)
@@ -731,24 +749,24 @@ class Phlex::TUI::App < Phlex::TUI
 	end
 
 	private def handle_navigation_key(key)
-		previous_focused_id = @runtime.focused_id
+		previous_focused_id = runtime.focused_id
 		focus_changed = case key
 		when :right, :down
-			@runtime.focus_next!
+			runtime.focus_next!
 		when :left, :up
-			@runtime.focus_previous!
+			runtime.focus_previous!
 		end
 
 		return unless focus_changed
 
-		dispatch_focus_transition(previous_focused_id, @runtime.focused_id)
+		dispatch_focus_transition(previous_focused_id, runtime.focused_id)
 	end
 
 	private def dispatch_focus_transition(previous_focused_id, current_focused_id)
 		return if previous_focused_id == current_focused_id
 
-		@runtime.dispatch(previous_focused_id, Phlex::TUI::BlurEvent.new) if previous_focused_id
-		@runtime.dispatch(current_focused_id, Phlex::TUI::FocusEvent.new) if current_focused_id
+		runtime.dispatch(previous_focused_id, Phlex::TUI::BlurEvent.new) if previous_focused_id
+		runtime.dispatch(current_focused_id, Phlex::TUI::FocusEvent.new) if current_focused_id
 	end
 
 	private def normalize_key(raw_key)
@@ -831,9 +849,9 @@ class Phlex::TUI::App < Phlex::TUI
 			@last_pointer_row = row
 		end
 
-		hit_target_id = @runtime.hit_test(col:, row:)
+		hit_target_id = runtime.hit_test(col:, row:)
 		capture_id = @mouse_capture_ref
-		if capture_id && !@runtime.event_for(capture_id)
+		if capture_id && !runtime.event_for(capture_id)
 			@mouse_capture_ref = nil
 			capture_id = nil
 		end
@@ -851,20 +869,20 @@ class Phlex::TUI::App < Phlex::TUI
 			last_col = previous_col
 			last_row = previous_row
 			if Integer === last_col && Integer === last_row
-				hit_target_id = @runtime.hit_test(col: last_col, row: last_row)
+				hit_target_id = runtime.hit_test(col: last_col, row: last_row)
 			end
 
 			hit_target_id ||= @hovered_path.first
 			target_id = hit_target_id
 		end
 
-		dispatch_hover_transition(@runtime.event_path_for(hit_target_id))
+		dispatch_hover_transition(runtime.event_path_for(hit_target_id))
 		unless target_id
 			@mouse_capture_ref = nil if Phlex::TUI::MouseUpEvent === mouse_event
 			return
 		end
 
-		@runtime.dispatch_bubbled(target_id, mouse_event)
+		runtime.dispatch_bubbled(target_id, mouse_event)
 
 		case mouse_event
 		in Phlex::TUI::MouseDownEvent
@@ -886,11 +904,11 @@ class Phlex::TUI::App < Phlex::TUI
 		entering_ids = next_path[0...(next_path.length - common_tail)] || []
 
 		leaving_ids.each do |id|
-			@runtime.dispatch(id, Phlex::TUI::MouseLeaveEvent.new)
+			runtime.dispatch(id, Phlex::TUI::MouseLeaveEvent.new)
 		end
 
 		entering_ids.each do |id|
-			@runtime.dispatch(id, Phlex::TUI::MouseEnterEvent.new)
+			runtime.dispatch(id, Phlex::TUI::MouseEnterEvent.new)
 		end
 
 		@hovered_path = next_path
@@ -899,17 +917,19 @@ class Phlex::TUI::App < Phlex::TUI
 	private def cleanup_hover_target
 		return if @hovered_path.empty?
 
-		all_present = @hovered_path.all? { |id| @runtime.event_for(id) }
+		all_present = @hovered_path.all? { |id| runtime.event_for(id) }
 		return if all_present
 
 		@hovered_path.each do |id|
-			@runtime.dispatch(id, Phlex::TUI::MouseLeaveEvent.new)
+			runtime.dispatch(id, Phlex::TUI::MouseLeaveEvent.new)
 		end
 
 		@hovered_path = []
 	end
 
 	private def common_tail_length(left, right)
+		left ||= []
+		right ||= []
 		length = 0
 		left_index = left.length - 1
 		right_index = right.length - 1
@@ -931,6 +951,30 @@ class Phlex::TUI::App < Phlex::TUI
 		@stdout.write("\e]52;c;#{encoded}\a")
 		@stdout.flush
 	rescue IOError, SystemCallError
+		nil
+	end
+
+	private def ensure_defaults!
+		@differ ||= Phlex::TUI::FrameDiffer.new
+		@runtime ||= Phlex::TUI::Runtime.new
+		@rows ||= 24
+		@cols ||= 80
+		@render_request_version ||= 0
+		@rendered_version ||= 0
+		@render_signal_pending = false if @render_signal_pending.nil?
+		@event_queue ||= Queue.new
+		@queue_mutex ||= Mutex.new
+		@pending_mouse_move_raw = nil if @pending_mouse_move_raw.nil?
+		@mouse_move_signal_pending = false if @mouse_move_signal_pending.nil?
+		@hovered_path ||= []
+		@mouse_capture_ref = nil if @mouse_capture_ref.nil?
+		@paste_mode = false if @paste_mode.nil?
+		@paste_buffer ||= +""
+		@clipboard ||= +""
+		@input_buffer ||= +""
+		@component_tick_dt ||= 0.0
+		@rendered_components ||= []
+		@rendered_component_set ||= {}.compare_by_identity
 		nil
 	end
 end

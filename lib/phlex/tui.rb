@@ -11,6 +11,11 @@ class Phlex::TUI
 		Thread.current[:__phlex_tui_component__] = self
 
 		yield_content { view_template(&) }
+
+		if Phlex::TUI::App === @context
+			@context.register_rendered_component(self)
+		end
+
 		tree
 	ensure
 		Thread.current[:__phlex_tui_component__] = previous_phlex_tui_component
@@ -22,6 +27,10 @@ class Phlex::TUI
 
 	def request_render!
 		app&.request_render!
+		nil
+	end
+
+	def tick(_dt)
 		nil
 	end
 
@@ -55,17 +64,17 @@ class Phlex::TUI
 
 	def box(*, focusable: false, name: nil, pointer_events: :auto, overflow: :none, on_focus: nil, on_blur: nil, on_key_down: nil, on_key_up: nil, on_text_input: nil, on_mouse_down: nil, on_mouse_up: nil, on_mouse_move: nil, on_mouse_wheel: nil, on_mouse_enter: nil, on_mouse_leave: nil, **)
 		handlers = {
-			focus: on_focus,
-			blur: on_blur,
-			key_down: on_key_down,
-			key_up: on_key_up,
-			text_input: on_text_input,
-			mouse_down: on_mouse_down,
-			mouse_up: on_mouse_up,
-			mouse_move: on_mouse_move,
-			mouse_wheel: on_mouse_wheel,
-			mouse_enter: on_mouse_enter,
-			mouse_leave: on_mouse_leave,
+				focus: on_focus,
+				blur: on_blur,
+				key_down: on_key_down,
+				key_up: on_key_up,
+				text_input: on_text_input,
+				mouse_down: on_mouse_down,
+				mouse_up: on_mouse_up,
+				mouse_move: on_mouse_move,
+				mouse_wheel: on_mouse_wheel,
+				mouse_enter: on_mouse_enter,
+				mouse_leave: on_mouse_leave,
 		}.compact
 
 		if !handlers.empty? && name.nil?
@@ -186,17 +195,17 @@ class Phlex::TUI
 
 	def canvas(*, focusable: false, name: nil, pointer_events: :auto, on_focus: nil, on_blur: nil, on_key_down: nil, on_key_up: nil, on_text_input: nil, on_mouse_down: nil, on_mouse_up: nil, on_mouse_move: nil, on_mouse_wheel: nil, on_mouse_enter: nil, on_mouse_leave: nil, **, &)
 		handlers = {
-			focus: on_focus,
-			blur: on_blur,
-			key_down: on_key_down,
-			key_up: on_key_up,
-			text_input: on_text_input,
-			mouse_down: on_mouse_down,
-			mouse_up: on_mouse_up,
-			mouse_move: on_mouse_move,
-			mouse_wheel: on_mouse_wheel,
-			mouse_enter: on_mouse_enter,
-			mouse_leave: on_mouse_leave,
+				focus: on_focus,
+				blur: on_blur,
+				key_down: on_key_down,
+				key_up: on_key_up,
+				text_input: on_text_input,
+				mouse_down: on_mouse_down,
+				mouse_up: on_mouse_up,
+				mouse_move: on_mouse_move,
+				mouse_wheel: on_mouse_wheel,
+				mouse_enter: on_mouse_enter,
+				mouse_leave: on_mouse_leave,
 		}.compact
 
 		if !handlers.empty? && name.nil?

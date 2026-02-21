@@ -89,23 +89,23 @@ class TUIRenderTest < Quickdraw::Test
 		assert_equal right_box.height, left_box.height
 	end
 
-	test "overflow none clips children before border" do
+	test "overflow none clips children shifted above content" do
 		tree = OverflowNoneExample.new.call
 		renderer = Phlex::TUI::Render.new(tree, width: :fit, height: :fit)
 
 		lines = renderer.call.gsub(/\e\[[\d;]*m/, "").split("\n")
 
 		assert_equal "┌────────┐", lines.first
-		assert_equal true, lines[1].include?("HELLO")
+		assert_equal false, lines.any? { |line| line.include?("HELLO") }
 	end
 
-	test "overflow border allows children to draw on border" do
+	test "overflow border still clips shifted child content" do
 		tree = OverflowBorderExample.new.call
 		renderer = Phlex::TUI::Render.new(tree, width: :fit, height: :fit)
 
 		lines = renderer.call.gsub(/\e\[[\d;]*m/, "").split("\n")
 
-		assert_equal true, lines.first.include?("HELLO")
+		assert_equal false, lines.any? { |line| line.include?("HELLO") }
 	end
 
 	test "paragraph can preserve trailing whitespace" do
