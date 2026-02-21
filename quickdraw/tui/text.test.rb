@@ -1,117 +1,117 @@
 # frozen_string_literal: true
 
 class TUITextTest < Quickdraw::Test
-		MouseStubEvent = Struct.new(:row, :col, :default_prevented, keyword_init: true) do
-				def prevent_default!
-						self.default_prevented = true
-				end
+	MouseStubEvent = Struct.new(:row, :col, :default_prevented, keyword_init: true) do
+		def prevent_default!
+			self.default_prevented = true
+		end
+	end
+
+	class TextHost < Phlex::TUI
+		def initialize(text)
+			@text = text
 		end
 
-		class TextHost < Phlex::TUI
-				def initialize(text)
-						@text = text
-				end
+		def view_template
+			render(@text)
+		end
+	end
 
-				def view_template
-						render(@text)
-				end
+	private def render_with_app(text, width: 20, height: 1)
+		app = Phlex::TUI::App.new
+		host = TextHost.new(text)
+
+		2.times do
+			app.runtime.begin_frame!
+			tree = host.call(Phlex::TUI::Tree.new, context: app)
+			Phlex::TUI::Render.new(tree, width:, height:).call
+			app.runtime.finalize_frame!
 		end
 
-		private def render_with_app(text, width: 20, height: 1)
-				app = Phlex::TUI::App.new
-				host = TextHost.new(text)
+		[app, text]
+	end
 
-				2.times do
-						app.runtime.begin_frame!
-						tree = host.call(Phlex::TUI::Tree.new, context: app)
-						Phlex::TUI::Render.new(tree, width:, height:).call
-						app.runtime.finalize_frame!
-				end
+	test "text selection collapses on blur" do
+		app = Phlex::TUI::App.new
+		text = Phlex::Tux::Text.new(value: "hello", width: 20, height: 1)
+		host = TextHost.new(text)
 
-				[app, text]
-		end
+		app.runtime.begin_frame!
+		host.call(Phlex::TUI::Tree.new, context: app)
+		app.runtime.finalize_frame!
+		app.runtime.focus_next!
 
-		test "text selection collapses on blur" do
-				app = Phlex::TUI::App.new
-				text = Phlex::Tux::Text.new(value: "hello", width: 20, height: 1)
-				host = TextHost.new(text)
+		text.set_selection(start: 5, length: -1)
+		assert_equal(-1, text.selection_length)
 
-				app.runtime.begin_frame!
-				host.call(Phlex::TUI::Tree.new, context: app)
-				app.runtime.finalize_frame!
-				app.runtime.focus_next!
+		app.runtime.dispatch(app.runtime.focused_id, Phlex::TUI::BlurEvent.new)
 
-				text.set_selection(start: 5, length: -1)
-				assert_equal(-1, text.selection_length)
+		assert_equal 0, text.selection_length
+		assert_equal 4, text.selection_start
+	end
 
-				app.runtime.dispatch(app.runtime.focused_id, Phlex::TUI::BlurEvent.new)
+	test "ctrl q copies selected text" do
+		app = Phlex::TUI::App.new
+		text = Phlex::Tux::Text.new(value: "hello", width: 20, height: 1)
+		host = TextHost.new(text)
 
-				assert_equal 0, text.selection_length
-				assert_equal 4, text.selection_start
-		end
+		app.runtime.begin_frame!
+		host.call(Phlex::TUI::Tree.new, context: app)
+		app.runtime.finalize_frame!
+		app.runtime.focus_next!
 
-		test "ctrl q copies selected text" do
-				app = Phlex::TUI::App.new
-				text = Phlex::Tux::Text.new(value: "hello", width: 20, height: 1)
-				host = TextHost.new(text)
+		text.set_selection(start: 5, length: -1)
+		app.__send__(:handle_input, "\u0011")
 
-				app.runtime.begin_frame!
-				host.call(Phlex::TUI::Tree.new, context: app)
-				app.runtime.finalize_frame!
-				app.runtime.focus_next!
+		assert_equal "o", app.paste_from_clipboard
+	end
 
-				text.set_selection(start: 5, length: -1)
-				app.__send__(:handle_input, "\u0011")
+	test "mouse drag right keeps clicked variable-width glyph included" do
+		_text_app, text = render_with_app(Phlex::Tux::Text.new(value: "mm", width: 20, height: 1), width: 20, height: 1)
 
-				assert_equal "o", app.paste_from_clipboard
-		end
+		down = MouseStubEvent.new(row: 0, col: 1)
+		move = MouseStubEvent.new(row: 0, col: 2)
 
-		test "mouse drag right keeps clicked variable-width glyph included" do
-				_text_app, text = render_with_app(Phlex::Tux::Text.new(value: "mm", width: 20, height: 1), width: 20, height: 1)
+		text.__send__(:handle_mouse_down, down)
+		text.__send__(:handle_mouse_move, move)
 
-				down = MouseStubEvent.new(row: 0, col: 1)
-				move = MouseStubEvent.new(row: 0, col: 2)
+		assert_equal "m", text.selected_text
+	end
 
-				text.__send__(:handle_mouse_down, down)
-				text.__send__(:handle_mouse_move, move)
+	test "mouse drag left keeps clicked variable-width glyph included" do
+		_text_app, text = render_with_app(Phlex::Tux::Text.new(value: "mm", width: 20, height: 1), width: 20, height: 1)
 
-				assert_equal "m", text.selected_text
-		end
+		down = MouseStubEvent.new(row: 0, col: 2)
+		move = MouseStubEvent.new(row: 0, col: 1)
 
-		test "mouse drag left keeps clicked variable-width glyph included" do
-				_text_app, text = render_with_app(Phlex::Tux::Text.new(value: "mm", width: 20, height: 1), width: 20, height: 1)
+		text.__send__(:handle_mouse_down, down)
+		text.__send__(:handle_mouse_move, move)
 
-				down = MouseStubEvent.new(row: 0, col: 2)
-				move = MouseStubEvent.new(row: 0, col: 1)
+		assert_equal "m", text.selected_text
+	end
 
-				text.__send__(:handle_mouse_down, down)
-				text.__send__(:handle_mouse_move, move)
+	test "double click selects token under cursor" do
+		_text_app, text = render_with_app(Phlex::Tux::Text.new(value: "hello world", width: 20, height: 1), width: 20, height: 1)
 
-				assert_equal "m", text.selected_text
-		end
+		event = MouseStubEvent.new(row: 0, col: 1)
+		text.__send__(:handle_mouse_down, event)
+		text.__send__(:handle_mouse_up, event)
+		text.__send__(:handle_mouse_down, event)
 
-		test "double click selects token under cursor" do
-				_text_app, text = render_with_app(Phlex::Tux::Text.new(value: "hello world", width: 20, height: 1), width: 20, height: 1)
+		assert_equal "hello", text.selected_text
+	end
 
-				event = MouseStubEvent.new(row: 0, col: 1)
-				text.__send__(:handle_mouse_down, event)
-				text.__send__(:handle_mouse_up, event)
-				text.__send__(:handle_mouse_down, event)
+	test "double click hold drag extends selection" do
+		_text_app, text = render_with_app(Phlex::Tux::Text.new(value: "hello world", width: 20, height: 1), width: 20, height: 1)
 
-				assert_equal "hello", text.selected_text
-		end
+		event = MouseStubEvent.new(row: 0, col: 1)
+		move = MouseStubEvent.new(row: 0, col: 7)
 
-		test "double click hold drag extends selection" do
-				_text_app, text = render_with_app(Phlex::Tux::Text.new(value: "hello world", width: 20, height: 1), width: 20, height: 1)
+		text.__send__(:handle_mouse_down, event)
+		text.__send__(:handle_mouse_up, event)
+		text.__send__(:handle_mouse_down, event)
+		text.__send__(:handle_mouse_move, move)
 
-				event = MouseStubEvent.new(row: 0, col: 1)
-				move = MouseStubEvent.new(row: 0, col: 7)
-
-				text.__send__(:handle_mouse_down, event)
-				text.__send__(:handle_mouse_up, event)
-				text.__send__(:handle_mouse_down, event)
-				text.__send__(:handle_mouse_move, move)
-
-				assert_equal "hello wo", text.selected_text
-		end
+		assert_equal "hello wo", text.selected_text
+	end
 end

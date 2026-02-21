@@ -15,7 +15,7 @@ end
 gem "nokogiri"
 
 group :development do
-	gem "rubocop"
+	gem "rubocop", path: "../rubocop"
 	gem "ruby-lsp"
 	gem "benchmark-ips"
 	gem "irb"
