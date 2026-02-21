@@ -236,15 +236,15 @@ class Phlex::Tux::Text < Phlex::TUI
 		ensure_index_visible!(follow_index, viewport_width, viewport_height)
 
 		box_attributes = {
-			width: :grow,
-			height: :grow,
-			padding: 0,
-			focusable: @focusable,
-			name: @name,
-			on_key_down: (@focusable ? :handle_key_down : nil),
-			on_mouse_down: :handle_mouse_down,
-			on_mouse_move: :handle_mouse_move,
-			on_mouse_up: :handle_mouse_up,
+				width: :grow,
+				height: :grow,
+				padding: 0,
+				focusable: @focusable,
+				name: @name,
+				on_key_down: (@focusable ? :handle_key_down : nil),
+				on_mouse_down: :handle_mouse_down,
+				on_mouse_move: :handle_mouse_move,
+				on_mouse_up: :handle_mouse_up,
 		}.merge(@attributes)
 
 		if @focusable
@@ -294,15 +294,15 @@ class Phlex::Tux::Text < Phlex::TUI
 			left, right = right, left
 		end
 
-		left = [[left, 0].max, max].min
-		right = [[right, 0].max, max].min
+		left = left.clamp(0, max)
+		right = right.clamp(0, max)
 		[left, right]
 	end
 
 	private def normalize_selection!
 		max = @graphemes.length
-		start_index = [[@selection_start, 0].max, max].min
-		cursor = [[caret_index, 0].max, max].min
+		start_index = @selection_start.clamp(0, max)
+		cursor = caret_index.clamp(0, max)
 		@selection_start = start_index
 		@selection_length = cursor - start_index
 	end
@@ -313,7 +313,7 @@ class Phlex::Tux::Text < Phlex::TUI
 	end
 
 	private def move_to(index, extend:)
-		target = [[index, 0].max, @graphemes.length].min
+		target = index.clamp(0, @graphemes.length)
 		previous_start = @selection_start
 		previous_length = @selection_length
 
@@ -351,7 +351,7 @@ class Phlex::Tux::Text < Phlex::TUI
 						end_index: i,
 						indices: current_indices,
 						width: current_width,
-					}
+				}
 				current_indices = []
 				current_start = i + 1
 				current_width = 0
@@ -367,7 +367,7 @@ class Phlex::Tux::Text < Phlex::TUI
 						end_index: i,
 						indices: current_indices,
 						width: current_width,
-					}
+				}
 				current_indices = []
 				current_start = i
 				current_width = 0
@@ -380,10 +380,10 @@ class Phlex::Tux::Text < Phlex::TUI
 		end
 
 		lines << {
-			start_index: current_start,
-			end_index: max,
-			indices: current_indices,
-			width: current_width,
+				start_index: current_start,
+				end_index: max,
+				indices: current_indices,
+				width: current_width,
 		}
 
 		@layout = lines
@@ -399,7 +399,7 @@ class Phlex::Tux::Text < Phlex::TUI
 
 		@scroll_row = 0 unless @multiline
 		max_scroll_row = [@layout.length - viewport_height, 0].max
-		@scroll_row = [[@scroll_row, 0].max, max_scroll_row].min
+		@scroll_row = @scroll_row.clamp(0, max_scroll_row)
 
 		if @multiline
 			@scroll_col = 0
@@ -415,7 +415,7 @@ class Phlex::Tux::Text < Phlex::TUI
 		end
 
 		max_scroll_col = [line[:width] - viewport_width + 1, 0].max
-		@scroll_col = [[@scroll_col, 0].max, max_scroll_col].min
+		@scroll_col = @scroll_col.clamp(0, max_scroll_col)
 	end
 
 	private def render_visible_lines(viewport_width, viewport_height)

@@ -2,30 +2,30 @@
 
 class Phlex::Tux::BlockText < Phlex::TUI
 	HANGING_LEFT_PUNCTUATION = {
-	'"' => true,
-	"'" => true,
-	"“" => true,
-	"‘" => true,
+			'"' => true,
+			"'" => true,
+			"“" => true,
+			"‘" => true,
 	}.freeze
 
 	HANGING_RIGHT_PUNCTUATION = {
-	'"' => true,
-	"'" => true,
-	"”" => true,
-	"’" => true,
-	"," => true,
-	"." => true,
-	"!" => true,
-	"?" => true,
-	":" => true,
-	";" => true,
+			'"' => true,
+			"'" => true,
+			"”" => true,
+			"’" => true,
+			"," => true,
+			"." => true,
+			"!" => true,
+			"?" => true,
+			":" => true,
+			";" => true,
 	}.freeze
 
 	BITS = {
-	" " => 0,
-	"▀" => 2,
-	"▄" => 1,
-	"█" => 3,
+			" " => 0,
+			"▀" => 2,
+			"▄" => 1,
+			"█" => 3,
 	}.freeze
 
 	BIT_TO_CHAR = [" ", "▄", "▀", "█"].freeze
@@ -293,8 +293,8 @@ class Phlex::Tux::BlockText < Phlex::TUI
 		end
 
 		layout = {
-			rows: composed_rows,
-			lines: line_layouts,
+				rows: composed_rows,
+				lines: line_layouts,
 		}
 		store_cache!(@render_cache, key, layout)
 		layout
@@ -335,16 +335,16 @@ class Phlex::Tux::BlockText < Phlex::TUI
 
 		if left_index <= right_index && HANGING_LEFT_PUNCTUATION[graphemes[left_index]]
 			left_hanging = {
-				character: graphemes[left_index],
-				index: indices[left_index],
+					character: graphemes[left_index],
+					index: indices[left_index],
 			}
 			left_index += 1
 		end
 
 		if left_index <= right_index && HANGING_RIGHT_PUNCTUATION[graphemes[right_index]]
 			right_hanging = {
-				character: graphemes[right_index],
-				index: indices[right_index],
+					character: graphemes[right_index],
+					index: indices[right_index],
 			}
 			right_index -= 1
 		end
@@ -454,10 +454,10 @@ class Phlex::Tux::BlockText < Phlex::TUI
 			segment_start = segment_indices.first || (line_start_index + cursor)
 			segment_end = segment_indices.empty? ? segment_start : (segment_indices.last + 1)
 			result << {
-				graphemes: segment,
-				indices: segment_indices,
-				start_index: segment_start,
-				end_index: segment_end,
+					graphemes: segment,
+					indices: segment_indices,
+					start_index: segment_start,
+					end_index: segment_end,
 			}
 
 			i += 1
@@ -466,10 +466,10 @@ class Phlex::Tux::BlockText < Phlex::TUI
 		if result.empty?
 			cursor_index = line_start_index + cursor
 			result << {
-				graphemes: [],
-				indices: [],
-				start_index: cursor_index,
-				end_index: cursor_index,
+					graphemes: [],
+					indices: [],
+					start_index: cursor_index,
+					end_index: cursor_index,
 			}
 		end
 
@@ -489,10 +489,10 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				j += 1
 			end
 			wrapped << {
-				graphemes: line,
-				indices: line_indices,
-				start_index:,
-				end_index: start_index + line.length,
+					graphemes: line,
+					indices: line_indices,
+					start_index:,
+					end_index: start_index + line.length,
 			}
 			i += 1
 		end
@@ -973,12 +973,12 @@ class Phlex::Tux::BlockText < Phlex::TUI
 		end
 
 		{
-			row_start:,
-			row_count:,
-			indices:,
-			cols:,
-			line_start_index:,
-			line_end_index:,
+				row_start:,
+				row_count:,
+				indices:,
+				cols:,
+				line_start_index:,
+				line_end_index:,
 		}
 	end
 
@@ -1507,8 +1507,8 @@ class Phlex::Tux::BlockText < Phlex::TUI
 
 	private def normalize_selection!
 		max = @text_graphemes.length
-		start_index = [[@selection_start, 0].max, max].min
-		cursor = [[caret_index, 0].max, max].min
+		start_index = @selection_start.clamp(0, max)
+		cursor = caret_index.clamp(0, max)
 		@selection_start = start_index
 		@selection_length = cursor - start_index
 	end
