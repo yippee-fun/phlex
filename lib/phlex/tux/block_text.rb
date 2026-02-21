@@ -30,6 +30,7 @@ class Phlex::Tux::BlockText < Phlex::TUI
 
 		BIT_TO_CHAR = [" ", "▄", "▀", "█"].freeze
 		CACHE_LIMIT = 64
+		DOUBLE_CLICK_THRESHOLD = 0.35
 
 		def initialize(
 				text:,
@@ -65,6 +66,11 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				@selection_length = 0
 				@mouse_selecting = false
 				@selection_anchor = 0
+				@double_click_anchor_start = nil
+				@double_click_anchor_end = nil
+				@double_click_drag = false
+				@last_mouse_down_at = nil
+				@last_mouse_down_index = nil
 				@name = name || [self.class.name, object_id]
 				@node = nil
 				@letter_spacing = normalize_integer(letter_spacing, :letter_spacing)
@@ -1292,10 +1298,26 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				focus(@name) if @focusable
 				index = index_at_mouse(event)
 				return false unless Integer === index
+				now = monotonic_time
+				double_click = double_click?(index, now)
+				@last_mouse_down_at = now
+				@last_mouse_down_index = index
 
-				@selection_anchor = index
-				set_selection(start: index, length: 0)
-				@mouse_selecting = true
+				if double_click
+						start_index, end_index = token_bounds_at(index)
+						set_selection(start: start_index, length: end_index - start_index)
+						@double_click_anchor_start = start_index
+						@double_click_anchor_end = end_index
+						@double_click_drag = true
+						@mouse_selecting = true
+				else
+						@double_click_anchor_start = nil
+						@double_click_anchor_end = nil
+						@double_click_drag = false
+						@selection_anchor = index
+						set_selection(start: index, length: 0)
+						@mouse_selecting = true
+				end
 				event.prevent_default!
 				true
 		end
@@ -1306,7 +1328,29 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				index = index_at_mouse(event)
 				return false unless Integer === index
 
-				set_selection(start: @selection_anchor, length: index - @selection_anchor)
+				if @double_click_drag
+						start_anchor = @double_click_anchor_start
+						end_anchor = @double_click_anchor_end
+						unless Integer === start_anchor && Integer === end_anchor
+								return false
+						end
+
+						if index < start_anchor
+								set_selection(start: end_anchor, length: index - end_anchor)
+						elsif index >= end_anchor
+								set_selection(start: start_anchor, length: (index - start_anchor) + 1)
+						else
+								set_selection(start: start_anchor, length: end_anchor - start_anchor)
+						end
+				else
+						anchor = @selection_anchor
+						if index < anchor
+								start_index = anchor + 1
+								set_selection(start: start_index, length: index - start_index)
+						else
+								set_selection(start: anchor, length: index - anchor)
+						end
+				end
 				event.prevent_default!
 				true
 		end
@@ -1315,6 +1359,7 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				return false unless @mouse_selecting
 
 				@mouse_selecting = false
+				@double_click_drag = false
 				event.prevent_default!
 				true
 		end
@@ -1404,12 +1449,60 @@ class Phlex::Tux::BlockText < Phlex::TUI
 						end_col = col + width
 
 						return index if local_col <= col
-						return index + 1 if local_col < end_col
+						return index if local_col < end_col
 
 						i += 1
 				end
 
 				line[:line_end_index]
+		end
+
+		private def select_token_at(index)
+				start_index, end_index = token_bounds_at(index)
+				set_selection(start: start_index, length: end_index - start_index)
+		end
+
+		private def token_bounds_at(index)
+				max = @text_graphemes.length
+				return [max, max] if index >= max
+
+				type = grapheme_type(@text_graphemes[index])
+				start_index = index
+				while start_index > 0 && grapheme_type(@text_graphemes[start_index - 1]) == type
+						start_index -= 1
+				end
+
+				end_index = index
+				while end_index < max && grapheme_type(@text_graphemes[end_index]) == type
+						end_index += 1
+				end
+
+				[start_index, end_index]
+		end
+
+		private def grapheme_type(grapheme)
+				if whitespace_grapheme?(grapheme)
+						:space
+				elsif word_grapheme?(grapheme)
+						:word
+				else
+						:other
+				end
+		end
+
+		private def word_grapheme?(grapheme)
+				/\A[[:alnum:]_]\z/.match?(grapheme)
+		end
+
+		private def double_click?(index, now)
+				last = @last_mouse_down_at
+				return false unless Numeric === last
+				return false unless @last_mouse_down_index == index
+				(now - last) <= DOUBLE_CLICK_THRESHOLD
+		end
+
+		private def monotonic_time
+				Process.clock_gettime(Process::CLOCK_MONOTONIC, :float_second)
 		end
 
 		private def normalize_selection!

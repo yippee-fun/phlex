@@ -160,6 +160,59 @@ class TUIBlockTextTest < Quickdraw::Test
 				assert_equal "A", component.selected_text
 		end
 
+		test "mouse drag right keeps clicked variable-width glyph included" do
+				component = Phlex::Tux::BlockText.new(text: "mm", font: VARIABLE_WIDTH_FONT, text_wrap: :none)
+				render_with_app(component)
+
+				down = MouseStubEvent.new(row: 0, col: 1)
+				move = MouseStubEvent.new(row: 0, col: 2)
+
+				component.__send__(:handle_mouse_down, down)
+				component.__send__(:handle_mouse_move, move)
+
+				assert_equal "m", component.selected_text
+		end
+
+		test "mouse drag left keeps clicked variable-width glyph included" do
+				component = Phlex::Tux::BlockText.new(text: "mm", font: VARIABLE_WIDTH_FONT, text_wrap: :none)
+				render_with_app(component)
+
+				down = MouseStubEvent.new(row: 0, col: 2)
+				move = MouseStubEvent.new(row: 0, col: 1)
+
+				component.__send__(:handle_mouse_down, down)
+				component.__send__(:handle_mouse_move, move)
+
+				assert_equal "mm", component.selected_text
+		end
+
+		test "double click selects the token under cursor" do
+				component = Phlex::Tux::BlockText.new(text: "A B", font: TEST_FONT, text_wrap: :none)
+				render_with_app(component)
+
+				event = MouseStubEvent.new(row: 0, col: 0)
+				component.__send__(:handle_mouse_down, event)
+				component.__send__(:handle_mouse_up, event)
+				component.__send__(:handle_mouse_down, event)
+
+				assert_equal "A", component.selected_text
+		end
+
+		test "double click hold drag extends selection" do
+				component = Phlex::Tux::BlockText.new(text: "A B A", font: TEST_FONT, text_wrap: :none)
+				render_with_app(component)
+
+				event = MouseStubEvent.new(row: 0, col: 0)
+				move = MouseStubEvent.new(row: 0, col: 3)
+
+				component.__send__(:handle_mouse_down, event)
+				component.__send__(:handle_mouse_up, event)
+				component.__send__(:handle_mouse_down, event)
+				component.__send__(:handle_mouse_move, move)
+
+				assert_equal "A B ", component.selected_text
+		end
+
 		test "ctrl q copies selected text" do
 				app, component = render_with_app(Phlex::Tux::BlockText.new(text: "AB", font: TEST_FONT, text_wrap: :none))
 				component.set_selection(start: 0, length: 1)
