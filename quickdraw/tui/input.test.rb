@@ -1,184 +1,184 @@
 # frozen_string_literal: true
 
 class TUIInputTest < Quickdraw::Test
-	class InputHost < Phlex::TUI
-		def initialize(input)
-			@input = input
+		class InputHost < Phlex::TUI
+				def initialize(input)
+						@input = input
+				end
+
+				def view_template
+						render(@input)
+				end
 		end
 
-		def view_template
-			render(@input)
+		private def focused_input(value: "", multiline: false, **attributes)
+				app = Phlex::TUI::App.new
+				input = Phlex::Tux::Input.new(value:, multiline:, **attributes)
+				host = InputHost.new(input)
+
+				app.runtime.begin_frame!
+				host.call(Phlex::TUI::Tree.new, context: app)
+				app.runtime.finalize_frame!
+				app.runtime.focus_next!
+
+				[app, input]
 		end
-	end
 
-	private def focused_input(value: "", multiline: false, **attributes)
-		app = Phlex::TUI::App.new
-		input = Phlex::Tux::Input.new(value:, multiline:, **attributes)
-		host = InputHost.new(input)
+		private def caret_index(input)
+				text = input.instance_variable_get(:@text)
+				text.caret_index
+		end
 
-		app.runtime.begin_frame!
-		host.call(Phlex::TUI::Tree.new, context: app)
-		app.runtime.finalize_frame!
-		app.runtime.focus_next!
+		private def selection_start(input)
+				text = input.instance_variable_get(:@text)
+				text.selection_start
+		end
 
-		[app, input]
-	end
+		private def selection_length(input)
+				text = input.instance_variable_get(:@text)
+				text.selection_length
+		end
 
-	private def caret_index(input)
-		text = input.instance_variable_get(:@text)
-		text.caret_index
-	end
+		test "typing updates input value" do
+				app, input = focused_input(width: 20, height: 1)
 
-	private def selection_start(input)
-		text = input.instance_variable_get(:@text)
-		text.selection_start
-	end
+				app.__send__(:handle_input, "h")
+				app.__send__(:handle_input, "i")
 
-	private def selection_length(input)
-		text = input.instance_variable_get(:@text)
-		text.selection_length
-	end
+				assert_equal "hi", input.value
+		end
 
-	test "typing updates input value" do
-		app, input = focused_input(width: 20, height: 1)
+		test "single line paste replaces newlines with spaces" do
+				app, input = focused_input(width: 20, height: 1)
 
-		app.__send__(:handle_input, "h")
-		app.__send__(:handle_input, "i")
+				app.__send__(:handle_input, "\e[200~")
+				app.__send__(:handle_input, "a")
+				app.__send__(:handle_input, "\n")
+				app.__send__(:handle_input, "b")
+				app.__send__(:handle_input, "\e[201~")
 
-		assert_equal "hi", input.value
-	end
+				assert_equal "a b", input.value
+		end
 
-	test "single line paste replaces newlines with spaces" do
-		app, input = focused_input(width: 20, height: 1)
+		test "alt left moves by word" do
+				app, input = focused_input(value: "hello world", width: 20, height: 1)
 
-		app.__send__(:handle_input, "\e[200~")
-		app.__send__(:handle_input, "a")
-		app.__send__(:handle_input, "\n")
-		app.__send__(:handle_input, "b")
-		app.__send__(:handle_input, "\e[201~")
+				app.__send__(:handle_input, "\e[1;3D")
 
-		assert_equal "a b", input.value
-	end
+				assert_equal 6, caret_index(input)
+		end
 
-	test "alt left moves by word" do
-		app, input = focused_input(value: "hello world", width: 20, height: 1)
+		test "alt left fallback sequence moves by word" do
+				app, input = focused_input(value: "hello world", width: 20, height: 1)
 
-		app.__send__(:handle_input, "\e[1;3D")
+				app.__send__(:handle_input, "\eb")
 
-		assert_equal 6, caret_index(input)
-	end
+				assert_equal 6, caret_index(input)
+		end
 
-	test "alt left fallback sequence moves by word" do
-		app, input = focused_input(value: "hello world", width: 20, height: 1)
+		test "alt left double-escape sequence moves by word" do
+				app, input = focused_input(value: "hello world", width: 20, height: 1)
 
-		app.__send__(:handle_input, "\eb")
+				app.__send__(:handle_input, "\e\e[D")
 
-		assert_equal 6, caret_index(input)
-	end
+				assert_equal 6, caret_index(input)
+		end
 
-	test "alt left double-escape sequence moves by word" do
-		app, input = focused_input(value: "hello world", width: 20, height: 1)
+		test "shift left extends selection" do
+				app, input = focused_input(value: "hello", width: 20, height: 1)
 
-		app.__send__(:handle_input, "\e\e[D")
+				app.__send__(:handle_input, "\e[1;2D")
 
-		assert_equal 6, caret_index(input)
-	end
+				assert_equal 5, selection_start(input)
+				assert_equal(-1, selection_length(input))
+		end
 
-	test "shift left extends selection" do
-		app, input = focused_input(value: "hello", width: 20, height: 1)
+		test "cmd left moves to line start" do
+				app, input = focused_input(value: "hello", width: 20, height: 1)
 
-		app.__send__(:handle_input, "\e[1;2D")
+				app.__send__(:handle_input, "\e[1;9D")
+				app.__send__(:handle_input, "X")
 
-		assert_equal 5, selection_start(input)
-		assert_equal(-1, selection_length(input))
-	end
+				assert_equal "Xhello", input.value
+		end
 
-	test "cmd left moves to line start" do
-		app, input = focused_input(value: "hello", width: 20, height: 1)
+		test "ctrl v pastes from app clipboard" do
+				app, input = focused_input(width: 20, height: 1)
+				app.copy_to_clipboard("paste")
 
-		app.__send__(:handle_input, "\e[1;9D")
-		app.__send__(:handle_input, "X")
+				app.__send__(:handle_input, "\u0016")
 
-		assert_equal "Xhello", input.value
-	end
+				assert_equal "paste", input.value
+		end
 
-	test "ctrl v pastes from app clipboard" do
-		app, input = focused_input(width: 20, height: 1)
-		app.copy_to_clipboard("paste")
+		test "alt backspace deletes previous word" do
+				app, input = focused_input(value: "hello world", width: 20, height: 1)
 
-		app.__send__(:handle_input, "\u0016")
+				app.__send__(:handle_input, "\e\177")
 
-		assert_equal "paste", input.value
-	end
+				assert_equal "hello ", input.value
+		end
 
-	test "alt backspace deletes previous word" do
-		app, input = focused_input(value: "hello world", width: 20, height: 1)
+		test "cmd backspace deletes to line start" do
+				app, input = focused_input(value: "hello world", width: 20, height: 1)
 
-		app.__send__(:handle_input, "\e\177")
+				app.__send__(:handle_input, "\u0015")
 
-		assert_equal "hello ", input.value
-	end
+				assert_equal "", input.value
+		end
 
-	test "cmd backspace deletes to line start" do
-		app, input = focused_input(value: "hello world", width: 20, height: 1)
+		test "placeholder remains visible while focused when empty" do
+				app = Phlex::TUI::App.new
+				input = Phlex::Tux::Input.new(placeholder: "Type here", width: 20, height: 1)
+				host = InputHost.new(input)
 
-		app.__send__(:handle_input, "\u0015")
+				app.runtime.begin_frame!
+				tree = host.call(Phlex::TUI::Tree.new, context: app)
+				app.runtime.finalize_frame!
+				app.runtime.focus_next!
 
-		assert_equal "", input.value
-	end
+				renderer = Phlex::TUI::Render.new(tree, width: 20, height: 1)
+				output = renderer.call.gsub(/\e\[[\d;]*m/, "")
 
-	test "placeholder remains visible while focused when empty" do
-		app = Phlex::TUI::App.new
-		input = Phlex::Tux::Input.new(placeholder: "Type here", width: 20, height: 1)
-		host = InputHost.new(input)
+				assert_equal true, output.include?("Type here")
+		end
 
-		app.runtime.begin_frame!
-		tree = host.call(Phlex::TUI::Tree.new, context: app)
-		app.runtime.finalize_frame!
-		app.runtime.focus_next!
+		test "binary utf-8 input inserts smart apostrophe" do
+				app, input = focused_input(width: 20, height: 1)
 
-		renderer = Phlex::TUI::Render.new(tree, width: 20, height: 1)
-		output = renderer.call.gsub(/\e\[[\d;]*m/, "")
+				app.__send__(:handle_input, "’".dup.force_encoding(Encoding::ASCII_8BIT))
 
-		assert_equal true, output.include?("Type here")
-	end
+				assert_equal "’", input.value
+		end
 
-	test "binary utf-8 input inserts smart apostrophe" do
-		app, input = focused_input(width: 20, height: 1)
+		test "readonly input ignores text mutations" do
+				app, input = focused_input(value: "hello", readonly: true, width: 20, height: 1)
 
-		app.__send__(:handle_input, "’".dup.force_encoding(Encoding::ASCII_8BIT))
+				app.__send__(:handle_input, "x")
+				app.__send__(:handle_input, "\177")
 
-		assert_equal "’", input.value
-	end
+				assert_equal "hello", input.value
+		end
 
-	test "readonly input ignores text mutations" do
-		app, input = focused_input(value: "hello", readonly: true, width: 20, height: 1)
+		test "selection collapses on blur" do
+				app, input = focused_input(value: "hello", width: 20, height: 1)
 
-		app.__send__(:handle_input, "x")
-		app.__send__(:handle_input, "\177")
+				app.__send__(:handle_input, "\e[1;2D")
+				assert_equal(-1, selection_length(input))
 
-		assert_equal "hello", input.value
-	end
+				input.__send__(:handle_blur, Phlex::TUI::BlurEvent.new)
 
-	test "selection collapses on blur" do
-		app, input = focused_input(value: "hello", width: 20, height: 1)
+				assert_equal 0, selection_length(input)
+				assert_equal 4, selection_start(input)
+		end
 
-		app.__send__(:handle_input, "\e[1;2D")
-		assert_equal(-1, selection_length(input))
+		test "ctrl q copies current selection" do
+				app, input = focused_input(value: "hello", width: 20, height: 1)
 
-		input.__send__(:handle_blur, Phlex::TUI::BlurEvent.new)
+				app.__send__(:handle_input, "\e[1;2D")
+				app.__send__(:handle_input, "\u0011")
 
-		assert_equal 0, selection_length(input)
-		assert_equal 4, selection_start(input)
-	end
-
-	test "ctrl g copies current selection" do
-		app, input = focused_input(value: "hello", width: 20, height: 1)
-
-		app.__send__(:handle_input, "\e[1;2D")
-		app.__send__(:handle_input, "\u0007")
-
-		assert_equal "o", app.paste_from_clipboard
-		assert_equal "hello", input.value
-	end
+				assert_equal "o", app.paste_from_clipboard
+				assert_equal "hello", input.value
+		end
 end

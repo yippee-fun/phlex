@@ -34,6 +34,12 @@ class Phlex::Tux::BlockText < Phlex::TUI
 		def initialize(
 				text:,
 				font:,
+				selectable: true,
+				focusable: true,
+				on_selection_change: nil,
+				on_focus: nil,
+				on_blur: nil,
+				name: nil,
 				letter_spacing: 0,
 				line_height: 1.0,
 				glyph_offset_y: 0,
@@ -48,7 +54,19 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				max_height: nil
 		)
 				@text = text.to_s
+				@text_graphemes = split_graphemes(@text)
 				assign_font!(font)
+				@selectable = normalize_boolean(selectable, :selectable)
+				@focusable = normalize_boolean(focusable, :focusable)
+				@on_selection_change = on_selection_change
+				@on_focus = on_focus
+				@on_blur = on_blur
+				@selection_start = 0
+				@selection_length = 0
+				@mouse_selecting = false
+				@selection_anchor = 0
+				@name = name || [self.class.name, object_id]
+				@node = nil
 				@letter_spacing = normalize_integer(letter_spacing, :letter_spacing)
 				@line_height = normalize_line_height(line_height)
 				@glyph_offset_y = normalize_integer(glyph_offset_y, :glyph_offset_y)
@@ -65,8 +83,53 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				reset_all_caches!
 		end
 
+		attr_reader :selection_start
+		attr_reader :selection_length
+
+		def selection_empty?
+				@selection_length.zero?
+		end
+
+		def caret_index
+				@selection_start + @selection_length
+		end
+
+		def selection_range
+				cursor = caret_index
+				start_index = @selection_start
+				if cursor < start_index
+						[cursor, start_index]
+				else
+						[start_index, cursor]
+				end
+		end
+
+		def selected_text
+				start_index, end_index = selection_range
+				return "" if start_index == end_index
+
+				(@text_graphemes[start_index...end_index] || []).join
+		end
+
+		def set_selection(start:, length:)
+				previous_start = @selection_start
+				previous_length = @selection_length
+				@selection_start = start
+				@selection_length = length
+				normalize_selection!
+
+				if previous_start != @selection_start || previous_length != @selection_length
+						emit_selection_change!
+						request_render!
+				end
+
+				nil
+		end
+
 		def text=(value)
 				@text = value.to_s
+				@text_graphemes = split_graphemes(@text)
+				normalize_selection!
 				reset_render_caches!
 				request_render!
 		end
@@ -114,29 +177,40 @@ class Phlex::Tux::BlockText < Phlex::TUI
 		end
 
 		def view_template
-				canvas(
+				normalize_selection!
+				@node = canvas(
 						width: @width,
 						height: @height,
 						min_width: @min_width,
 						min_height: @min_height,
 						max_width: @max_width,
 						max_height: @max_height,
-						measure: method(:measure_block_text)
+						measure: method(:measure_block_text),
+						focusable: @selectable && @focusable,
+						name: @name,
+						on_mouse_down: (@selectable ? :handle_mouse_down : nil),
+						on_mouse_move: (@selectable ? :handle_mouse_move : nil),
+						on_mouse_up: (@selectable ? :handle_mouse_up : nil),
+						on_key_down: (@selectable ? :handle_key_down : nil),
+						on_focus: (@selectable ? :handle_focus : nil),
+						on_blur: (@selectable ? :handle_blur : nil)
 				) do |surface, width, height|
 						draw_block_text(surface:, width:, height:)
 				end
 		end
 
 		private def draw_block_text(surface:, width:, height:)
-				rows = rendered_rows(width)
+				layout = rendered_layout(width)
+				rows = layout[:rows]
 				visible_height = (Integer === height) ? height : nil
 				surface.blit_rows(row: 0, col: 0, rows:, limit: visible_height)
+				draw_selection_overlay(surface:, layout:, visible_height:) if @selectable && !selection_empty?
 
 				nil
 		end
 
 		private def measure_block_text(width, _height)
-				rows = rendered_rows(width)
+				rows = rendered_layout(width)[:rows]
 				max_width = 0
 
 				index = 0
@@ -150,6 +224,10 @@ class Phlex::Tux::BlockText < Phlex::TUI
 		end
 
 		private def rendered_rows(width)
+				rendered_layout(width)[:rows]
+		end
+
+		private def rendered_layout(width)
 				key = [@text, @font.object_id, width, @letter_spacing, @line_height, @glyph_offset_y, @hanging_punctuation, @text_align, @text_wrap]
 				cached = @render_cache[key]
 				return cached if cached
@@ -157,18 +235,42 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				content_width = content_width_for_wrap(width)
 				lines = wrapped_lines_for(content_width)
 				composed_rows = []
+				line_layouts = []
+				previous_row_start = 0
+				previous_row_count = 0
 
 				line_index = 0
 				while line_index < lines.length
-						line_content, left_hanging, right_hanging = extract_hanging_punctuation(lines[line_index])
+						line = lines[line_index]
+						line_content, line_content_indices, left_hanging, right_hanging = extract_hanging_punctuation(line[:graphemes], line[:indices])
 						line_rows, line_width = render_line_rows(line_content)
-						align_rows!(line_rows, line_width, content_width)
-						line_rows = apply_hanging_punctuation_padding(line_rows, left_hanging:, right_hanging:)
+						align_padding = align_padding_for(line_width, content_width)
+						align_rows!(line_rows, align_padding)
+						line_rows = apply_hanging_punctuation_padding(line_rows, left_hanging: left_hanging && left_hanging[:character], right_hanging: right_hanging && right_hanging[:character])
+						line_row_count = line_rows.length
+
+						current_row_start = if line_layouts.empty?
+								0
+						else
+								previous_row_start + previous_row_count + computed_line_gap(line_row_count)
+						end
+
+						line_layouts << build_line_layout(
+								line:,
+								line_content:,
+								line_content_indices:,
+								left_hanging:,
+								right_hanging:,
+								line_width:,
+								align_padding:,
+								row_start: current_row_start,
+								row_count: line_row_count
+						)
 
 						if composed_rows.empty?
 								composed_rows = line_rows
 						else
-								line_gap = computed_line_gap(line_rows.length)
+								line_gap = computed_line_gap(line_row_count)
 
 								if line_gap >= 0
 										composed_rows.concat(gap_rows(line_gap))
@@ -178,11 +280,18 @@ class Phlex::Tux::BlockText < Phlex::TUI
 								end
 						end
 
+						previous_row_start = current_row_start
+						previous_row_count = line_row_count
+
 						line_index += 1
 				end
 
-				store_cache!(@render_cache, key, composed_rows)
-				composed_rows
+				layout = {
+						rows: composed_rows,
+						lines: line_layouts,
+				}
+				store_cache!(@render_cache, key, layout)
+				layout
 		end
 
 		private def content_width_for_wrap(width)
@@ -209,9 +318,9 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				result
 		end
 
-		private def extract_hanging_punctuation(graphemes)
-				return [graphemes, nil, nil] unless @hanging_punctuation
-				return [graphemes, nil, nil] if graphemes.empty?
+		private def extract_hanging_punctuation(graphemes, indices)
+				return [graphemes, indices, nil, nil] unless @hanging_punctuation
+				return [graphemes, indices, nil, nil] if graphemes.empty?
 
 				left_hanging = nil
 				right_hanging = nil
@@ -219,12 +328,18 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				right_index = graphemes.length - 1
 
 				if left_index <= right_index && HANGING_LEFT_PUNCTUATION[graphemes[left_index]]
-						left_hanging = graphemes[left_index]
+						left_hanging = {
+								character: graphemes[left_index],
+								index: indices[left_index],
+						}
 						left_index += 1
 				end
 
 				if left_index <= right_index && HANGING_RIGHT_PUNCTUATION[graphemes[right_index]]
-						right_hanging = graphemes[right_index]
+						right_hanging = {
+								character: graphemes[right_index],
+								index: indices[right_index],
+						}
 						right_index -= 1
 				end
 
@@ -234,7 +349,13 @@ class Phlex::Tux::BlockText < Phlex::TUI
 						[]
 				end
 
-				[content || [], left_hanging, right_hanging]
+				content_indices = if left_index <= right_index
+						indices[left_index..right_index]
+				else
+						[]
+				end
+
+				[content || [], content_indices || [], left_hanging, right_hanging]
 		end
 
 		private def hanging_rows(character, side:, width:)
@@ -267,31 +388,127 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				return cached if cached
 
 				raw_lines = split_lines_to_graphemes(@text)
+				line_start_indices = raw_line_start_indices(raw_lines)
 				if width.nil? || @text_wrap == :none || width <= 0
-						store_cache!(@wrap_cache, key, raw_lines)
-						return raw_lines
+						wrapped = raw_lines_to_wrapped_lines(raw_lines, line_start_indices)
+						store_cache!(@wrap_cache, key, wrapped)
+						return wrapped
 				end
 
 				wrapped = []
 				line_index = 0
 				while line_index < raw_lines.length
 						line_graphemes = raw_lines[line_index]
-
-						case @text_wrap
+						line_start_index = line_start_indices[line_index]
+						wrapped_segments = case @text_wrap
 						in :word
-								wrapped.concat(wrap_word_graphemes(line_graphemes, width))
+								wrap_word_graphemes(line_graphemes, width)
 						in :pretty
-								wrapped.concat(wrap_pretty_graphemes(line_graphemes, width))
+								wrap_pretty_graphemes(line_graphemes, width)
 						in :grapheme
-								wrapped.concat(wrap_grapheme_segments(line_graphemes, width).map { |segment| segment[0] })
+								wrap_grapheme_segments(line_graphemes, width).map { |segment| segment[0] }
 						end
+
+						wrapped.concat(map_wrapped_segments_to_indices(line_graphemes, wrapped_segments, line_start_index))
 
 						line_index += 1
 				end
 
-				wrapped = [[]] if wrapped.empty?
+				wrapped = [{ graphemes: [], indices: [], start_index: 0, end_index: 0 }] if wrapped.empty?
 				store_cache!(@wrap_cache, key, wrapped)
 				wrapped
+		end
+
+		private def map_wrapped_segments_to_indices(raw_line_graphemes, wrapped_segments, line_start_index)
+				result = []
+				cursor = 0
+				i = 0
+
+				while i < wrapped_segments.length
+						segment = wrapped_segments[i]
+						segment_indices = Array.new(segment.length)
+						j = 0
+
+						while j < segment.length
+								grapheme = segment[j]
+								while cursor < raw_line_graphemes.length && raw_line_graphemes[cursor] != grapheme
+										cursor += 1
+								end
+
+								if cursor < raw_line_graphemes.length
+										segment_indices[j] = line_start_index + cursor
+										cursor += 1
+								else
+										segment_indices[j] = line_start_index + raw_line_graphemes.length
+								end
+
+								j += 1
+						end
+
+						segment_start = segment_indices.first || (line_start_index + cursor)
+						segment_end = segment_indices.empty? ? segment_start : (segment_indices.last + 1)
+						result << {
+								graphemes: segment,
+								indices: segment_indices,
+								start_index: segment_start,
+								end_index: segment_end,
+						}
+
+						i += 1
+				end
+
+				if result.empty?
+						cursor_index = line_start_index + cursor
+						result << {
+								graphemes: [],
+								indices: [],
+								start_index: cursor_index,
+								end_index: cursor_index,
+						}
+				end
+
+				result
+		end
+
+		private def raw_lines_to_wrapped_lines(raw_lines, line_start_indices)
+				wrapped = []
+				i = 0
+				while i < raw_lines.length
+						line = raw_lines[i]
+						start_index = line_start_indices[i]
+						line_indices = Array.new(line.length)
+						j = 0
+						while j < line.length
+								line_indices[j] = start_index + j
+								j += 1
+						end
+						wrapped << {
+								graphemes: line,
+								indices: line_indices,
+								start_index:,
+								end_index: start_index + line.length,
+						}
+						i += 1
+				end
+
+				wrapped = [{ graphemes: [], indices: [], start_index: 0, end_index: 0 }] if wrapped.empty?
+				wrapped
+		end
+
+		private def raw_line_start_indices(raw_lines)
+				indices = Array.new(raw_lines.length, 0)
+				cursor = 0
+				i = 0
+				last = raw_lines.length - 1
+
+				while i < raw_lines.length
+						indices[i] = cursor
+						cursor += raw_lines[i].length
+						cursor += 1 if i < last
+						i += 1
+				end
+
+				indices
 		end
 
 		private def wrap_pretty_graphemes(graphemes, width)
@@ -691,10 +908,10 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				result
 		end
 
-		private def align_rows!(rows, line_width, width)
-				return unless Integer === width
+		private def align_padding_for(line_width, width)
+				return 0 unless Integer === width
 
-				padding = case @text_align
+				case @text_align
 				in :left
 						0
 				in :center
@@ -702,7 +919,9 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				in :right
 						[width - line_width, 0].max
 				end
+		end
 
+		private def align_rows!(rows, padding)
 				return if padding <= 0
 
 				prefix = " " * padding
@@ -711,6 +930,50 @@ class Phlex::Tux::BlockText < Phlex::TUI
 						rows[i] = prefix + rows[i]
 						i += 1
 				end
+		end
+
+		private def build_line_layout(line:, line_content:, line_content_indices:, left_hanging:, right_hanging:, line_width:, align_padding:, row_start:, row_count:)
+				indices = []
+				cols = []
+				line_start_index = line[:start_index]
+				line_end_index = line[:end_index]
+				gutter = @hanging_punctuation ? hanging_gutter_width : 0
+				content_col = gutter + align_padding
+
+				if left_hanging
+						indices << left_hanging[:index]
+						cols << (gutter - glyph_width(left_hanging[:character]))
+				end
+
+				i = 0
+				current_col = content_col
+				while i < line_content.length
+						grapheme = line_content[i]
+						indices << line_content_indices[i]
+						cols << current_col
+
+						if (i + 1) < line_content.length
+								current_width = glyph_width(grapheme)
+								next_width = glyph_width(line_content[i + 1])
+								current_col += transition_offset(current_width, next_width)
+						end
+
+						i += 1
+				end
+
+				if right_hanging
+						indices << right_hanging[:index]
+						cols << (gutter + align_padding + line_width)
+				end
+
+				{
+						row_start:,
+						row_count:,
+						indices:,
+						cols:,
+						line_start_index:,
+						line_end_index:,
+				}
 		end
 
 		private def merge_blocks_vertically!(top_rows, bottom_rows, overlap)
@@ -905,6 +1168,15 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				end
 		end
 
+		private def transition_offset(previous_width, next_width)
+				if @letter_spacing >= 0
+						previous_width + @letter_spacing
+				else
+						overlap = [-@letter_spacing, previous_width, next_width].min
+						previous_width - overlap
+				end
+		end
+
 		private def empty_profile
 				[0, 0, 0, 0]
 		end
@@ -932,6 +1204,225 @@ class Phlex::Tux::BlockText < Phlex::TUI
 						result << grapheme
 				end
 				result
+		end
+
+		private def draw_selection_overlay(surface:, layout:, visible_height:)
+				start_index, end_index = selection_range
+				return if start_index == end_index
+				rows = layout[:rows]
+				return if rows.empty?
+
+				row_limit = if Integer === visible_height
+						[visible_height, rows.length].min
+				else
+						rows.length
+				end
+				return if row_limit <= 0
+
+				line_index = 0
+				while line_index < layout[:lines].length
+						line = layout[:lines][line_index]
+						line_start = line[:line_start_index]
+						line_end = line[:line_end_index]
+						if end_index <= line_start || start_index >= line_end
+								line_index += 1
+								next
+						end
+
+						row_start = line[:row_start]
+						row_count = line[:row_count]
+						if Integer === visible_height && (row_start >= visible_height || (row_start + row_count) <= 0)
+								line_index += 1
+								next
+						end
+
+						i = 0
+						while i < line[:indices].length
+								index = line[:indices][i]
+								if index >= start_index && index < end_index
+										col = line[:cols][i]
+										grapheme = @text_graphemes[index]
+										glyph_rows, _glyph_width, _glyph_masks = glyph_rows_masks_and_width(grapheme)
+
+										row_offset = 0
+										while row_offset < glyph_rows.length
+												target_row = row_start + row_offset
+												if target_row >= 0 && target_row < row_limit
+														glyph_row = glyph_rows[row_offset]
+														glyph_width = glyph_row.length
+
+														if glyph_width > 0
+																if col < 0
+																		skip = -col
+																		if skip < glyph_width
+																				glyph_row = glyph_row[skip, glyph_width - skip]
+																				glyph_width = glyph_row.length
+																				write_col = 0
+																		else
+																				glyph_width = 0
+																		end
+																else
+																		write_col = col
+																end
+
+																if glyph_width > 0
+																		available = rows[target_row].length - write_col
+																		if available > 0
+																				glyph_row = glyph_row[0, available] if glyph_width > available
+																				if !glyph_row.empty?
+																						surface.text(row: target_row, col: write_col, text: glyph_row, inverse: true)
+																				end
+																		end
+																end
+														end
+												end
+
+												row_offset += 1
+										end
+								end
+
+								i += 1
+						end
+
+						line_index += 1
+				end
+		end
+
+		private def handle_mouse_down(event)
+				focus(@name) if @focusable
+				index = index_at_mouse(event)
+				return false unless Integer === index
+
+				@selection_anchor = index
+				set_selection(start: index, length: 0)
+				@mouse_selecting = true
+				event.prevent_default!
+				true
+		end
+
+		private def handle_mouse_move(event)
+				return false unless @mouse_selecting
+
+				index = index_at_mouse(event)
+				return false unless Integer === index
+
+				set_selection(start: @selection_anchor, length: index - @selection_anchor)
+				event.prevent_default!
+				true
+		end
+
+		private def handle_mouse_up(event)
+				return false unless @mouse_selecting
+
+				@mouse_selecting = false
+				event.prevent_default!
+				true
+		end
+
+		private def handle_key_down(event)
+				handled = case event.key
+				in :ctrl_q | :ctrl_g
+						copy_selection
+				else
+						false
+				end
+
+				event.prevent_default! if handled
+				handled
+		end
+
+		private def handle_focus(event)
+				@on_focus&.call(event)
+				request_render!
+				true
+		end
+
+		private def handle_blur(event)
+				set_selection(start: caret_index, length: 0)
+				@on_blur&.call(event)
+				request_render!
+				true
+		end
+
+		private def copy_selection
+				text = selected_text
+				return false if text.empty?
+
+				app&.copy_to_clipboard(text)
+				true
+		end
+
+		private def index_at_mouse(event)
+				layout = rendered_layout(@node&.width)
+				line = line_at_row(layout[:lines], event.row - (@node&.row || 0))
+				return nil unless line
+
+				local_col = event.col - (@node&.col || 0)
+				index_for_column_in_line(line, local_col)
+		end
+
+		private def line_at_row(lines, local_row)
+				return nil if lines.empty?
+
+				local_row = 0 if local_row < 0
+				previous = nil
+				i = 0
+
+				while i < lines.length
+						line = lines[i]
+						line_top = line[:row_start]
+						line_bottom = line_top + line[:row_count]
+
+						if local_row >= line_top && local_row < line_bottom
+								return line
+						end
+
+						if local_row < line_top
+								return line unless previous
+
+								gap_start = previous[:row_start] + previous[:row_count]
+								gap_mid = gap_start + ((line_top - gap_start) / 2)
+								return (local_row < gap_mid) ? previous : line
+						end
+
+						previous = line
+						i += 1
+				end
+
+				previous
+		end
+
+		private def index_for_column_in_line(line, local_col)
+				return line[:line_start_index] if line[:indices].empty?
+
+				local_col = 0 if local_col < 0
+				i = 0
+				while i < line[:indices].length
+						index = line[:indices][i]
+						col = line[:cols][i]
+						width = glyph_width(@text_graphemes[index])
+						end_col = col + width
+
+						return index if local_col <= col
+						return index + 1 if local_col < end_col
+
+						i += 1
+				end
+
+				line[:line_end_index]
+		end
+
+		private def normalize_selection!
+				max = @text_graphemes.length
+				start_index = [[@selection_start, 0].max, max].min
+				cursor = [[caret_index, 0].max, max].min
+				@selection_start = start_index
+				@selection_length = cursor - start_index
+		end
+
+		private def emit_selection_change!
+				@on_selection_change&.call(@selection_start, @selection_length)
+				nil
 		end
 
 		private def whitespace_grapheme?(grapheme)

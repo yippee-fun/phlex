@@ -1,6 +1,12 @@
 # frozen_string_literal: true
 
 class TUIBlockTextTest < Quickdraw::Test
+		MouseStubEvent = Struct.new(:row, :col, :default_prevented, keyword_init: true) do
+				def prevent_default!
+						self.default_prevented = true
+				end
+		end
+
 		TEST_FONT = Phlex::TUI::CompiledFont.new({
 				"A" => [
 						"▄",
@@ -54,6 +60,14 @@ class TUIBlockTextTest < Quickdraw::Test
 		private def plain_output(component)
 				renderer = Phlex::TUI::Render.new(component.call, width: :fit, height: :fit)
 				renderer.call.gsub(/\e\[[\d;]*m/, "")
+		end
+
+		private def render_with_app(component)
+				app = Phlex::TUI::App.new
+				tree = component.call(Phlex::TUI::Tree.new, context: app)
+				renderer = Phlex::TUI::Render.new(tree, width: :fit, height: :fit)
+				renderer.call
+				[app, component]
 		end
 
 		test "unknown characters fall back to question mark glyph" do
@@ -126,5 +140,66 @@ class TUIBlockTextTest < Quickdraw::Test
 				component = Phlex::Tux::BlockText.new(text: "m i", font: VARIABLE_WIDTH_FONT, width: 3, text_wrap: :word)
 
 				assert_equal "██\n██\n█\n█", plain_output(component).lines.map(&:rstrip).join("\n")
+		end
+
+		test "mouse drag updates selection range" do
+				component = Phlex::Tux::BlockText.new(text: "AB", font: TEST_FONT, text_wrap: :none)
+				render_with_app(component)
+
+				down = MouseStubEvent.new(row: 0, col: 0)
+				move = MouseStubEvent.new(row: 0, col: 1)
+				up = MouseStubEvent.new(row: 0, col: 1)
+
+				component.__send__(:handle_mouse_down, down)
+				component.__send__(:handle_mouse_move, move)
+				component.__send__(:handle_mouse_up, up)
+
+				assert_equal true, down.default_prevented
+				assert_equal true, move.default_prevented
+				assert_equal true, up.default_prevented
+				assert_equal "A", component.selected_text
+		end
+
+		test "ctrl q copies selected text" do
+				app, component = render_with_app(Phlex::Tux::BlockText.new(text: "AB", font: TEST_FONT, text_wrap: :none))
+				component.set_selection(start: 0, length: 1)
+
+				event = Phlex::TUI::KeyDownEvent.new(key: :ctrl_q, raw: "\u0011")
+				component.__send__(:handle_key_down, event)
+
+				assert_equal "A", app.paste_from_clipboard
+				assert_equal true, event.default_prevented?
+		end
+
+		test "selection overlay keeps wrapped line glyph positions stable" do
+				text = "A B A B A"
+				component = Phlex::Tux::BlockText.new(text:, font: TEST_FONT, width: 3, text_wrap: :word)
+				unselected = plain_output(component)
+
+				component.set_selection(start: 0, length: text.length)
+				selected = plain_output(component)
+
+				assert_equal unselected, selected
+		end
+
+		test "selection overlay drag across line-height gap keeps nearest line" do
+				component = Phlex::Tux::BlockText.new(text: "A\nB\nA", font: TEST_FONT, line_height: 2, text_wrap: :none)
+				render_with_app(component)
+
+				down = MouseStubEvent.new(row: 4, col: 0)
+				move = MouseStubEvent.new(row: 6, col: 0)
+
+				component.__send__(:handle_mouse_down, down)
+				component.__send__(:handle_mouse_move, move)
+
+				assert_equal "", component.selected_text
+		end
+
+		test "selection overlay does not freeze when clipped by height" do
+				component = Phlex::Tux::BlockText.new(text: "A\nB\nA\nB", font: TEST_FONT, height: 4)
+				component.set_selection(start: 0, length: 10)
+
+				output = plain_output(component)
+				assert_equal "▄\n█\n▀\n█", output
 		end
 end
