@@ -20,8 +20,8 @@ class Phlex::TUI::CanvasSurface
 		@canvas.paint_rows(row: @origin_row + row, col: @origin_col + col, rows:, limit:, **styles)
 	end
 
-	def box(row:, col:, width:, height:, border: nil, bg: nil)
-		@canvas.paint_box(row: @origin_row + row, col: @origin_col + col, width:, height:, border:, bg:)
+	def box(row:, col:, width:, height:, border: nil, border_color: nil, bg: nil)
+		@canvas.paint_box(row: @origin_row + row, col: @origin_col + col, width:, height:, border:, border_color:, bg:)
 	end
 
 	def hline(row:, col:, width:, style: :thin, color: nil)

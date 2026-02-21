@@ -8,8 +8,8 @@ class TUICanvasNodeTest < Quickdraw::Test
 
 		def view_template
 			box(width: 12, height: 4) do
-				canvas(width: :grow, height: :grow) do |surface, width, height|
-					@calls << [width, height]
+				canvas(width: :grow, height: :grow) do |surface|
+					@calls << [surface.width, surface.height]
 					surface.text(row: 0, col: 0, text: "ok")
 				end
 			end
@@ -22,7 +22,7 @@ class TUICanvasNodeTest < Quickdraw::Test
 		end
 
 		def view_template
-			canvas(width: :fit, height: :fit, measure: method(:measure)) do |surface, _width, _height|
+			canvas(width: :fit, height: :fit, measure: method(:measure)) do |surface|
 				surface.text(row: 0, col: 0, text: "ab")
 				surface.text(row: 1, col: 0, text: "cde")
 			end

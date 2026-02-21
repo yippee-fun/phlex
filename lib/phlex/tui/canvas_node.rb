@@ -103,7 +103,7 @@ class Phlex::TUI::CanvasNode < Phlex::TUI::Node
 			height: render_height
 		)
 
-		invoke_draw(surface, render_width, render_height)
+		invoke_draw(surface)
 	end
 
 	private def measured_size(width:, height:)
@@ -127,57 +127,11 @@ class Phlex::TUI::CanvasNode < Phlex::TUI::Node
 	end
 
 	private def invoke_measure(width, height)
-		callable = @measure
-		arity = positional_arity(callable)
-
-		case arity
-		in :rest
-			callable.call(width, height)
-		in 0
-			callable.call
-		in 1
-			callable.call(width)
-		else
-			callable.call(width, height)
-		end
+		@measure.call(width, height)
 	end
 
-	private def invoke_draw(surface, width, height)
-		arity = positional_arity(@block)
-
-		case arity
-		in :rest
-			@block.call(surface, width, height)
-		in 0
-			@block.call
-		in 1
-			@block.call(surface)
-		in 2
-			@block.call(surface, width)
-		else
-			@block.call(surface, width, height)
-		end
-	end
-
-	private def positional_arity(callable)
-		parameters = callable.parameters
-		has_rest = false
-		count = 0
-
-		i = 0
-		while i < parameters.length
-			type, = parameters[i]
-			if type == :rest
-				has_rest = true
-			elsif type == :req || type == :opt
-				count += 1
-			end
-			i += 1
-		end
-
-		return :rest if has_rest
-
-		count
+	private def invoke_draw(surface)
+		@block.call(surface)
 	end
 
 	private def normalize_requested_dimension(value, name)

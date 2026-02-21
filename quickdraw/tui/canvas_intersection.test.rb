@@ -5,48 +5,48 @@ class TUICanvasIntersectionTest < Quickdraw::Test
 		canvas = render_cross(horizontal: :thin, vertical: :thin)
 
 		assert_equal canvas.to_s, <<~CANVAS.chomp
-			  │  
-			  │  
-			──┼──
-			  │  
-			  │  
-		CANVAS
+     │  
+     │  
+   ──┼──
+     │  
+     │  
+				CANVAS
 	end
 
 	test "mixed thin horizontal and thick vertical lines use the heavy vertical cross glyph" do
 		canvas = render_cross(horizontal: :thin, vertical: :thick)
 
 		assert_equal canvas.to_s, <<~CANVAS.chomp
-			  ┃  
-			  ┃  
-			──╂──
-			  ┃  
-			  ┃  
-		CANVAS
+     ┃  
+     ┃  
+   ──╂──
+     ┃  
+     ┃  
+				CANVAS
 	end
 
 	test "mixed thick horizontal and thin vertical lines use the heavy horizontal cross glyph" do
 		canvas = render_cross(horizontal: :thick, vertical: :thin)
 
 		assert_equal canvas.to_s, <<~CANVAS.chomp
-			  │  
-			  │  
-			━━┿━━
-			  │  
-			  │  
-		CANVAS
+     │  
+     │  
+   ━━┿━━
+     │  
+     │  
+				CANVAS
 	end
 
 	test "mixed double horizontal and thin vertical lines preserve double-line horizontals" do
 		canvas = render_cross(horizontal: :double, vertical: :thin)
 
 		assert_equal canvas.to_s, <<~CANVAS.chomp
-			  │  
-			  │  
-			══╪══
-			  │  
-			  │  
-		CANVAS
+     │  
+     │  
+   ══╪══
+     │  
+     │  
+				CANVAS
 	end
 
 	test "intersection rendering is stable regardless of draw order" do
@@ -65,12 +65,12 @@ class TUICanvasIntersectionTest < Quickdraw::Test
 		end
 
 		assert_equal canvas.to_s, <<~CANVAS.chomp
-			  │  
-			  │  
-			──┼  
-			  │  
-			  │  
-		CANVAS
+     │  
+     │  
+   ──┼  
+     │  
+     │  
+				CANVAS
 	end
 
 	test "painting a line cell outside the canvas is a no-op" do
@@ -81,6 +81,15 @@ class TUICanvasIntersectionTest < Quickdraw::Test
 		canvas.paint_line_cell(1, 2, [1, 0, 1, 0])
 
 		assert_equal canvas.to_s, "  \n  "
+	end
+
+	test "line drawing over text does not inherit overwritten text color" do
+		canvas = Phlex::TUI::Canvas.new(width: 1, height: 1)
+		canvas.paint_text(row: 0, col: 0, text: "A", color: :red)
+		canvas.paint_line_cell(0, 0, [0, 1, 0, 1])
+
+		assert_equal canvas.cell_character(0, 0), "─"
+		assert_equal canvas.cell_color(0, 0), nil
 	end
 
 	test "rounded corners normalize to straight intersections when merged" do

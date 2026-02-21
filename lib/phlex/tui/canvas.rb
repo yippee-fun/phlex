@@ -16,127 +16,127 @@ class Phlex::TUI::Canvas
 	STRIKETHROUGH = Phlex::TUI::Cell::STRIKETHROUGH
 
 	LINE_STYLE = {
-		thin: 1,
-		thick: 2,
-		double: 3,
-		rounded: 4,
-		transparent: 0,
+			thin: 1,
+			thick: 2,
+			double: 3,
+			rounded: 4,
+			transparent: 0,
 	}.freeze
 
 	LINE_CHARACTER = {
-		[0, 0, 0, 0].freeze => " ",
-		[0, 0, 0, 1].freeze => "╴",
-		[0, 0, 0, 2].freeze => "╸",
-		[0, 0, 1, 0].freeze => "╷",
-		[0, 0, 1, 1].freeze => "┐",
-		[0, 0, 1, 2].freeze => "┑",
-		[0, 0, 1, 3].freeze => "╕",
-		[0, 0, 2, 0].freeze => "╻",
-		[0, 0, 2, 1].freeze => "┒",
-		[0, 0, 2, 2].freeze => "┓",
-		[0, 0, 3, 1].freeze => "╖",
-		[0, 0, 3, 3].freeze => "╗",
-		[0, 0, 4, 4].freeze => "╮",
-		[0, 1, 0, 0].freeze => "╶",
-		[0, 1, 0, 1].freeze => "─",
-		[0, 1, 0, 2].freeze => "╾",
-		[0, 1, 1, 0].freeze => "┌",
-		[0, 1, 1, 1].freeze => "┬",
-		[0, 1, 1, 2].freeze => "┭",
-		[0, 1, 2, 0].freeze => "┎",
-		[0, 1, 2, 1].freeze => "┰",
-		[0, 1, 2, 2].freeze => "┱",
-		[0, 1, 3, 0].freeze => "╓",
-		[0, 1, 3, 1].freeze => "╥",
-		[0, 2, 0, 0].freeze => "╺",
-		[0, 2, 0, 1].freeze => "╼",
-		[0, 2, 0, 2].freeze => "━",
-		[0, 2, 1, 0].freeze => "┍",
-		[0, 2, 1, 1].freeze => "┮",
-		[0, 2, 1, 2].freeze => "┯",
-		[0, 2, 2, 0].freeze => "┏",
-		[0, 2, 2, 1].freeze => "┲",
-		[0, 2, 2, 2].freeze => "┳",
-		[0, 3, 0, 3].freeze => "═",
-		[0, 3, 1, 0].freeze => "╒",
-		[0, 3, 1, 3].freeze => "╤",
-		[0, 3, 3, 0].freeze => "╔",
-		[0, 3, 3, 3].freeze => "╦",
-		[0, 4, 4, 0].freeze => "╭",
-		[1, 0, 0, 0].freeze => "╵",
-		[1, 0, 0, 1].freeze => "┘",
-		[1, 0, 0, 2].freeze => "┙",
-		[1, 0, 0, 3].freeze => "╛",
-		[1, 0, 1, 0].freeze => "│",
-		[1, 0, 1, 1].freeze => "┤",
-		[1, 0, 1, 2].freeze => "┥",
-		[1, 0, 1, 3].freeze => "╡",
-		[1, 0, 2, 0].freeze => "╽",
-		[1, 0, 2, 1].freeze => "┧",
-		[1, 0, 2, 2].freeze => "┪",
-		[1, 1, 0, 0].freeze => "└",
-		[1, 1, 0, 1].freeze => "┴",
-		[1, 1, 0, 2].freeze => "┵",
-		[1, 1, 1, 0].freeze => "├",
-		[1, 1, 1, 1].freeze => "┼",
-		[1, 1, 1, 2].freeze => "┽",
-		[1, 1, 2, 0].freeze => "┟",
-		[1, 1, 2, 1].freeze => "╁",
-		[1, 1, 2, 2].freeze => "╅",
-		[1, 2, 0, 0].freeze => "┕",
-		[1, 2, 0, 1].freeze => "┶",
-		[1, 2, 0, 2].freeze => "┷",
-		[1, 2, 1, 0].freeze => "┝",
-		[1, 2, 1, 1].freeze => "┾",
-		[1, 2, 1, 2].freeze => "┿",
-		[1, 2, 2, 0].freeze => "┢",
-		[1, 2, 2, 1].freeze => "╆",
-		[1, 2, 2, 2].freeze => "╈",
-		[1, 3, 0, 0].freeze => "╘",
-		[1, 3, 0, 3].freeze => "╧",
-		[1, 3, 1, 0].freeze => "╞",
-		[1, 3, 1, 3].freeze => "╪",
-		[2, 0, 0, 0].freeze => "╹",
-		[2, 0, 0, 1].freeze => "┚",
-		[2, 0, 0, 2].freeze => "┛",
-		[2, 0, 1, 0].freeze => "╿",
-		[2, 0, 1, 1].freeze => "┦",
-		[2, 0, 1, 2].freeze => "┩",
-		[2, 0, 2, 0].freeze => "┃",
-		[2, 0, 2, 1].freeze => "┨",
-		[2, 0, 2, 2].freeze => "┫",
-		[2, 1, 0, 1].freeze => "┸",
-		[2, 1, 0, 2].freeze => "┹",
-		[2, 1, 1, 0].freeze => "┞",
-		[2, 1, 1, 1].freeze => "╀",
-		[2, 1, 1, 2].freeze => "╃",
-		[2, 1, 2, 0].freeze => "┠",
-		[2, 1, 2, 1].freeze => "╂",
-		[2, 1, 2, 2].freeze => "╉",
-		[2, 2, 0, 0].freeze => "┗",
-		[2, 2, 0, 1].freeze => "┺",
-		[2, 2, 0, 2].freeze => "┻",
-		[2, 2, 1, 0].freeze => "┡",
-		[2, 2, 1, 1].freeze => "╄",
-		[2, 2, 1, 2].freeze => "╇",
-		[2, 2, 2, 0].freeze => "┣",
-		[2, 2, 2, 1].freeze => "╊",
-		[2, 2, 2, 2].freeze => "╋",
-		[3, 0, 0, 1].freeze => "╜",
-		[3, 0, 0, 3].freeze => "╝",
-		[3, 0, 3, 0].freeze => "║",
-		[3, 0, 3, 1].freeze => "╢",
-		[3, 0, 3, 3].freeze => "╣",
-		[3, 1, 0, 0].freeze => "╙",
-		[3, 1, 0, 1].freeze => "╨",
-		[3, 1, 3, 0].freeze => "╟",
-		[3, 1, 3, 1].freeze => "╫",
-		[3, 3, 0, 0].freeze => "╚",
-		[3, 3, 0, 3].freeze => "╩",
-		[3, 3, 3, 0].freeze => "╠",
-		[3, 3, 3, 3].freeze => "╬",
-		[4, 0, 0, 4].freeze => "╯",
-		[4, 4, 0, 0].freeze => "╰",
+			[0, 0, 0, 0].freeze => " ",
+			[0, 0, 0, 1].freeze => "╴",
+			[0, 0, 0, 2].freeze => "╸",
+			[0, 0, 1, 0].freeze => "╷",
+			[0, 0, 1, 1].freeze => "┐",
+			[0, 0, 1, 2].freeze => "┑",
+			[0, 0, 1, 3].freeze => "╕",
+			[0, 0, 2, 0].freeze => "╻",
+			[0, 0, 2, 1].freeze => "┒",
+			[0, 0, 2, 2].freeze => "┓",
+			[0, 0, 3, 1].freeze => "╖",
+			[0, 0, 3, 3].freeze => "╗",
+			[0, 0, 4, 4].freeze => "╮",
+			[0, 1, 0, 0].freeze => "╶",
+			[0, 1, 0, 1].freeze => "─",
+			[0, 1, 0, 2].freeze => "╾",
+			[0, 1, 1, 0].freeze => "┌",
+			[0, 1, 1, 1].freeze => "┬",
+			[0, 1, 1, 2].freeze => "┭",
+			[0, 1, 2, 0].freeze => "┎",
+			[0, 1, 2, 1].freeze => "┰",
+			[0, 1, 2, 2].freeze => "┱",
+			[0, 1, 3, 0].freeze => "╓",
+			[0, 1, 3, 1].freeze => "╥",
+			[0, 2, 0, 0].freeze => "╺",
+			[0, 2, 0, 1].freeze => "╼",
+			[0, 2, 0, 2].freeze => "━",
+			[0, 2, 1, 0].freeze => "┍",
+			[0, 2, 1, 1].freeze => "┮",
+			[0, 2, 1, 2].freeze => "┯",
+			[0, 2, 2, 0].freeze => "┏",
+			[0, 2, 2, 1].freeze => "┲",
+			[0, 2, 2, 2].freeze => "┳",
+			[0, 3, 0, 3].freeze => "═",
+			[0, 3, 1, 0].freeze => "╒",
+			[0, 3, 1, 3].freeze => "╤",
+			[0, 3, 3, 0].freeze => "╔",
+			[0, 3, 3, 3].freeze => "╦",
+			[0, 4, 4, 0].freeze => "╭",
+			[1, 0, 0, 0].freeze => "╵",
+			[1, 0, 0, 1].freeze => "┘",
+			[1, 0, 0, 2].freeze => "┙",
+			[1, 0, 0, 3].freeze => "╛",
+			[1, 0, 1, 0].freeze => "│",
+			[1, 0, 1, 1].freeze => "┤",
+			[1, 0, 1, 2].freeze => "┥",
+			[1, 0, 1, 3].freeze => "╡",
+			[1, 0, 2, 0].freeze => "╽",
+			[1, 0, 2, 1].freeze => "┧",
+			[1, 0, 2, 2].freeze => "┪",
+			[1, 1, 0, 0].freeze => "└",
+			[1, 1, 0, 1].freeze => "┴",
+			[1, 1, 0, 2].freeze => "┵",
+			[1, 1, 1, 0].freeze => "├",
+			[1, 1, 1, 1].freeze => "┼",
+			[1, 1, 1, 2].freeze => "┽",
+			[1, 1, 2, 0].freeze => "┟",
+			[1, 1, 2, 1].freeze => "╁",
+			[1, 1, 2, 2].freeze => "╅",
+			[1, 2, 0, 0].freeze => "┕",
+			[1, 2, 0, 1].freeze => "┶",
+			[1, 2, 0, 2].freeze => "┷",
+			[1, 2, 1, 0].freeze => "┝",
+			[1, 2, 1, 1].freeze => "┾",
+			[1, 2, 1, 2].freeze => "┿",
+			[1, 2, 2, 0].freeze => "┢",
+			[1, 2, 2, 1].freeze => "╆",
+			[1, 2, 2, 2].freeze => "╈",
+			[1, 3, 0, 0].freeze => "╘",
+			[1, 3, 0, 3].freeze => "╧",
+			[1, 3, 1, 0].freeze => "╞",
+			[1, 3, 1, 3].freeze => "╪",
+			[2, 0, 0, 0].freeze => "╹",
+			[2, 0, 0, 1].freeze => "┚",
+			[2, 0, 0, 2].freeze => "┛",
+			[2, 0, 1, 0].freeze => "╿",
+			[2, 0, 1, 1].freeze => "┦",
+			[2, 0, 1, 2].freeze => "┩",
+			[2, 0, 2, 0].freeze => "┃",
+			[2, 0, 2, 1].freeze => "┨",
+			[2, 0, 2, 2].freeze => "┫",
+			[2, 1, 0, 1].freeze => "┸",
+			[2, 1, 0, 2].freeze => "┹",
+			[2, 1, 1, 0].freeze => "┞",
+			[2, 1, 1, 1].freeze => "╀",
+			[2, 1, 1, 2].freeze => "╃",
+			[2, 1, 2, 0].freeze => "┠",
+			[2, 1, 2, 1].freeze => "╂",
+			[2, 1, 2, 2].freeze => "╉",
+			[2, 2, 0, 0].freeze => "┗",
+			[2, 2, 0, 1].freeze => "┺",
+			[2, 2, 0, 2].freeze => "┻",
+			[2, 2, 1, 0].freeze => "┡",
+			[2, 2, 1, 1].freeze => "╄",
+			[2, 2, 1, 2].freeze => "╇",
+			[2, 2, 2, 0].freeze => "┣",
+			[2, 2, 2, 1].freeze => "╊",
+			[2, 2, 2, 2].freeze => "╋",
+			[3, 0, 0, 1].freeze => "╜",
+			[3, 0, 0, 3].freeze => "╝",
+			[3, 0, 3, 0].freeze => "║",
+			[3, 0, 3, 1].freeze => "╢",
+			[3, 0, 3, 3].freeze => "╣",
+			[3, 1, 0, 0].freeze => "╙",
+			[3, 1, 0, 1].freeze => "╨",
+			[3, 1, 3, 0].freeze => "╟",
+			[3, 1, 3, 1].freeze => "╫",
+			[3, 3, 0, 0].freeze => "╚",
+			[3, 3, 0, 3].freeze => "╩",
+			[3, 3, 3, 0].freeze => "╠",
+			[3, 3, 3, 3].freeze => "╬",
+			[4, 0, 0, 4].freeze => "╯",
+			[4, 4, 0, 0].freeze => "╰",
 	}.freeze
 
 	def initialize(width:, height:, fill: " ")
@@ -162,10 +162,10 @@ class Phlex::TUI::Canvas
 
 	def with_clip(row:, col:, width:, height:)
 		next_clip = intersect_clip(current_clip, {
-			top: row,
-			left: col,
-			bottom: row + height,
-			right: col + width,
+				top: row,
+				left: col,
+				bottom: row + height,
+				right: col + width,
 		})
 
 		@clip_stack << next_clip
@@ -281,7 +281,7 @@ class Phlex::TUI::Canvas
 		end
 	end
 
-	def paint_box(row:, col:, width:, height:, border: nil, bg: nil)
+	def paint_box(row:, col:, width:, height:, border: nil, border_color: nil, bg: nil)
 		border = Phlex::TUI::Border.parse(border)
 
 		if bg
@@ -294,13 +294,14 @@ class Phlex::TUI::Canvas
 			)
 		end
 
-		paint_box_border(row, col, width:, height:, border:) unless border.none?
+		paint_box_border(row, col, width:, height:, border:, border_color:) unless border.none?
 	end
 
-	def paint_box_border(row, col, width:, height:, border:, color: nil)
+	def paint_box_border(row, col, width:, height:, border:, border_color: nil)
 		return if width <= 0 || height <= 0
 
 		border = Phlex::TUI::Border.parse(border)
+		border_color = Phlex::TUI::BorderColor.parse(border_color)
 		return if border.none?
 
 		top_style = line_style(border.top)
@@ -308,23 +309,28 @@ class Phlex::TUI::Canvas
 		bottom_style = line_style(border.bottom)
 		left_style = line_style(border.left)
 
+		top_color = border_color.top
+		right_color = border_color.right
+		bottom_color = border_color.bottom
+		left_color = border_color.left
+
 		top_left = corner_line(horizontal: top_style, vertical: left_style, orientation: :top_left)
-		paint_line_cell(row, col, top_left, color:) if top_left
+		paint_line_cell(row, col, top_left, color: top_color || left_color) if top_left
 
 		top_right = corner_line(horizontal: top_style, vertical: right_style, orientation: :top_right)
-		paint_line_cell(row, col + width - 1, top_right, color:) if top_right
+		paint_line_cell(row, col + width - 1, top_right, color: top_color || right_color) if top_right
 
 		bottom_left = corner_line(horizontal: bottom_style, vertical: left_style, orientation: :bottom_left)
-		paint_line_cell(row + height - 1, col, bottom_left, color:) if bottom_left
+		paint_line_cell(row + height - 1, col, bottom_left, color: bottom_color || left_color) if bottom_left
 
 		bottom_right = corner_line(horizontal: bottom_style, vertical: right_style, orientation: :bottom_right)
-		paint_line_cell(row + height - 1, col + width - 1, bottom_right, color:) if bottom_right
+		paint_line_cell(row + height - 1, col + width - 1, bottom_right, color: bottom_color || right_color) if bottom_right
 
-		paint_horizontal_line(row, col + 1, width: width - 2, line_style: top_style, color:) if top_style > 0 && width > 2
-		paint_horizontal_line(row + height - 1, col + 1, width: width - 2, line_style: bottom_style, color:) if bottom_style > 0 && width > 2
+		paint_horizontal_line(row, col + 1, width: width - 2, line_style: top_style, color: top_color) if top_style > 0 && width > 2
+		paint_horizontal_line(row + height - 1, col + 1, width: width - 2, line_style: bottom_style, color: bottom_color) if bottom_style > 0 && width > 2
 
-		paint_vertical_line(row + 1, col, height: height - 2, line_style: left_style, color:) if left_style > 0 && height > 2
-		paint_vertical_line(row + 1, col + width - 1, height: height - 2, line_style: right_style, color:) if right_style > 0 && height > 2
+		paint_vertical_line(row + 1, col, height: height - 2, line_style: left_style, color: left_color) if left_style > 0 && height > 2
+		paint_vertical_line(row + 1, col + width - 1, height: height - 2, line_style: right_style, color: right_color) if right_style > 0 && height > 2
 	end
 
 	def paint_box_fill(row, col, width:, height:, bg:)
@@ -491,10 +497,16 @@ class Phlex::TUI::Canvas
 
 		base = cell_base(col)
 		row_data = @cells[row]
+		existing_line = row_data[base + CELL_LINE_OFFSET]
 
 		row_data[base + CELL_LINE_OFFSET] = line
 		row_data[base + CELL_CHARACTER_OFFSET] = character
-		row_data[base + CELL_COLOR_OFFSET] = resolve_rgb(color) if color
+
+		if color
+			row_data[base + CELL_COLOR_OFFSET] = resolve_rgb(color)
+		elsif existing_line.nil?
+			row_data[base + CELL_COLOR_OFFSET] = nil
+		end
 	end
 
 	def line_style(style)
@@ -642,10 +654,10 @@ class Phlex::TUI::Canvas
 		right = [a[:right], b[:right]].min
 
 		{
-			top:,
-			left:,
-			bottom: [bottom, top].max,
-			right: [right, left].max,
+				top:,
+				left:,
+				bottom: [bottom, top].max,
+				right: [right, left].max,
 		}
 	end
 

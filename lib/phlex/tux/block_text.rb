@@ -200,15 +200,15 @@ class Phlex::Tux::BlockText < Phlex::TUI
 			on_key_down: (@selectable ? :handle_key_down : nil),
 			on_focus: (@selectable ? :handle_focus : nil),
 			on_blur: (@selectable ? :handle_blur : nil)
-		) do |surface, width, height|
-			draw_block_text(surface:, width:, height:)
+		) do |surface|
+			draw_block_text(surface:)
 		end
 	end
 
-	private def draw_block_text(surface:, width:, height:)
-		layout = rendered_layout(width)
+	private def draw_block_text(surface:)
+		layout = rendered_layout(surface.width)
 		rows = layout[:rows]
-		visible_height = (Integer === height) ? height : nil
+		visible_height = surface.height
 		surface.blit_rows(row: 0, col: 0, rows:, limit: visible_height)
 		draw_selection_overlay(surface:, layout:, visible_height:) if @selectable && !selection_empty?
 

@@ -15,6 +15,7 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 		blink: nil,
 		bold: nil,
 		border: nil,
+		border_color: nil,
 		border_mode: :separate,
 		inverse: nil,
 		italic: nil,
@@ -45,6 +46,7 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 		@color = (nil == color) ? @parent&.color : color
 		@align = align
 		@border = Phlex::TUI::Border.parse(border)
+		@border_color = Phlex::TUI::BorderColor.parse(border_color || @color)
 		@border_mode = validate_border_mode(border_mode)
 		@gap = gap
 		@requested_height = height
@@ -89,6 +91,7 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 	attr_reader :color
 	attr_reader :align
 	attr_reader :border
+	attr_reader :border_color
 	attr_reader :border_mode
 	attr_reader :gap
 	attr_reader :requested_width
@@ -343,6 +346,7 @@ class Phlex::TUI::Box < Phlex::TUI::Node
 			width:,
 			height:,
 			border:,
+			border_color:,
 			bg:
 		)
 	end
