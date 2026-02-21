@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class TUIBlockTextTest < Quickdraw::Test
-		TEST_FONT = {
+		TEST_FONT = Phlex::TUI::CompiledFont.new({
 				"A" => [
 						"▄",
 						"█",
@@ -30,9 +30,9 @@ class TUIBlockTextTest < Quickdraw::Test
 						"█",
 						"█",
 				],
-		}.freeze
+		}).freeze
 
-		VARIABLE_WIDTH_FONT = {
+		VARIABLE_WIDTH_FONT = Phlex::TUI::CompiledFont.new({
 				"i" => [
 						"█",
 						"█",
@@ -49,7 +49,7 @@ class TUIBlockTextTest < Quickdraw::Test
 						"█",
 						"█",
 				],
-		}.freeze
+		}).freeze
 
 		private def plain_output(component)
 				renderer = Phlex::TUI::Render.new(component.call, width: :fit, height: :fit)

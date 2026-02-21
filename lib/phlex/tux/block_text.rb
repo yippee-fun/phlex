@@ -240,7 +240,7 @@ class Phlex::Tux::BlockText < Phlex::TUI
 		private def hanging_rows(character, side:, width:)
 				return nil unless character
 
-				glyph_rows, glyph_width_value = glyph_rows_and_width(character)
+				glyph_rows, glyph_width_value, _glyph_masks = glyph_rows_masks_and_width(character)
 				padding = [width - glyph_width_value, 0].max
 				pad = " " * padding
 				result = []
@@ -258,10 +258,7 @@ class Phlex::Tux::BlockText < Phlex::TUI
 		end
 
 		private def hanging_gutter_width
-				space = @font[" "]
-				return space.first.length if space
-
-				@fallback_glyph_width
+				@font.space_width
 		end
 
 		private def wrapped_lines_for(width)
@@ -604,46 +601,72 @@ class Phlex::Tux::BlockText < Phlex::TUI
 		private def render_line_rows(graphemes)
 				return [blank_line_rows, 0] if graphemes.empty?
 
+				if @letter_spacing >= 0
+						render_line_rows_with_spacing(graphemes)
+				else
+						render_line_rows_with_overlap(graphemes)
+				end
+		end
+
+		private def render_line_rows_with_spacing(graphemes)
 				rows = nil
 				line_width = 0
-				previous_width = 0
 				gap = (@letter_spacing > 0) ? (" " * @letter_spacing) : nil
 				i = 0
 
 				while i < graphemes.length
-						glyph_rows, glyph_width = glyph_rows_and_width(graphemes[i])
+						glyph_rows, glyph_width, _glyph_masks = glyph_rows_masks_and_width(graphemes[i])
 
 						if rows.nil?
 								rows = duplicate_rows(glyph_rows)
+								line_width = glyph_width
+								i += 1
+								next
+						end
+
+						row_index = 0
+						while row_index < rows.length
+								rows[row_index] << gap if gap
+								rows[row_index] << glyph_rows[row_index]
+								row_index += 1
+						end
+						line_width += @letter_spacing + glyph_width
+						i += 1
+				end
+
+				[rows || blank_line_rows, line_width]
+		end
+
+		private def render_line_rows_with_overlap(graphemes)
+				row_masks = nil
+				line_width = 0
+				previous_width = 0
+				i = 0
+
+				while i < graphemes.length
+						_glyph_rows, glyph_width, glyph_masks = glyph_rows_masks_and_width(graphemes[i])
+
+						if row_masks.nil?
+								row_masks = duplicate_masks(glyph_masks)
 								line_width = glyph_width
 								previous_width = glyph_width
 								i += 1
 								next
 						end
 
-						if @letter_spacing >= 0
-								row_index = 0
-								while row_index < rows.length
-										rows[row_index] << gap if gap
-										rows[row_index] << glyph_rows[row_index]
-										row_index += 1
-								end
-								line_width += @letter_spacing + glyph_width
-						else
-								overlap = [-@letter_spacing, previous_width, glyph_width].min
-								row_index = 0
-								while row_index < rows.length
-										rows[row_index] = merge_row_horizontally(rows[row_index], glyph_rows[row_index], overlap)
-										row_index += 1
-								end
-								line_width += glyph_width - overlap
+						overlap = [-@letter_spacing, previous_width, glyph_width].min
+						row_index = 0
+						while row_index < row_masks.length
+								row_masks[row_index] = merge_masks_horizontally(row_masks[row_index], glyph_masks[row_index], overlap)
+								row_index += 1
 						end
 
+						line_width += glyph_width - overlap
 						previous_width = glyph_width
 						i += 1
 				end
 
-				[rows || blank_line_rows, line_width]
+				[rows_from_masks(row_masks || []), line_width]
 		end
 
 		private def duplicate_rows(rows)
@@ -653,6 +676,18 @@ class Phlex::Tux::BlockText < Phlex::TUI
 						result << rows[i].dup
 						i += 1
 				end
+				result
+		end
+
+		private def duplicate_masks(masks)
+				result = []
+				i = 0
+
+				while i < masks.length
+						result << masks[i].dup
+						i += 1
+				end
+
 				result
 		end
 
@@ -713,6 +748,36 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				prefix + merge_columns(left_overlap, right_overlap) + suffix
 		end
 
+		private def merge_masks_horizontally(left, right, overlap)
+				effective_overlap = [overlap, left.length, right.length].min
+				return left + right if effective_overlap <= 0
+
+				prefix_length = left.length - effective_overlap
+				suffix_start = effective_overlap
+				suffix_length = right.length - effective_overlap
+				result = Array.new(prefix_length + effective_overlap + suffix_length, 0)
+
+				i = 0
+				while i < prefix_length
+						result[i] = left[i]
+						i += 1
+				end
+
+				i = 0
+				while i < effective_overlap
+						result[prefix_length + i] = left[prefix_length + i] | right[i]
+						i += 1
+				end
+
+				i = 0
+				while i < suffix_length
+						result[prefix_length + effective_overlap + i] = right[suffix_start + i]
+						i += 1
+				end
+
+				result
+		end
+
 		private def merge_row_by_mask(left, right)
 				width = [left.length, right.length].max
 				left_value = left.ljust(width)
@@ -735,22 +800,46 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				result
 		end
 
-		private def glyph_rows_and_width(character)
+		private def rows_from_masks(masks)
+				return blank_line_rows if masks.empty?
+
+				rows = Array.new(masks.length)
+				i = 0
+
+				while i < masks.length
+						mask_row = masks[i]
+						row = +""
+						j = 0
+						while j < mask_row.length
+								row << BIT_TO_CHAR[mask_row[j]]
+								j += 1
+						end
+						rows[i] = row
+						i += 1
+				end
+
+				rows
+		end
+
+		private def glyph_rows_masks_and_width(character)
 				key = [character, @glyph_offset_y]
 				cached = @glyph_cache[key]
 				return cached if cached
 
-				glyph = @font[character] || @font["?"] || blank_glyph
-				glyph_width = glyph.first&.length || 0
-				rows = glyph
+				glyph = @font.glyph_for(character)
+				glyph_width = glyph.width
+				rows = glyph.rows
+				masks = glyph.masks
 
 				if @glyph_offset_y.positive?
 						rows = Array.new(@glyph_offset_y) { " " * glyph_width } + rows
+						masks = Array.new(@glyph_offset_y) { Array.new(glyph_width, 0) } + masks
 				elsif @glyph_offset_y.negative?
 						rows += Array.new(-@glyph_offset_y) { " " * glyph_width }
+						masks += Array.new(-@glyph_offset_y) { Array.new(glyph_width, 0) }
 				end
 
-				value = [rows, glyph_width]
+				value = [rows, glyph_width, masks]
 				store_cache!(@glyph_cache, key, value)
 				value
 		end
@@ -759,20 +848,15 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				@blank_line_rows ||= Array.new(base_row_count + @glyph_offset_y.abs) { "" }
 		end
 
-		private def blank_glyph
-				@blank_glyph ||= Array.new(base_row_count) { " " * @fallback_glyph_width }
-		end
-
 		private def base_row_count
-				@font_row_count
+				@font.row_count
 		end
 
 		private def glyph_width(character)
 				cached = @glyph_width_cache[character]
 				return cached if cached
 
-				glyph = @font[character] || @font["?"] || blank_glyph
-				width = glyph.first.length
+				width = @font.glyph_for(character).width
 				@glyph_width_cache[character] = width
 				width
 		end
@@ -882,7 +966,6 @@ class Phlex::Tux::BlockText < Phlex::TUI
 				@render_cache = {}
 				@wrap_cache = {}
 				@gap_rows_cache = {}
-				@blank_glyph = nil
 				@blank_line_rows = nil
 		end
 
@@ -892,61 +975,16 @@ class Phlex::Tux::BlockText < Phlex::TUI
 		end
 
 		private def assign_font!(font)
-				@font, @font_row_count, @fallback_glyph_width = normalize_font(font)
+				@font = normalize_font(font)
 		end
 
 		private def normalize_font(font)
-				unless Hash === font
-						raise ArgumentError, "font must be a Hash"
+				case font
+				in Phlex::TUI::CompiledFont
+						font
+				else
+						raise ArgumentError, "font must be a Phlex::TUI::CompiledFont"
 				end
-				raise ArgumentError, "font must include at least one glyph" if font.empty?
-
-				row_count = nil
-				fallback_width = nil
-
-				font.each do |key, glyph|
-						unless String === key && !key.empty?
-								raise ArgumentError, "font keys must be non-empty Strings"
-						end
-						unless Array === glyph && !glyph.empty?
-								raise ArgumentError, "font glyphs must be non-empty Arrays"
-						end
-
-						glyph_row_count = glyph.length
-						if row_count.nil?
-								row_count = glyph_row_count
-						elsif glyph_row_count != row_count
-								raise ArgumentError, "all glyphs must have the same row count"
-						end
-
-						glyph_width = nil
-						i = 0
-						while i < glyph.length
-								row = glyph[i]
-								unless String === row
-										raise ArgumentError, "font glyph rows must be Strings"
-								end
-
-								row_width = row.length
-								if glyph_width.nil?
-										glyph_width = row_width
-								elsif row_width != glyph_width
-										raise ArgumentError, "all rows in a glyph must have the same width"
-								end
-
-								i += 1
-						end
-
-						if fallback_width.nil? || key == "?"
-								fallback_width = glyph_width
-						end
-				end
-
-				space = font[" "]
-				fallback_width = space.first.length if space
-				fallback_width ||= 1
-
-				[font, row_count, fallback_width]
 		end
 
 		private def normalize_integer(value, name)
