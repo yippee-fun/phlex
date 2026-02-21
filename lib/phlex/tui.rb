@@ -63,43 +63,27 @@ class Phlex::TUI
 	end
 
 	def box(*, focusable: false, name: nil, pointer_events: :auto, overflow: :none, on_focus: nil, on_blur: nil, on_key_down: nil, on_key_up: nil, on_text_input: nil, on_mouse_down: nil, on_mouse_up: nil, on_mouse_move: nil, on_mouse_wheel: nil, on_mouse_enter: nil, on_mouse_leave: nil, **)
-		handlers = {
-				focus: on_focus,
-				blur: on_blur,
-				key_down: on_key_down,
-				key_up: on_key_up,
-				text_input: on_text_input,
-				mouse_down: on_mouse_down,
-				mouse_up: on_mouse_up,
-				mouse_move: on_mouse_move,
-				mouse_wheel: on_mouse_wheel,
-				mouse_enter: on_mouse_enter,
-				mouse_leave: on_mouse_leave,
-		}.compact
-
-		if !handlers.empty? && name.nil?
-			raise ArgumentError, "boxes with event handlers require a name"
-		end
-
-		requires_focus = !on_focus.nil? || !on_blur.nil? || !on_key_down.nil? || !on_key_up.nil?
-		if requires_focus && !focusable
-			raise ArgumentError, "boxes with event handlers must be focusable"
-		end
-
-		if focusable && name.nil?
-			raise ArgumentError, "focusable boxes require a name"
-		end
+		handlers = interactive_handlers(
+			on_focus:,
+			on_blur:,
+			on_key_down:,
+			on_key_up:,
+			on_text_input:,
+			on_mouse_down:,
+			on_mouse_up:,
+			on_mouse_move:,
+			on_mouse_wheel:,
+			on_mouse_enter:,
+			on_mouse_leave:
+		)
+		validate_interactive_node!(kind: :box, focusable:, name:, handlers:)
 
 		node = Phlex::TUI::Box.new(*, parent: @tree.current_parent, owner: self, focusable:, name:, pointer_events:, overflow:, **)
 		@tree.attach(node)
 		@tree.stack << node
 
 		begin
-			if runtime && (focusable || !handlers.empty?)
-				element_id = focus_key(name)
-				runtime.register_element(id: element_id, owner: self, handlers:, focusable:, scope: focus_scope_for(node))
-				runtime.update_element_node(element_id, node)
-			end
+			register_interactive_node!(node:, focusable:, name:, handlers:)
 
 			yield_content { yield } if block_given?
 			node
@@ -194,41 +178,25 @@ class Phlex::TUI
 	end
 
 	def canvas(*, focusable: false, name: nil, pointer_events: :auto, on_focus: nil, on_blur: nil, on_key_down: nil, on_key_up: nil, on_text_input: nil, on_mouse_down: nil, on_mouse_up: nil, on_mouse_move: nil, on_mouse_wheel: nil, on_mouse_enter: nil, on_mouse_leave: nil, **, &)
-		handlers = {
-				focus: on_focus,
-				blur: on_blur,
-				key_down: on_key_down,
-				key_up: on_key_up,
-				text_input: on_text_input,
-				mouse_down: on_mouse_down,
-				mouse_up: on_mouse_up,
-				mouse_move: on_mouse_move,
-				mouse_wheel: on_mouse_wheel,
-				mouse_enter: on_mouse_enter,
-				mouse_leave: on_mouse_leave,
-		}.compact
-
-		if !handlers.empty? && name.nil?
-			raise ArgumentError, "canvases with event handlers require a name"
-		end
-
-		requires_focus = !on_focus.nil? || !on_blur.nil? || !on_key_down.nil? || !on_key_up.nil?
-		if requires_focus && !focusable
-			raise ArgumentError, "canvases with keyboard or focus handlers must be focusable"
-		end
-
-		if focusable && name.nil?
-			raise ArgumentError, "focusable canvases require a name"
-		end
+		handlers = interactive_handlers(
+			on_focus:,
+			on_blur:,
+			on_key_down:,
+			on_key_up:,
+			on_text_input:,
+			on_mouse_down:,
+			on_mouse_up:,
+			on_mouse_move:,
+			on_mouse_wheel:,
+			on_mouse_enter:,
+			on_mouse_leave:
+		)
+		validate_interactive_node!(kind: :canvas, focusable:, name:, handlers:)
 
 		node = Phlex::TUI::CanvasNode.new(*, parent: @tree.current_parent, owner: self, focusable:, name:, pointer_events:, **, &)
 		@tree.attach(node)
 
-		if runtime && (focusable || !handlers.empty?)
-			element_id = focus_key(name)
-			runtime.register_element(id: element_id, owner: self, handlers:, focusable:, scope: focus_scope_for(node))
-			runtime.update_element_node(element_id, node)
-		end
+		register_interactive_node!(node:, focusable:, name:, handlers:)
 
 		node
 	end
@@ -259,6 +227,59 @@ class Phlex::TUI
 		end
 
 		:root
+	end
+
+	private def interactive_handlers(on_focus:, on_blur:, on_key_down:, on_key_up:, on_text_input:, on_mouse_down:, on_mouse_up:, on_mouse_move:, on_mouse_wheel:, on_mouse_enter:, on_mouse_leave:)
+		{
+				focus: on_focus,
+				blur: on_blur,
+				key_down: on_key_down,
+				key_up: on_key_up,
+				text_input: on_text_input,
+				mouse_down: on_mouse_down,
+				mouse_up: on_mouse_up,
+				mouse_move: on_mouse_move,
+				mouse_wheel: on_mouse_wheel,
+				mouse_enter: on_mouse_enter,
+				mouse_leave: on_mouse_leave,
+		}.compact
+	end
+
+	private def validate_interactive_node!(kind:, focusable:, name:, handlers:)
+		if !handlers.empty? && name.nil?
+			if kind == :box
+				raise ArgumentError, "boxes with event handlers require a name"
+			end
+
+			raise ArgumentError, "canvases with event handlers require a name"
+		end
+
+		requires_focus = handlers.key?(:focus) || handlers.key?(:blur) || handlers.key?(:key_down) || handlers.key?(:key_up)
+		if requires_focus && !focusable
+			message = case kind
+			in :box
+				"boxes with event handlers must be focusable"
+			in :canvas
+				"canvases with keyboard or focus handlers must be focusable"
+			end
+			raise ArgumentError, message
+		end
+
+		if focusable && name.nil?
+			if kind == :box
+				raise ArgumentError, "focusable boxes require a name"
+			end
+
+			raise ArgumentError, "focusable canvases require a name"
+		end
+	end
+
+	private def register_interactive_node!(node:, focusable:, name:, handlers:)
+		return if runtime.nil? || (!focusable && handlers.empty?)
+
+		element_id = focus_key(name)
+		runtime.register_element(id: element_id, owner: self, handlers:, focusable:, scope: focus_scope_for(node))
+		runtime.update_element_node(element_id, node)
 	end
 
 	private def implicit_output(content)

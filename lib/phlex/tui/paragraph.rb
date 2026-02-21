@@ -48,7 +48,7 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		end
 
 		self.width = effective_width
-		self.min_width = [min_width, [longest_word, 5].min].max
+		self.min_width = [longest_word, 5].min.clamp(min_width, Float::INFINITY)
 		self.max_width = [max_width, effective_width].max
 	end
 
@@ -77,10 +77,10 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 			visible_length = clipped_runs.sum { |run| Phlex::TUI::TextWidth.string_width(run[:text]) }
 			effective_align = parent&.text_align || :left
 			offset = case effective_align
-				when :left then 0
-				when :right then [render_width - visible_length, 0].max
-				when :center then [(render_width - visible_length) / 2, 0].max
-				else 0
+			when :left then 0
+			when :right then [render_width - visible_length, 0].max
+			when :center then [(render_width - visible_length) / 2, 0].max
+			else 0
 			end
 
 			cursor = 0
@@ -143,16 +143,16 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 			next if text.empty?
 
 			clipped << {
-				text:,
-				font: run[:font],
-				color: run[:color],
-				bg: run[:bg],
-				bold: run[:bold],
-				italic: run[:italic],
-				underline: run[:underline],
-				blink: run[:blink],
-				inverse: run[:inverse],
-				strikethrough: run[:strikethrough],
+					text:,
+					font: run[:font],
+					color: run[:color],
+					bg: run[:bg],
+					bold: run[:bold],
+					italic: run[:italic],
+					underline: run[:underline],
+					blink: run[:blink],
+					inverse: run[:inverse],
+					strikethrough: run[:strikethrough],
 			}
 
 			remaining -= Phlex::TUI::TextWidth.string_width(text)
@@ -165,23 +165,23 @@ class Phlex::TUI::Paragraph < Phlex::TUI::Node
 		runs = []
 		children.each do |span|
 			runs << {
-				text: span.content,
-				font: span.font,
-				color: span.color,
-				bg: span.bg,
-				bold: span.bold,
-				italic: span.italic,
-				underline: span.underline,
-				blink: span.blink,
-				inverse: span.inverse,
-				strikethrough: span.strikethrough,
+					text: span.content,
+					font: span.font,
+					color: span.color,
+					bg: span.bg,
+					bold: span.bold,
+					italic: span.italic,
+					underline: span.underline,
+					blink: span.blink,
+					inverse: span.inverse,
+					strikethrough: span.strikethrough,
 			}
 		end
 
 		runs
 	end
 
-	private
+		private
 
 	attr_reader :parent
 end

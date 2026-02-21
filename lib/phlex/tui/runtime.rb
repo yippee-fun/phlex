@@ -51,10 +51,10 @@ class Phlex::TUI::Runtime
 		end
 
 		@events[id] = {
-			owner:,
-			handlers: handlers.dup,
-			scope:,
-			node: nil,
+				owner:,
+				handlers: handlers.dup,
+				scope:,
+				node: nil,
 		}
 
 		(@event_ids_by_scope[scope] ||= []) << id
@@ -273,6 +273,8 @@ class Phlex::TUI::Runtime
 			:blur
 		in Phlex::TUI::KeyDownEvent
 			:key_down
+		in Phlex::TUI::KeyUpEvent
+			:key_up
 		in Phlex::TUI::TextInputEvent
 			:text_input
 		in Phlex::TUI::MouseDownEvent

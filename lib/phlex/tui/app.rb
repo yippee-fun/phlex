@@ -1,67 +1,10 @@
 # frozen_string_literal: true
 
 require "io/console"
-require "base64"
 
 class Phlex::TUI::App < Phlex::TUI
-	CURSOR_HIDE = "\e[?25l"
-	CURSOR_SHOW = "\e[?25h"
-	ENTER_ALT_SCREEN = "\e[?1049h"
-	EXIT_ALT_SCREEN = "\e[?1049l"
-	RESET_STYLE = "\e[0m"
-	ENABLE_MOUSE_TRACKING = "\e[?1000h\e[?1003h\e[?1006h"
-	DISABLE_MOUSE_TRACKING = "\e[?1006l\e[?1003l\e[?1000l"
-	ENABLE_BRACKETED_PASTE = "\e[?2004h"
-	DISABLE_BRACKETED_PASTE = "\e[?2004l"
 	BRACKETED_PASTE_START = "\e[200~"
 	BRACKETED_PASTE_END = "\e[201~"
-
-	KEY_NAMES = {
-			"\e[A" => :up,
-			"\eOA" => :up,
-			"\e[B" => :down,
-			"\eOB" => :down,
-			"\e[C" => :right,
-			"\eOC" => :right,
-			"\e[D" => :left,
-			"\eOD" => :left,
-			"\eb" => :alt_left,
-			"\ef" => :alt_right,
-			"\e[1;2A" => :shift_up,
-			"\e[1;2B" => :shift_down,
-			"\e[1;2C" => :shift_right,
-			"\e[1;2D" => :shift_left,
-			"\e[1;3D" => :alt_left,
-			"\e[1;3C" => :alt_right,
-			"\e[1;4D" => :shift_alt_left,
-			"\e[1;4C" => :shift_alt_right,
-			"\e[1;9D" => :cmd_left,
-			"\e[1;9C" => :cmd_right,
-			"\e[1;10D" => :shift_cmd_left,
-			"\e[1;10C" => :shift_cmd_right,
-			"\e\b" => :alt_backspace,
-			"\e\u007f" => :alt_backspace,
-			"\ec" => :alt_c,
-			"\eC" => :alt_c,
-			"\e[5~" => :page_up,
-			"\e[6~" => :page_down,
-			"\e[H" => :home,
-			"\e[1~" => :home,
-			"\e[7~" => :home,
-			"\e[F" => :end,
-			"\e[4~" => :end,
-			"\e[8~" => :end,
-			"\r" => :enter,
-			"\n" => :enter,
-			"\t" => :tab,
-			"\u0016" => :ctrl_v,
-			"\u0018" => :ctrl_x,
-			"\u0011" => :ctrl_q,
-			"\u0007" => :ctrl_g,
-			"\u0015" => :cmd_backspace,
-			"\177" => :backspace,
-			"\e[3~" => :delete,
-	}.freeze
 
 	attr_reader :rows
 	attr_reader :cols
@@ -94,7 +37,7 @@ class Phlex::TUI::App < Phlex::TUI
 	def copy_to_clipboard(text)
 		ensure_defaults!
 		@clipboard = text.to_s.dup
-		write_osc52_copy(@clipboard)
+		terminal_session.write_osc52_copy(@clipboard)
 		nil
 	end
 
@@ -142,7 +85,6 @@ class Phlex::TUI::App < Phlex::TUI
 		@mouse_move_signal_pending = false
 		@paste_mode = false
 		@paste_buffer = +""
-		@input_buffer = +""
 		@mouse_capture_ref = nil
 		@component_tick_dt = 0.0
 		@rendered_components.clear
@@ -152,7 +94,8 @@ class Phlex::TUI::App < Phlex::TUI
 		previous_winch_handler = nil
 		previous_int_handler = nil
 
-		enter_terminal_session
+		@terminal_session = Phlex::TUI::TerminalSession.new(stdout: @stdout)
+		@terminal_session.enter!
 		previous_winch_handler = install_winch_handler
 		previous_int_handler = install_int_handler
 		start_input_thread
@@ -216,9 +159,9 @@ class Phlex::TUI::App < Phlex::TUI
 		restore_winch_handler(previous_winch_handler)
 		restore_int_handler(previous_int_handler)
 		stop_input_thread
-		disable_input_mode
-		close_input_io
-		exit_terminal_session
+		terminal_session.disable_input_mode
+		terminal_session.close_input_io
+		terminal_session.exit!
 	end
 
 	def stop
@@ -293,28 +236,6 @@ class Phlex::TUI::App < Phlex::TUI
 		[rows, cols]
 	end
 
-	private def enter_terminal_session
-		@session_active = true
-		@stdout.write(ENTER_ALT_SCREEN)
-		@stdout.write(CURSOR_HIDE)
-		@stdout.write(ENABLE_MOUSE_TRACKING)
-		@stdout.write(ENABLE_BRACKETED_PASTE)
-		@stdout.write("\e[H\e[2J")
-		@stdout.flush
-	end
-
-	private def exit_terminal_session
-		return unless @session_active
-
-		@stdout.write(RESET_STYLE)
-		@stdout.write(DISABLE_MOUSE_TRACKING)
-		@stdout.write(DISABLE_BRACKETED_PASTE)
-		@stdout.write(CURSOR_SHOW)
-		@stdout.write(EXIT_ALT_SCREEN)
-		@stdout.flush
-		@session_active = false
-	end
-
 	private def monotonic_time
 		Process.clock_gettime(Process::CLOCK_MONOTONIC, :float_second)
 	end
@@ -364,13 +285,13 @@ class Phlex::TUI::App < Phlex::TUI
 	end
 
 	private def start_input_thread
-		console = open_input_io
+		console = terminal_session.open_input_io
 		return unless console&.tty?
-		return unless enable_input_mode
+		return unless terminal_session.enable_input_mode
 
 		@input_thread = Thread.new do
 			while @running
-				key = read_key(console)
+				key = @input_decoder.read_key(console)
 				break unless @running
 				next unless key
 
@@ -390,159 +311,8 @@ class Phlex::TUI::App < Phlex::TUI
 		thread.join(0.1)
 	end
 
-	private def open_input_io
-		return @input_io if @input_io
-		if $stdin.tty?
-			@input_io = $stdin
-			return @input_io
-		end
-
-		console = IO.console
-		if console&.tty?
-			@input_io = console
-			return @input_io
-		end
-
-		@input_io = File.open("/dev/tty", "r+")
-	rescue SystemCallError
-		nil
-	end
-
-	private def close_input_io
-		io = @input_io
-		@input_io = nil
-		return unless io
-
-		io.close unless io.closed? || io.equal?(IO.console) || io.equal?($stdin)
-	rescue IOError
-		nil
-	end
-
-	private def read_key(io)
-		if @input_buffer.empty?
-			return nil unless io.wait_readable(0.05)
-			chunk = io.read_nonblock(4096, exception: false)
-			return nil if chunk == :wait_readable || chunk.nil?
-			@input_buffer << chunk
-		end
-
-		first_byte = @input_buffer.getbyte(0)
-
-		if first_byte != 27
-			if first_byte < 0x80
-				key = @input_buffer.byteslice(0, 1)
-				@input_buffer.slice!(0, 1)
-				return key.force_encoding(Encoding::UTF_8)
-			end
-
-			expected = utf8_sequence_length(first_byte)
-
-			while @input_buffer.bytesize < expected
-				return nil unless io.wait_readable(0.01)
-				chunk = io.read_nonblock(1024, exception: false)
-				return nil if chunk == :wait_readable || chunk.nil?
-				@input_buffer << chunk
-			end
-
-			key = @input_buffer.byteslice(0, expected)
-			@input_buffer.slice!(0, expected)
-			text = key.force_encoding(Encoding::UTF_8)
-			return text.valid_encoding? ? text : text.scrub
-		end
-
-		len = escape_sequence_length(@input_buffer)
-
-		if len
-			key = @input_buffer.byteslice(0, len)
-			@input_buffer.slice!(0, len)
-			return key.force_encoding(Encoding::UTF_8)
-		end
-
-		if io.wait_readable(0.01)
-			chunk = io.read_nonblock(1024, exception: false)
-			if chunk != :wait_readable && !chunk.nil?
-				@input_buffer << chunk
-
-				len = escape_sequence_length(@input_buffer)
-				if len
-					key = @input_buffer.byteslice(0, len)
-					@input_buffer.slice!(0, len)
-					return key.force_encoding(Encoding::UTF_8)
-				end
-			end
-		end
-
-		if @input_buffer.bytesize == 1
-			key = @input_buffer.byteslice(0, 1)
-			@input_buffer.slice!(0, 1)
-			return key.force_encoding(Encoding::UTF_8)
-		end
-
-		key = @input_buffer.dup
-		@input_buffer.clear
-		key.force_encoding(Encoding::UTF_8)
-	end
-
-	private def escape_sequence_length(buffer)
-		return nil if buffer.bytesize < 2
-
-		if buffer.start_with?("\e[")
-			match = %r{\A\e\[[0-?]*[ -/]*[@-~]}.match(buffer)
-			return match ? match[0].bytesize : nil
-		end
-
-		if buffer.start_with?("\eO")
-			return (buffer.bytesize >= 3) ? 3 : nil
-		end
-
-		2
-	end
-
-	private def utf8_sequence_length(first_byte)
-		if (first_byte & 0b1110_0000) == 0b1100_0000
-			2
-		elsif (first_byte & 0b1111_0000) == 0b1110_0000
-			3
-		elsif (first_byte & 0b1111_1000) == 0b1111_0000
-			4
-		else
-			1
-		end
-	end
-
-	private def enable_input_mode
-		return true if @input_mode_active
-		io = open_input_io
-		return false unless io
-
-		@input_mode_saved = read_stty_mode(io)
-		return false if @input_mode_saved.empty?
-
-		@input_mode_active = system("stty", "-icanon", "-echo", "isig", "min", "1", "time", "0", in: io)
-	rescue SystemCallError
-		false
-	end
-
-	private def disable_input_mode
-		return unless @input_mode_active
-		return unless @input_mode_saved && !@input_mode_saved.empty?
-		io = @input_io
-		return unless io
-
-		system("stty", @input_mode_saved, in: io)
-	ensure
-		@input_mode_saved = nil
-		@input_mode_active = false
-	end
-
-	private def read_stty_mode(io)
-		IO.popen(["stty", "-g"], in: io, &:read).to_s.chomp
-	rescue SystemCallError
-		""
-	end
-
 	private def enqueue_event(event)
-		if Array === event && event[0] == :input && String === event[1] && fast_mouse_move_input?(event[1])
+		if Array === event && event[0] == :input && String === event[1] && @input_decoder.fast_mouse_move_input?(event[1])
 			@queue_mutex.synchronize do
 				@pending_mouse_move_raw = event[1]
 				next if @mouse_move_signal_pending
@@ -632,7 +402,7 @@ class Phlex::TUI::App < Phlex::TUI
 		return nil unless event[0] == :input
 		return nil unless String === event[1]
 
-		parse_mouse_event(event[1])
+		@input_decoder.parse_mouse_event(event[1])
 	end
 
 	private def wheel_event_input?(event)
@@ -640,7 +410,7 @@ class Phlex::TUI::App < Phlex::TUI
 		return false unless event[0] == :input
 		return false unless String === event[1]
 
-		Phlex::TUI::MouseWheelEvent === parse_mouse_event(event[1])
+		Phlex::TUI::MouseWheelEvent === @input_decoder.parse_mouse_event(event[1])
 	end
 
 	private def coalesce_wheel_event(current, incoming)
@@ -687,50 +457,43 @@ class Phlex::TUI::App < Phlex::TUI
 		end
 
 		if raw_key == "\u0003"
-			event = Phlex::TUI::KeyDownEvent.new(key: :ctrl_c, raw: raw_key)
-			event = runtime.dispatch_bubbled(runtime.focused_id, event)
-			unless event&.default_prevented?
-				stop
-			end
+			event = dispatch_key_down(:ctrl_c, raw_key)
+			dispatch_key_up(:ctrl_c, raw_key)
+			stop unless event&.default_prevented?
 			return
 		end
 
-		mouse_event = parse_mouse_event(raw_key)
+		mouse_event = @input_decoder.parse_mouse_event(raw_key)
 		if mouse_event
 			handle_mouse_event(mouse_event)
 			return
 		end
 
-		key = normalize_key(raw_key)
-		event = Phlex::TUI::KeyDownEvent.new(key:, raw: raw_key)
+		key = @input_decoder.normalize_key(raw_key)
+		event = dispatch_key_down(key, raw_key)
 
-		event = runtime.dispatch_bubbled(runtime.focused_id, event)
-
-		if text_input?(raw_key)
+		if @input_decoder.text_input?(raw_key)
 			dispatch_text_input(raw_key) unless event&.default_prevented?
+			dispatch_key_up(key, raw_key)
 			return
 		end
 
 		if navigation_key?(key)
 			handle_navigation_key(key) unless event&.default_prevented?
-			nil
 		end
+
+		dispatch_key_up(key, raw_key)
+		nil
 	end
 
-	private def text_input?(raw_key)
-		return false if raw_key.empty?
-		return false if raw_key.start_with?("\e")
-		return false if raw_key == "\n" || raw_key == "\r" || raw_key == "\t"
+	private def dispatch_key_down(key, raw_key)
+		event = Phlex::TUI::KeyDownEvent.new(key:, raw: raw_key)
+		runtime.dispatch_bubbled(runtime.focused_id, event)
+	end
 
-		text = raw_key.dup
-		text = text.force_encoding(Encoding::UTF_8) unless text.encoding == Encoding::UTF_8
-		return false unless text.valid_encoding?
-
-		text.each_codepoint do |codepoint|
-			return false if codepoint < 32 || codepoint == 127
-		end
-
-		true
+	private def dispatch_key_up(key, raw_key)
+		event = Phlex::TUI::KeyUpEvent.new(key:, raw: raw_key)
+		runtime.dispatch_bubbled(runtime.focused_id, event)
 	end
 
 	private def dispatch_text_input(text)
@@ -767,75 +530,6 @@ class Phlex::TUI::App < Phlex::TUI
 
 		runtime.dispatch(previous_focused_id, Phlex::TUI::BlurEvent.new) if previous_focused_id
 		runtime.dispatch(current_focused_id, Phlex::TUI::FocusEvent.new) if current_focused_id
-	end
-
-	private def normalize_key(raw_key)
-		named = KEY_NAMES[raw_key]
-		return named if named
-
-		if raw_key.start_with?("\e\e[")
-			case raw_key[2..]
-			in "[D"
-				return :alt_left
-			in "[C"
-				return :alt_right
-			in "[A"
-				return :alt_up
-			in "[B"
-				return :alt_down
-			end
-		end
-
-		if raw_key.bytesize == 1
-			char = raw_key.downcase
-			if /\A[[:alnum:]]\z/.match?(char)
-				return char.to_sym
-			end
-		end
-
-		:unknown
-	end
-
-	private def parse_mouse_event(key)
-		match = /\A\e\[<(\d+);(\d+);(\d+)([Mm])\z/.match(key)
-		return nil unless match
-
-		code = match[1].to_i
-		col = match[2].to_i - 1
-		row = match[3].to_i - 1
-		action = match[4]
-
-		is_wheel = action == "M" && (code & 0b1_000000) != 0
-		is_move = action == "M" && (code & 0b100000) != 0
-
-		delta_y = if is_wheel
-			((code & 0b1) == 0) ? -1 : 1
-		end
-
-		button = (code & 0b11)
-		shift = (code & 0b100) != 0
-		alt = (code & 0b1000) != 0
-		ctrl = (code & 0b1_0000) != 0
-
-		if is_wheel
-			Phlex::TUI::MouseWheelEvent.new(delta_y:, col:, row:, button:, shift:, alt:, ctrl:, raw: key)
-		elsif is_move
-			Phlex::TUI::MouseMoveEvent.new(col:, row:, button:, shift:, alt:, ctrl:, raw: key)
-		elsif action == "M"
-			Phlex::TUI::MouseDownEvent.new(col:, row:, button:, shift:, alt:, ctrl:, raw: key)
-		else
-			Phlex::TUI::MouseUpEvent.new(col:, row:, button:, shift:, alt:, ctrl:, raw: key)
-		end
-	end
-
-	private def fast_mouse_move_input?(raw_key)
-		match = /\A\e\[<(\d+);\d+;\d+M\z/.match(raw_key)
-		return false unless match
-
-		code = match[1].to_i
-		return false if (code & 0b1_000000) != 0
-
-		(code & 0b100000) != 0
 	end
 
 	private def handle_mouse_event(mouse_event)
@@ -943,20 +637,14 @@ class Phlex::TUI::App < Phlex::TUI
 		length
 	end
 
-	private def write_osc52_copy(text)
-		return unless @session_active
-		return if text.empty?
-
-		encoded = Base64.strict_encode64(text)
-		@stdout.write("\e]52;c;#{encoded}\a")
-		@stdout.flush
-	rescue IOError, SystemCallError
-		nil
+	private def terminal_session
+		@terminal_session ||= Phlex::TUI::TerminalSession.new(stdout: @stdout || $stdout)
 	end
 
 	private def ensure_defaults!
 		@differ ||= Phlex::TUI::FrameDiffer.new
 		@runtime ||= Phlex::TUI::Runtime.new
+		@input_decoder ||= Phlex::TUI::InputDecoder.new
 		@rows ||= 24
 		@cols ||= 80
 		@render_request_version ||= 0
@@ -971,7 +659,6 @@ class Phlex::TUI::App < Phlex::TUI
 		@paste_mode = false if @paste_mode.nil?
 		@paste_buffer ||= +""
 		@clipboard ||= +""
-		@input_buffer ||= +""
 		@component_tick_dt ||= 0.0
 		@rendered_components ||= []
 		@rendered_component_set ||= {}.compare_by_identity

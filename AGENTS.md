@@ -155,3 +155,4 @@ Do not run individual tests unless explicitly requested.
 7. Prefer `NoMethodError` over `NotImplementedError` when defining a method that a subclass should implement.
 8. Prefer `case` / `in` over `case` / `when` because it automatically raises if a missing else case is hit.
 9. Don’t try to gloss over errors. If there is something wrong, the system should raise. In the long run, this will help us make the system more robust.
+10. Use tabs instead of spaces. A single tab for semantic indentation.

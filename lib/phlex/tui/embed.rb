@@ -32,7 +32,7 @@ class Phlex::TUI::Embed < Phlex::TUI::Node
 			min_width: min_width || ((Integer === @requested_width) ? @requested_width : 0),
 			min_height: min_height || ((Integer === @requested_height) ? @requested_height : 0),
 			max_width: max_width || ((Integer === @requested_width) ? @requested_width : Float::INFINITY),
-			max_height: max_height || ((Integer === @requested_height) ? @requested_height : Float::INFINITY),
+			max_height: max_height || ((Integer === @requested_height) ? @requested_height : Float::INFINITY)
 		)
 	end
 
@@ -108,7 +108,7 @@ class Phlex::TUI::Embed < Phlex::TUI::Node
 			underline: style[:underline],
 			blink: style[:blink],
 			inverse: style[:inverse],
-			strikethrough: style[:strikethrough],
+			strikethrough: style[:strikethrough]
 		)
 	end
 
@@ -136,8 +136,8 @@ class Phlex::TUI::Embed < Phlex::TUI::Node
 	private def empty_row(width)
 		Array.new(width) do
 			{
-				character: " ",
-				style: default_style,
+					character: " ",
+					style: default_style,
 			}
 		end
 	end
@@ -186,8 +186,8 @@ class Phlex::TUI::Embed < Phlex::TUI::Node
 			case token[:type]
 			in :character
 				rows.last << {
-					character: token[:value],
-					style: current_style.dup,
+						character: token[:value],
+						style: current_style.dup,
 				}
 			in :newline
 				rows << []
@@ -223,14 +223,14 @@ class Phlex::TUI::Embed < Phlex::TUI::Node
 
 	private def style_from_parent(renderer)
 		{
-			bold: parent&.bold,
-			italic: parent&.italic,
-			underline: parent&.underline,
-			blink: parent&.blink,
-			inverse: parent&.inverse,
-			strikethrough: parent&.strikethrough,
-			color: resolve_parent_color(renderer, parent&.color),
-			bg: resolve_parent_color(renderer, parent&.bg),
+				bold: parent&.bold,
+				italic: parent&.italic,
+				underline: parent&.underline,
+				blink: parent&.blink,
+				inverse: parent&.inverse,
+				strikethrough: parent&.strikethrough,
+				color: resolve_parent_color(renderer, parent&.color),
+				bg: resolve_parent_color(renderer, parent&.bg),
 		}
 	end
 
@@ -413,14 +413,14 @@ class Phlex::TUI::Embed < Phlex::TUI::Node
 
 	private def default_style
 		{
-			bold: nil,
-			italic: nil,
-			underline: nil,
-			blink: nil,
-			inverse: nil,
-			strikethrough: nil,
-			color: nil,
-			bg: nil,
+				bold: nil,
+				italic: nil,
+				underline: nil,
+				blink: nil,
+				inverse: nil,
+				strikethrough: nil,
+				color: nil,
+				bg: nil,
 		}
 	end
 
@@ -437,7 +437,7 @@ class Phlex::TUI::Embed < Phlex::TUI::Node
 		value.clamp(min, max)
 	end
 
-	private
+		private
 
 	attr_reader :parent
 end

@@ -83,6 +83,38 @@ class TUIAppTest < Quickdraw::Test
 		end
 	end
 
+	class KeyEventCaptureApp < Phlex::TUI::App
+		def initialize
+			@events = []
+		end
+
+		attr_reader :events
+
+		def view_template
+			box(
+				focusable: true,
+				name: :field,
+				on_key_down: :on_key_down,
+				on_key_up: :on_key_up,
+				on_text_input: :on_text_input
+			) do
+				paragraph("field")
+			end
+		end
+
+		private def on_key_down(event)
+			@events << [:key_down, event.key]
+		end
+
+		private def on_key_up(event)
+			@events << [:key_up, event.key]
+		end
+
+		private def on_text_input(event)
+			@events << [:text_input, event.text]
+		end
+	end
+
 	private def render_frame(app, dt: 0.016)
 		app.instance_variable_set(:@component_tick_dt, dt)
 		app.__send__(:render_lines, width: 20, height: 2)
@@ -162,5 +194,32 @@ class TUIAppTest < Quickdraw::Test
 		render_frame(app, dt: 0.050)
 		assert_equal 1, child.tick_count
 		assert_equal 0.050, child.last_dt
+	end
+
+	test "printable key dispatches keydown textinput keyup" do
+		app = KeyEventCaptureApp.new
+
+		render_frame(app)
+		app.focus_element(owner: app, name: :field)
+		app.__send__(:handle_input, "a")
+
+		assert_equal [
+			[:key_down, :a],
+			[:text_input, "a"],
+			[:key_up, :a],
+		], app.events
+	end
+
+	test "non printable key dispatches keydown keyup" do
+		app = KeyEventCaptureApp.new
+
+		render_frame(app)
+		app.focus_element(owner: app, name: :field)
+		app.__send__(:handle_input, "\e[A")
+
+		assert_equal [
+			[:key_down, :up],
+			[:key_up, :up],
+		], app.events
 	end
 end

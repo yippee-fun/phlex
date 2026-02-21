@@ -175,7 +175,7 @@ class Phlex::Tux::Scroller < Phlex::TUI
 
 		relative_row = row - node.row
 		thumb_top = relative_row - @drag_offset
-		thumb_top = [[thumb_top, 0].max, geometry[:travel]].min
+		thumb_top = thumb_top.clamp(0, geometry[:travel])
 
 		target_scroll = if geometry[:travel].zero? || @max_scroll.zero?
 			0
