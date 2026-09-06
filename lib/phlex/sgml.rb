@@ -417,7 +417,15 @@ class Phlex::SGML
 		true
 	end
 
-	private def __render_attributes__(attributes)
+	# The default matters: the compiler rewrites `div(**attributes)` into
+	# `__render_attributes__(**attributes)`, and an empty splat passes no
+	# argument at all — `ArgumentError: wrong number of arguments (given 0,
+	# expected 1)`. A non-empty splat is fine, since Ruby turns keyword
+	# arguments into a positional Hash when the callee declares no keyword
+	# parameter; only the empty case reaches here with nothing. Any component
+	# whose helper forwards `**attributes` to an element hits this once
+	# compiled, while the interpreted method renders fine.
+	private def __render_attributes__(attributes = {})
 		state = @_state
 		return unless state.should_render?
 		state.buffer << (Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes))
