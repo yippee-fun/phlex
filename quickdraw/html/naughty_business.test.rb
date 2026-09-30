@@ -1,10 +1,8 @@
 # frozen_string_literal: true
 
-describe Phlex::HTML do
-	extend ViewHelper
-
-	with "naughty javascript links" do
-		view do
+class NaughtyBusinessTest < Quickdraw::Test
+	test "naughty javascript links" do
+		view = Class.new(Phlex::HTML) do
 			def view_template
 				a(href: "javascript:alert(1)") { "a" }
 				a(href: "JAVASCRIPT:alert(1)") { "b" }
@@ -13,13 +11,11 @@ describe Phlex::HTML do
 			end
 		end
 
-		it "removes the href attributes" do
-			expect(output).to be == "<a>a</a><a>b</a><a>c</a><a>d</a>"
-		end
+		assert_equal view.call, "<a>a</a><a>b</a><a>c</a><a>d</a>"
 	end
 
-	with "naughty uppercase event tag" do
-		view do
+	test "naughty uppercase event tag" do
+		view = Class.new(Phlex::HTML) do
 			def view_template
 				button ONCLICK: "ALERT(1)" do
 					"naughty button"
@@ -27,38 +23,32 @@ describe Phlex::HTML do
 			end
 		end
 
-		it "raises" do
-			expect { output }.to raise_exception ArgumentError,
-				message: be == "Unsafe attribute name detected: ONCLICK."
-		end
+		error = assert_raises(ArgumentError) { view.call }
+		assert_equal error.message, "Unsafe attribute name detected: ONCLICK."
 	end
 
-	with "naughty text" do
-		view do
+	test "naughty text" do
+		view = Class.new(Phlex::HTML) do
 			def view_template
 				plain %("><script type="text/javascript" src="bad_script.js"></script>)
 			end
 		end
 
-		it "escapes the content" do
-			expect(output).to be == "&quot;&gt;&lt;script type=&quot;text/javascript&quot; src=&quot;bad_script.js&quot;&gt;&lt;/script&gt;"
-		end
+		assert_equal view.call, "&quot;&gt;&lt;script type=&quot;text/javascript&quot; src=&quot;bad_script.js&quot;&gt;&lt;/script&gt;"
 	end
 
-	with "naughty tag attribute values" do
-		view do
+	test "naughty tag attribute values" do
+		view = Class.new(Phlex::HTML) do
 			def view_template
 				article id: %("><script type="text/javascript" src="bad_script.js"></script>)
 			end
 		end
 
-		it "escapes the attributes" do
-			expect(output).to be == %(<article id="&quot;><script type=&quot;text/javascript&quot; src=&quot;bad_script.js&quot;></script>"></article>)
-		end
+		assert_equal view.call, %(<article id="&quot;><script type=&quot;text/javascript&quot; src=&quot;bad_script.js&quot;></script>"></article>)
 	end
 
-	with "naughty javascript link protocol in href" do
-		view do
+	test "naughty javascript link protocol in symbolic href" do
+		view = Class.new(Phlex::HTML) do
 			def view_template
 				a href: "javascript:javascript:alert(1)" do
 					"naughty link"
@@ -66,13 +56,11 @@ describe Phlex::HTML do
 			end
 		end
 
-		it "strips the javascript protocol" do
-			expect(output).to be == %{<a>naughty link</a>}
-		end
+		assert_equal view.call, %{<a>naughty link</a>}
 	end
 
-	with "naughty javascript link protocol in href" do
-		view do
+	test "naughty javascript link protocol in string href" do
+		view = Class.new(Phlex::HTML) do
 			def view_template
 				a "href" => "javascript:javascript:alert(1)" do
 					"naughty link"
@@ -80,13 +68,11 @@ describe Phlex::HTML do
 			end
 		end
 
-		it "strips the javascript protocol" do
-			expect(output).to be == %{<a>naughty link</a>}
-		end
+		assert_equal view.call, %{<a>naughty link</a>}
 	end
 
-	with "naughty javascript link protocol with a hidden tab character" do
-		view do
+	test "naughty javascript link protocol with a hidden tab character" do
+		view = Class.new(Phlex::HTML) do
 			def view_template
 				a(href: "\tjavascript:alert(1)") { "XSS" }
 				a(href: "j\tavascript:alert(1)") { "XSS" }
@@ -103,14 +89,13 @@ describe Phlex::HTML do
 			end
 		end
 
-		it "strips the javascript protocol" do
-			expect(output.scan("<a>").size).to be == 12
-			expect(output.scan("href").size).to be == 0
-		end
+		output = view.call
+		assert_equal output.scan("<a>").size, 12
+		assert_equal output.scan("href").size, 0
 	end
 
-	with "naughty javascript link protocol with a hidden newline character" do
-		view do
+	test "naughty javascript link protocol with a hidden newline character" do
+		view = Class.new(Phlex::HTML) do
 			def view_template
 				a(href: "\njavascript:alert(1)") { "XSS" }
 				a(href: "j\navascript:alert(1)") { "XSS" }
@@ -127,14 +112,13 @@ describe Phlex::HTML do
 			end
 		end
 
-		it "strips the javascript protocol" do
-			expect(output.scan("<a>").size).to be == 12
-			expect(output.scan("href").size).to be == 0
-		end
+		output = view.call
+		assert_equal output.scan("<a>").size, 12
+		assert_equal output.scan("href").size, 0
 	end
 
-	with "naughty javascript link protocol with a hidden whitespace character" do
-		view do
+	test "naughty javascript link protocol with a hidden whitespace character" do
+		view = Class.new(Phlex::HTML) do
 			def view_template
 				a(href: " javascript:alert(1)") { "XSS" }
 				a(href: "j avascript:alert(1)") { "XSS" }
@@ -151,44 +135,39 @@ describe Phlex::HTML do
 			end
 		end
 
-		it "strips the javascript protocol" do
-			expect(output.scan("<a>").size).to be == 12
-			expect(output.scan("href").size).to be == 0
-		end
+		output = view.call
+		assert_equal output.scan("<a>").size, 12
+		assert_equal output.scan("href").size, 0
 	end
 
 	Phlex::SGML::Attributes::UNSAFE_ATTRIBUTES.each do |event_attribute|
-		with "with naughty #{event_attribute} attribute" do
+		test "with naughty #{event_attribute} attribute" do
 			naughty_attributes = { event_attribute => "alert(1);" }
 
-			view do
+			view = Class.new(Phlex::HTML) do
 				define_method :view_template do
 					__send__(:div, **naughty_attributes)
 				end
 			end
 
-			it "raises an ArgumentError" do
-				expect { output }.to raise_exception ArgumentError,
-					message: be == "Unsafe attribute name detected: #{event_attribute}."
-			end
+			error = assert_raises(ArgumentError) { view.call }
+			assert_equal error.message, "Unsafe attribute name detected: #{event_attribute}."
 		end
 	end
 
 	%w[< > & " '].each do |naughty_character|
-		with "naughty attribute name containing #{naughty_character}" do
+		test "naughty attribute name containing #{naughty_character}" do
 			naughty_attribute = "abc#{naughty_character}123"
 			naughty_attributes = { naughty_attribute => "alert(1);" }
 
-			view do
+			view = Class.new(Phlex::HTML) do
 				define_method :view_template do
 					__send__(:div, **naughty_attributes)
 				end
 			end
 
-			it "raises an ArgumentError" do
-				expect { output }.to raise_exception ArgumentError,
-					message: be == "Unsafe attribute name detected: #{naughty_attribute}."
-			end
+			error = assert_raises(ArgumentError) { view.call }
+			assert_equal error.message, "Unsafe attribute name detected: #{naughty_attribute}."
 		end
 	end
 end
