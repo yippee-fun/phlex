@@ -34,9 +34,9 @@ class Phlex::CSV
 		end
 
 		if strip_whitespace
-			escape_regex = /[\n"#{delimiter}]/
+			escape_regex = /[\r\n"#{delimiter}]/
 		else
-			escape_regex = /^\s|\s$|[\n"#{delimiter}]/
+			escape_regex = /^\s|\s$|[\r\n"#{delimiter}]/
 		end
 
 		if has_yielder
@@ -188,7 +188,11 @@ class Phlex::CSV
 					buffer << value
 				end
 			else # not escaping CSV injection
-				buffer << value
+				if value.match?(escape_regex)
+					buffer << '"' << value.gsub('"', '""') << '"'
+				else
+					buffer << value
+				end
 			end
 		else # not stripping whitespace
 			if escape_csv_injection

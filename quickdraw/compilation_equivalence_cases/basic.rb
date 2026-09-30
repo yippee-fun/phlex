@@ -1,9 +1,13 @@
 # frozen_string_literal: true
 
-class Basic < Phlex::HTML
-	def view_template
-		h1 { "Hello" }
-		br
-		br(class: "my-class")
+module EquivalenceCases
+	module Basic
+		class Basic < Phlex::HTML
+			def view_template
+				h1 { "Hello" }
+				br
+				br(class: "my-class")
+			end
+		end
 	end
 end

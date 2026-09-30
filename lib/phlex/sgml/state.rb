@@ -17,8 +17,6 @@ class Phlex::SGML::State
 	attr_reader :fragments, :fragment_depth, :output_buffer, :buffer
 
 	def around_render(component)
-		stack = @stack
-
 		if !@fragments || @halt_signal
 			yield
 		else
@@ -72,6 +70,11 @@ class Phlex::SGML::State
 		@cache_stack.reverse_each do |(cache_buffer, fragment_map)|
 			offset += cache_buffer.bytesize
 			fragment_map[id] = [offset, length, nested_fragments]
+
+			fragment_map.each do |name, (_offset, fragment_length, descendants)|
+				next if name == id || fragment_length
+				descendants << id unless descendants.include?(id)
+			end
 		end
 	end
 
@@ -80,8 +83,12 @@ class Phlex::SGML::State
 
 		capture do
 			@cache_stack.push([buffer, {}].freeze)
-			yield
-			result = @cache_stack.pop
+			begin
+				yield
+				result = @cache_stack.last
+			ensure
+				@cache_stack.pop
+			end
 		end
 
 		result

@@ -25,7 +25,19 @@ class SVGTest < Quickdraw::Test
 			end
 		end
 
-		assert_equal component.call, %(<![CDATA[Hello, <[[test]]>]]<![CDATA[ World!]]>)
+		assert_equal component.call, %(<![CDATA[Hello, <[[test]]]]><![CDATA[> World!]]>)
+	end
+
+	test "CDATA strings and blocks preserve terminators when parsed as XML" do
+		["a]]>b", "]]>]]>", "<test>é]]>😀</test>"].each do |value|
+			string_output = Phlex.svg { svg { cdata(value) } }
+			block_output = Phlex.svg { svg { cdata { raw safe(value) } } }
+
+			[string_output, block_output].each do |output|
+				document = Nokogiri::XML(output, &:strict)
+				assert_equal document.root.content, value
+			end
+		end
 	end
 
 	test "cdata with block" do

@@ -9,20 +9,14 @@ Phlex is incredibly complex and requires a lot of meta-programming but when you 
 ## Setup
 
 - Install dependencies `bundle install`
-- Run the tests `bundle exec qt && bundle exec sus`
+- Run the tests `bundle exec qt`
 
 ## Tests
 
-New tests should be written using [Quickdraw](https://github.com/joeldrapper/quickdraw) and placed in the `quickdraw` folder. You can run these tests with:
+Tests are written using [Quickdraw](https://github.com/joeldrapper/quickdraw) and placed in the `quickdraw` folder. You can run these tests with:
 
 ```
 bundle exec qt
-```
-
-Previously, we used **[Sus](https://github.com/ioquatix/sus)**. Sus tests are in the `test` folder and can be run with:
-
-```
-bundle exec sus
 ```
 
 ## Documentation

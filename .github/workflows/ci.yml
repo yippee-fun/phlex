@@ -21,7 +21,7 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup
         uses: ruby/setup-ruby@v1
@@ -33,16 +33,13 @@ jobs:
         run: |
           bundle install --jobs 4
 
-      - name: Sus Tests
-        run: bundle exec sus
-
       - name: Quickdraw Tests
-        run: bundle exec qt -t 1
+        run: bundle exec qt
 
   rubocop:
     runs-on: "ubuntu-latest"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup
         uses: ruby/setup-ruby@v1
