@@ -66,9 +66,7 @@ class CompilerTest < Quickdraw::Test
 					__phlex_state__ = @_state
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
-							__attributes__({
-								class: @cls
-							})
+							::Phlex::SGML::Attributes.attribute(:class, "class", @cls)
 						rescue ::Exception
 							__phlex_state__.buffer.<<(">")
 							raise()
@@ -91,18 +89,127 @@ class CompilerTest < Quickdraw::Test
 			def a
 				begin
 					__phlex_state__ = @_state
-					__phlex_value_1__ = {
-						id: dom_id
-					}
+					__phlex_value_1__ = dom_id
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
-							__attributes__(__phlex_value_1__)
+							::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
 						rescue ::Exception
 							__phlex_state__.buffer.<<(">")
 							raise()
 						end).<<(">x</div>")
 					end
 					nil)
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
+	test "static and dynamic attributes serialise piece by piece, evaluating every dynamic one before any is appended" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				a(href: @url, class: "x", id: dom_id) { "x" }
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					__phlex_value_1__ = @url
+					__phlex_value_2__ = dom_id
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("<a").<<(begin
+							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.reference_attribute(:href, "href", __phlex_value_1__)
+							__phlex_attribute_4__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							__phlex_attribute_3__
+						rescue ::Exception
+							__phlex_state__.buffer.<<(">")
+							raise()
+						end).<<(' class="x"').<<(__phlex_attribute_4__).<<(">x</a>")
+					end
+					nil)
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
+	test "a conditional over literal attribute values is serialised per branch, and hoisted whole when impure" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				div(class: active? ? "on" : nil, id: @id)
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					__phlex_value_1__ = if active?
+						' class="on"'
+					else
+						""
+					end
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("<div").<<(begin
+							__phlex_attribute_2__ = ::Phlex::SGML::Attributes.attribute(:id, "id", @id)
+							__phlex_value_1__
+						rescue ::Exception
+							__phlex_state__.buffer.<<("></div>")
+							raise()
+						end).<<(__phlex_attribute_2__).<<("></div>")
+					end
+					nil)
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
+	test "a conditional over literal content fuses into the append" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				span { @active ? "<on>" : "off" }
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("<span>").<<(if @active
+							"&lt;on&gt;"
+						else
+							"off"
+						end).<<("</span>")
+					end
+					nil)
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
+	test "whitespace with dynamic content is inlined behind the runtime's render check" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				whitespace { @text }
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					if __phlex_state__.should_render?
+						(if __phlex_state__.should_render?
+							__phlex_state__.buffer.<<(" ")
+						end
+						nil)
+						__implicit_output__(@text)
+						(if __phlex_state__.should_render?
+							__phlex_state__.buffer.<<(" ")
+						end
+						nil)
+					end
 				rescue ::Exception => __phlex_exception__
 					::Kernel.raise(__map_exception__(__phlex_exception__))
 				end

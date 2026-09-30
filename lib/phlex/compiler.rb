@@ -17,6 +17,8 @@ require "refract"
 # - A `to_s` or `to_hash` with side effects on an interpolated variable or
 #   splatted attributes isn't called for elements skipped by fragment selection,
 #   and if it raises, text before it in the same append has already been written.
+# - Attributes with literal keys are serialised without the attribute cache, so
+#   a value's `to_s`, `to_h` or `iso8601` runs on every render.
 # - Element methods a compiled method inlines can't be overridden by a subclass
 #   loaded after compilation, by a module included afterwards, or by singleton
 #   methods on an instance. Subclasses loaded before compilation are detected.

@@ -17,103 +17,165 @@ module Phlex::SGML::Attributes
 		attributes.each do |k, v|
 			next unless v
 
-			name = case k
-				when String then k
-				when Symbol then (n = k.name).include?("_") ? n.tr("_", "-") : n
-				else raise Phlex::ArgumentError.new("Attribute keys should be Strings or Symbols.")
+			generate_attribute(k, attribute_name(k), v, buffer)
+		end
+
+		buffer
+	end
+
+	def attribute_name(k)
+		case k
+		when String then k
+		when Symbol then (n = k.name).include?("_") ? n.tr("_", "-") : n
+		else raise Phlex::ArgumentError.new("Attribute keys should be Strings or Symbols.")
+		end
+	end
+
+	# Serialises one attribute into the buffer, with every check.
+	def generate_attribute(k, name, v, buffer)
+		value = attribute_value(k, name, v, buffer)
+
+		if (simple_name = name.match?(SIMPLE_ATTRIBUTE_NAME))
+			# Fast path: the name is already lowercase and contains only `a-z` and `-`,
+			# so normalising it would be a no-op and it can't contain unsafe characters.
+			lower_name = normalized_name = name
+		else
+			lower_name = name.downcase
+			normalized_name = lower_name.delete("^a-z-")
+		end
+
+		unless Phlex::SGML::SafeObject === v
+			if value != true && REF_ATTRIBUTES.include?(normalized_name) && drop_reference?(k, v, value)
+				# We just ignore these because they were likely not specified by the developer.
+				return buffer
 			end
 
-			value = case v
-			when true
-				true
-			when String
-				v.include?('"') ? v.gsub('"', "&quot;") : v
-			when Symbol
-				n = v.name
-				n = n.tr("_", "-") if n.include?("_")
-				n.include?('"') ? n.gsub('"', "&quot;") : n
-			when Integer, Float
-				v.to_s
-			when Date
-				v.iso8601
-			when Time
-				v.respond_to?(:iso8601) ? v.iso8601 : v.strftime("%Y-%m-%dT%H:%M:%S%:z")
-			when Hash
-				case k
-				when :style
-					generate_styles(v).gsub('"', "&quot;")
-				else
-					generate_nested_attributes(v, "#{name}-", buffer)
-				end
-			when Array
-				case k
-				when :style
-					generate_styles(v).gsub('"', "&quot;")
-				else
-					generate_nested_tokens(v)
-				end
-			when Set
-				case k
-				when :style
-					generate_styles(v).gsub('"', "&quot;")
-				else
-					generate_nested_tokens(v.to_a)
-				end
-			when Phlex::SGML::SafeObject
-				v.to_s.gsub('"', "&quot;")
+			check_unsafe_attribute_name(k, normalized_name)
+		end
+
+		check_attribute_name(k, name, lower_name, simple_name)
+		append_attribute(buffer, name, value)
+	end
+
+	# Raises if the name fails a check that doesn't depend on the value, so a
+	# name that passes can be serialised with `attribute` or `reference_attribute`.
+	def validate_attribute_name(k, name)
+		lower_name = name.downcase
+		check_unsafe_attribute_name(k, lower_name.delete("^a-z-"))
+		check_attribute_name(k, name, lower_name, false)
+	end
+
+	def reference_attribute?(name)
+		REF_ATTRIBUTES.include?(name.downcase.delete("^a-z-"))
+	end
+
+	# The text to append for an attribute whose name has been validated.
+	def attribute(k, name, v)
+		return "" unless v
+
+		buffer = +""
+		append_attribute(buffer, name, attribute_value(k, name, v, buffer))
+	end
+
+	# The text to append for a validated attribute that references a URL.
+	def reference_attribute(k, name, v)
+		return "" unless v
+
+		buffer = +""
+		value = attribute_value(k, name, v, buffer)
+
+		if value != true && !(Phlex::SGML::SafeObject === v) && drop_reference?(k, v, value)
+			return ""
+		end
+
+		append_attribute(buffer, name, value)
+	end
+
+	private def attribute_value(k, name, v, buffer)
+		case v
+		when true
+			true
+		when String
+			v.include?('"') ? v.gsub('"', "&quot;") : v
+		when Symbol
+			n = v.name
+			n = n.tr("_", "-") if n.include?("_")
+			n.include?('"') ? n.gsub('"', "&quot;") : n
+		when Integer, Float
+			v.to_s
+		when Date
+			v.iso8601
+		when Time
+			v.respond_to?(:iso8601) ? v.iso8601 : v.strftime("%Y-%m-%dT%H:%M:%S%:z")
+		when Hash
+			case k
+			when :style
+				generate_styles(v).gsub('"', "&quot;")
 			else
-				if v.respond_to?(:to_h)
-					generate_nested_attributes(v.to_h, "#{name}-", buffer)
-				else
-					raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
-				end
+				generate_nested_attributes(v, "#{name}-", buffer)
 			end
-
-			if (simple_name = name.match?(SIMPLE_ATTRIBUTE_NAME))
-				# Fast path: the name is already lowercase and contains only `a-z` and `-`,
-				# so normalising it would be a no-op and it can't contain unsafe characters.
-				lower_name = normalized_name = name
+		when Array
+			case k
+			when :style
+				generate_styles(v).gsub('"', "&quot;")
 			else
-				lower_name = name.downcase
-				normalized_name = lower_name.delete("^a-z-")
+				generate_nested_tokens(v)
 			end
-
-			unless Phlex::SGML::SafeObject === v
-				if value != true && REF_ATTRIBUTES.include?(normalized_name)
-					case value
-					when String
-						if unsafe_reference?(value)
-							# We just ignore these because they were likely not specified by the developer.
-							next
-						end
-					else
-						raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
-					end
-				end
-
-				if normalized_name.bytesize > 2 && normalized_name.start_with?("on") && !normalized_name.include?("-")
-					raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
-				end
-
-				if UNSAFE_ATTRIBUTES.include?(normalized_name)
-					raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
-				end
+		when Set
+			case k
+			when :style
+				generate_styles(v).gsub('"', "&quot;")
+			else
+				generate_nested_tokens(v.to_a)
 			end
-
-			if !simple_name && name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
-				raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
+		when Phlex::SGML::SafeObject
+			v.to_s.gsub('"', "&quot;")
+		else
+			if v.respond_to?(:to_h)
+				generate_nested_attributes(v.to_h, "#{name}-", buffer)
+			else
+				raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
 			end
+		end
+	end
 
-			if lower_name == "id" && k != :id
-				raise Phlex::ArgumentError.new(":id attribute should only be passed as a lowercase symbol.")
-			end
+	# Whether a reference should be dropped because it could run script. Only a
+	# String can be a reference.
+	private def drop_reference?(k, v, value)
+		case value
+		when String
+			unsafe_reference?(value)
+		else
+			raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
+		end
+	end
 
-			case value
-			when true
-				buffer << " " << name
-			when String
-				buffer << " " << name << '="' << value << '"'
-			end
+	private def check_unsafe_attribute_name(k, normalized_name)
+		if normalized_name.bytesize > 2 && normalized_name.start_with?("on") && !normalized_name.include?("-")
+			raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
+		end
+
+		if UNSAFE_ATTRIBUTES.include?(normalized_name)
+			raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
+		end
+	end
+
+	private def check_attribute_name(k, name, lower_name, simple_name)
+		if !simple_name && name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
+			raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
+		end
+
+		if lower_name == "id" && k != :id
+			raise Phlex::ArgumentError.new(":id attribute should only be passed as a lowercase symbol.")
+		end
+	end
+
+	private def append_attribute(buffer, name, value)
+		case value
+		when true
+			buffer << " " << name
+		when String
+			buffer << " " << name << '="' << value << '"'
 		end
 
 		buffer
