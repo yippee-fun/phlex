@@ -1,6 +1,27 @@
 # frozen_string_literal: true
 
 class LoadTest < Quickdraw::Test
+	test "loading and rendering HTML and SVG with verbose warnings is quiet" do
+		script = <<~RUBY
+			require "phlex"
+			$VERBOSE = true
+
+			class Greeting < Phlex::HTML
+				def view_template(&block)
+					div { yield }
+					br
+					svg { |s| s.circle(cx: 1, cy: 2, r: 3) }
+				end
+			end
+
+			print Greeting.new { "Hello" }.call
+		RUBY
+
+		output = IO.popen([RbConfig.ruby, "-e", script], err: [:child, :out], &:read)
+		assert_equal $?.exitstatus, 0
+		assert_equal output, '<div>Hello</div><br><svg><circle cx="1" cy="2" r="3"></circle></svg>'
+	end
+
 	test "requiring phlex makes Date available" do
 		script = <<~RUBY
 			require "phlex"
