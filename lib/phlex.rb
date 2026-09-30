@@ -30,7 +30,22 @@ module Phlex
 
 	UNBOUND_INSTANCE_METHOD_METHOD = Module.instance_method(:instance_method)
 
+	# Filled by the compiler: compiled path => Phlex::Compiler::Generation.
+	# Lives here so the runtime can consult it without loading the compiler.
+	COMPILED_SOURCE_MAPS = {}
+
+	# The original line for a location that may be in compiled code.
+	def self.__source_line__(location)
+		if (generation = COMPILED_SOURCE_MAPS[location.path])
+			generation.lines[location.lineno] || location.lineno
+		else
+			location.lineno
+		end
+	end
+
 	def self.__expand_attribute_cache__(file_path)
+		return unless File.exist?(file_path)
+
 		unless CACHED_FILES.include?(file_path)
 			CACHED_FILES << file_path
 			Phlex::ATTRIBUTE_CACHE.expand(File.size(file_path))

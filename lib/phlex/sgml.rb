@@ -243,7 +243,7 @@ class Phlex::SGML
 			self.class.name,                                   # prevents collisions between classes
 			(self.class.object_id if enable_cache_reloading?), # enables reloading
 			location.base_label,                               # prevents collisions between different methods
-			location.lineno,                                   # prevents collisions between different lines
+			Phlex.__source_line__(location),                   # prevents collisions between different lines, compiled or not
 			cache_key,                                         # allows for custom cache keys
 		].freeze
 
@@ -423,10 +423,8 @@ class Phlex::SGML
 		true
 	end
 
-	private def __render_attributes__(attributes)
-		state = @_state
-		return unless state.should_render?
-		state.buffer << (Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes))
+	private def __attributes__(attributes)
+		Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes)
 	end
 
 	private_class_method def self.method_added(method_name)
@@ -441,18 +439,15 @@ class Phlex::SGML
 		super
 	end
 
-	def self.__compile__(method_name)
-		path, line = instance_method(method_name).source_location
-		Phlex::Compiler::Method.new(self, path, line, method_name).compile
-	end
-
 	def __map_exception__(exception)
+		return exception unless (locations = exception.backtrace_locations)
+
 		exception.set_backtrace(
-			exception.backtrace_locations.map do |loc|
-				if ((map = Phlex::Compiler::MAP[loc.path]) && (line = map[loc.lineno]))
-					"[Phlex] #{loc.path}:#{line}:#{loc.label}"
+			locations.map do |loc|
+				if (generation = Phlex::COMPILED_SOURCE_MAPS[loc.path]) && (line = generation.lines[loc.lineno])
+					"#{generation.path}:#{line}:in '#{loc.label}'"
 				else
-					"#{loc.path}:#{loc.lineno}:#{loc.label}"
+					loc.to_s
 				end
 			end
 		)
