@@ -90,4 +90,15 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 		output = CacheTest.new(2, cache_store:).call(fragments: ["foo"])
 		assert_equal output, "<li>1</li>"
 	end
+
+	test "fragments imported from an inner cache remain nested in outer fragments" do
+		cache_store = Phlex::FIFOCacheStore.new
+		CacheTest.new(1, cache_store:).call
+		CacheTest.new(2, cache_store:).call
+
+		[2, 3].each do |page_id|
+			output = CacheTest.new(page_id, cache_store:).call(fragments: ["outer", "foo"])
+			assert_equal output, '<div id="page"><section><ul><li>1</li><li>2</li><li>3</li></ul></section></div>'
+		end
+	end
 end
