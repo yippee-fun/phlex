@@ -17,8 +17,6 @@ class Phlex::SGML::State
 	attr_reader :fragments, :fragment_depth, :output_buffer, :buffer
 
 	def around_render(component)
-		stack = @stack
-
 		if !@fragments || @halt_signal
 			yield
 		else
