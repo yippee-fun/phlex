@@ -78,8 +78,12 @@ class Phlex::SGML::State
 
 		capture do
 			@cache_stack.push([buffer, {}].freeze)
-			yield
-			result = @cache_stack.pop
+			begin
+				yield
+				result = @cache_stack.last
+			ensure
+				@cache_stack.pop
+			end
 		end
 
 		result
