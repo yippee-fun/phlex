@@ -42,6 +42,14 @@ class FIFOTest < Quickdraw::Test
 		assert_equal fifo[1], "a"
 	end
 
+	test "fetch yields and caches a nil key on a miss" do
+		fifo = Phlex::FIFO.new(max_bytesize: 100)
+
+		assert_equal fifo.fetch(nil) { "a" }, "a"
+		assert_equal fifo[nil], "a"
+		assert_equal fifo.fetch(nil) { raise "should not yield" }, "a"
+	end
+
 	test "fetch returns but doesn't cache values that are too large" do
 		fifo = Phlex::FIFO.new(max_bytesize: 100, max_value_bytesize: 10)
 

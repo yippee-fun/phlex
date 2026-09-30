@@ -27,8 +27,10 @@ class Phlex::FIFO
 	# result. Unlike `fifo[key] ||= value`, the key is only hashed once.
 	def fetch(key)
 		digest = key.hash
-		k, v = @store[digest]
-		return v if k.eql?(key)
+		if (entry = @store[digest])
+			k, v = entry
+			return v if k.eql?(key)
+		end
 
 		value = yield
 		store(digest, key, value)
