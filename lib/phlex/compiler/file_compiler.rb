@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class Phlex::Compiler::FileCompiler < Refract::Visitor
-	Result = Data.define(:namespace, :compiled_snippets)
+	Result = Data.define(:namespace, :component, :compiled_snippets, :visibilities)
 
 	def initialize(path)
 		super()
@@ -24,20 +24,19 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	visit Refract::ClassNode do |node|
 		@current_namespace.push(node)
 
-		namespace = @current_namespace.map do |node|
-			Refract::Formatter.new.format_node(node.constant_path).source
-		end.join("::")
+		if (component = current_component)
+			class_compiler = Phlex::Compiler::ClassCompiler.new(component, @path)
 
-		const = eval(namespace, TOPLEVEL_BINDING)
-
-		if Class === const && Phlex::SGML > const
 			@results << Result.new(
 				namespace: @current_namespace.dup.freeze,
-				compiled_snippets: Phlex::Compiler::ClassCompiler.new(const, @path).compile(node)
+				component:,
+				compiled_snippets: class_compiler.compile(node),
+				visibilities: class_compiler.visibilities
 			)
-		else
-			super(node)
 		end
+
+		# Components can be nested inside other classes, components included.
+		super(node)
 
 		@current_namespace.pop
 	end
@@ -47,6 +46,18 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	visit Refract::BlockNode do |node|
+		nil
+	end
+
+	private def current_component
+		constant_name = @current_namespace.reduce(nil) do |namespace, scope|
+			name = Refract::Formatter.new.format_node(scope.constant_path).source
+			(namespace && !name.start_with?("::")) ? "#{namespace}::#{name}" : name
+		end
+
+		const = eval(constant_name, TOPLEVEL_BINDING)
+		const if Class === const && Phlex::SGML > const && !const.frozen?
+	rescue NameError
 		nil
 	end
 end

@@ -1,16 +1,19 @@
 # frozen_string_literal: true
 
 class Phlex::Compiler::ClassCompiler < Refract::Visitor
+	attr_reader :visibilities
+
 	def initialize(component, path)
 		super()
 		@component = component
 		@path = path
 		@compiled_snippets = []
+		@visibilities = {}
 	end
 
 	def compile(node)
 		visit(node.body)
-		@compiled_snippets.compact.freeze
+		@compiled_snippets.freeze
 	end
 
 	visit Refract::DefNode do |node|
@@ -28,9 +31,11 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 		return unless @path == path
 		return unless node.start_line == lineno
 
-		@compiled_snippets << Phlex::Compiler::MethodCompiler.new(
-			@component
-		).compile(node)
+		compiled = Phlex::Compiler::MethodCompiler.new(@component, @path).compile(node)
+		return unless compiled
+
+		@compiled_snippets << compiled
+		@visibilities[node.name] = visibility_of(node.name)
 	end
 
 	visit Refract::ClassNode do |node|
@@ -43,5 +48,15 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 
 	visit Refract::BlockNode do |node|
 		nil
+	end
+
+	private def visibility_of(name)
+		if @component.private_instance_methods(false).include?(name)
+			:private
+		elsif @component.protected_instance_methods(false).include?(name)
+			:protected
+		else
+			:public
+		end
 	end
 end
