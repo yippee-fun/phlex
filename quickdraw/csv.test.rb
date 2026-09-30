@@ -108,6 +108,23 @@ CSV
 CSV
 	end
 
+	test "internal carriage returns are quoted with every escape configuration" do
+		[true, false].each do |trim|
+			[true, false].each do |protect|
+				example = Class.new(Phlex::CSV) do
+					define_method(:escape_csv_injection?) { protect }
+					define_method(:trim_whitespace?) { trim }
+					def row_template(value)
+						column "head\rer", value
+					end
+				end
+
+				assert_equal example.new(["a\rb", "a\r\nb"]).call,
+					"\"head\rer\"\n\"a\rb\"\n\"a\r\nb\"\n"
+			end
+		end
+	end
+
 	test "no headers" do
 		example = Class.new(Base) do
 			define_method(:render_headers?) { false }
