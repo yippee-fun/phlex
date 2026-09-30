@@ -13,7 +13,7 @@ Lint/RedundantRequireStatement:
 Layout/ExtraSpacing:
   Enabled: false
 
-UnderscorePrefixedVariableName:
+Lint/UnderscorePrefixedVariableName:
   Enabled: false
 
 Style/SoleNestedConditional:

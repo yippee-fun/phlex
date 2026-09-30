@@ -31,6 +31,8 @@ module Phlex
 	UNBOUND_INSTANCE_METHOD_METHOD = Module.instance_method(:instance_method)
 
 	def self.__expand_attribute_cache__(file_path)
+		return unless File.exist?(file_path)
+
 		unless CACHED_FILES.include?(file_path)
 			CACHED_FILES << file_path
 			Phlex::ATTRIBUTE_CACHE.expand(File.size(file_path))
