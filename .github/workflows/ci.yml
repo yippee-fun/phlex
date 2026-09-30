@@ -33,9 +33,6 @@ jobs:
         run: |
           bundle install --jobs 4
 
-      - name: Sus Tests
-        run: bundle exec sus
-
       - name: Quickdraw Tests
         run: bundle exec qt
 

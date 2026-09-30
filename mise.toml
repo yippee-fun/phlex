@@ -4,7 +4,7 @@ run = ["mise install", "bundle install --jobs 4"]
 
 [tasks.test]
 description = "Run tests"
-run = ["bundle exec sus", "bundle exec qt"]
+run = ["bundle exec qt"]
 
 [tasks.lint]
 description = "Run linter"

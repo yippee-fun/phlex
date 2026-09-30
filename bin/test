@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-bundle exec qt && bundle exec sus && bundle exec rubocop && bundle exec ./browser_tests.rb && echo "🎉 All tests and checks passed!"
+bundle exec qt && bundle exec rubocop && bundle exec ./browser_tests.rb && echo "🎉 All tests and checks passed!"
