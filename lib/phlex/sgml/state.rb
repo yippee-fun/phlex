@@ -7,6 +7,7 @@ class Phlex::SGML::State
 		@user_context = user_context
 		@fragments = fragments
 		@fragment_depth = 0
+		@should_render = !fragments
 		@cache_stack = []
 		@halt_signal = nil
 		@output_buffer = output_buffer
@@ -14,7 +15,10 @@ class Phlex::SGML::State
 
 	attr_accessor :capturing, :user_context
 
-	attr_reader :fragments, :fragment_depth, :output_buffer, :buffer
+	attr_reader :fragments, :fragment_depth, :output_buffer, :buffer, :should_render
+
+	# Kept as a stored boolean so the check is a plain attribute read.
+	alias_method :should_render?, :should_render
 
 	def around_render(component)
 		if !@fragments || @halt_signal
@@ -27,12 +31,11 @@ class Phlex::SGML::State
 		end
 	end
 
-	def should_render?
-		!@fragments || @fragment_depth > 0
-	end
-
 	def begin_fragment(id)
-		@fragment_depth += 1 if @fragments&.include?(id)
+		if @fragments&.include?(id)
+			@fragment_depth += 1
+			@should_render = true
+		end
 
 		if caching?
 			current_byte_offset = 0                                 		# Start tracking the byte offset of this fragment from the start of the cache buffer
@@ -61,6 +64,7 @@ class Phlex::SGML::State
 
 		@fragments.delete(id)
 		@fragment_depth -= 1
+		@should_render = @fragment_depth > 0
 		throw @halt_signal if @fragments.length == 0
 	end
 
@@ -103,16 +107,19 @@ class Phlex::SGML::State
 		original_buffer = @buffer
 		original_capturing = @capturing
 		original_fragments = @fragments
+		original_should_render = @should_render
 
 		begin
 			@buffer = new_buffer
 			@capturing = true
 			@fragments = nil
+			@should_render = true
 			yield
 		ensure
 			@buffer = original_buffer
 			@capturing = original_capturing
 			@fragments = original_fragments
+			@should_render = original_should_render
 		end
 
 		new_buffer

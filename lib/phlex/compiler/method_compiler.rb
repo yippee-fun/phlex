@@ -11,6 +11,10 @@ module Phlex::Compiler
 		Attributes = Data.define(:hoisted, :nodes)
 		NO_ATTRIBUTES = Attributes.new(hoisted: [], nodes: [])
 
+		# One attribute's contribution to the opening tag: nodes that evaluate to
+		# the text to append, and whether evaluating them can raise.
+		Piece = Data.define(:nodes, :raises)
+
 		def initialize(component, path)
 			super()
 			@component = component
@@ -155,6 +159,7 @@ module Phlex::Compiler
 			elsif helper?(node)
 				case node.name
 				in :plain then compile_plain(node)
+				in :raw then compile_raw(node)
 				in :whitespace then compile_whitespace(node)
 				in :doctype then compile_doctype(node)
 				in :comment then compile_comment(node)
@@ -230,9 +235,10 @@ module Phlex::Compiler
 			]
 		end
 
+		# Folded conditionals only ever choose between literals, so they can't exit.
 		private def static?(node)
 			case node
-			in Concat then Refract::StringNode === node.node
+			in Concat then node.node in Refract::StringNode | Refract::IfNode | Refract::UnlessNode
 			in Refract::StatementsNode then node.body.all? { |child| static?(child) }
 			else false
 			end
@@ -242,13 +248,17 @@ module Phlex::Compiler
 			[
 				Refract::IfNode.new(
 					inline: true,
-					predicate: Refract::CallNode.new(
-						receiver: Refract::LocalVariableReadNode.new(name: state_local),
-						name: :should_render?
-					),
+					predicate: should_render,
 					statements: Refract::StatementsNode.new(body: [Refract::CallNode.new(name: :flush)])
 				),
 			]
+		end
+
+		private def should_render
+			Refract::CallNode.new(
+				receiver: Refract::LocalVariableReadNode.new(name: state_local),
+				name: :should_render?
+			)
 		end
 
 		# Keeps the runtime call, but still compiles inside its block. Only for
@@ -356,12 +366,24 @@ module Phlex::Compiler
 		# An interpolation that writes to the buffer changes what the runtime does
 		# with the string, so only pure interpolations are compiled. They're
 		# escaped as one expression, so the whole string is built before any of
-		# it is appended, as at runtime.
+		# it is appended, as at runtime. A conditional over literals is escaped
+		# branch by branch.
 		private def compile_literal_content(node)
 			case node
 			in Refract::StringNode | Refract::SymbolNode then plain(node.unescaped)
 			in Refract::InterpolatedStringNode if pure?(node) then append(escaped(node))
 			in Refract::NilNode then Refract::StatementsNode.new(body: [])
+			in Refract::IfNode | Refract::UnlessNode
+				folded = fold_conditional(node) { |leaf| literal_content(leaf) }
+				append(folded) if folded && pure?(folded.predicate)
+			else nil
+			end
+		end
+
+		private def literal_content(node)
+			case node
+			in Refract::StringNode | Refract::SymbolNode then Refract::StringNode.new(unescaped: Phlex::Escape.html_escape(node.unescaped))
+			in Refract::NilNode then Refract::StringNode.new(unescaped: "")
 			else nil
 			end
 		end
@@ -380,24 +402,128 @@ module Phlex::Compiler
 				end
 			end
 
+			compile_attribute_pieces(node.name, keyword_hash, closing) || compile_attribute_hash(node.name, keyword_hash, closing)
+		end
+
+		# Serialises each attribute on its own when every key is a literal. Static
+		# values are serialised now, and each dynamic value goes to the helper for
+		# its key with the name checks already done. The values are evaluated in
+		# order, as at runtime, so every value up to the last impure one is hoisted.
+		private def compile_attribute_pieces(element, keyword_hash, closing)
+			normalized_keys = Phlex::SGML::Elements::NORMALIZED_ATTRIBUTES[element]
+			elements = keyword_hash.elements
+			last_impure = elements.rindex { |assoc| !(Refract::AssocNode === assoc) || !pure?(assoc.value) }
+			keys = Set.new
+			hoisted = []
+
+			pieces = catch(:dynamic) do
+				elements.each_with_index.map do |assoc, index|
+					throw :dynamic unless assoc in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode => key, value:]
+
+					key_value = static_value(key)
+					throw :dynamic if normalized_keys&.include?(key_value) || !keys.add?(key_value)
+
+					attribute_piece(key, key_value, value, hoisted, hoist: last_impure && index <= last_impure)
+				end
+			end
+
+			pieces && Attributes.new(hoisted:, nodes: attribute_chain(pieces, closing))
+		rescue Phlex::ArgumentError
+			nil
+		end
+
+		private def attribute_piece(key, key_value, value, hoisted, hoist:)
+			if (static = static_attribute_value(value))
+				return Piece.new(nodes: [serialized_attribute(key_value, static[0])], raises: false)
+			end
+
+			name = Phlex::SGML::Attributes.attribute_name(key_value)
+			Phlex::SGML::Attributes.validate_attribute_name(key_value, name)
+
+			if (folded = fold_conditional(value) { |leaf| (static = static_attribute_value(leaf)) && serialized_attribute(key_value, static[0]) })
+				folded = hoisted_local(folded, hoisted) if hoist
+				return Piece.new(nodes: [folded], raises: false)
+			end
+
+			string = Refract::InterpolatedStringNode === value
+			reference = Phlex::SGML::Attributes.reference_attribute?(name)
+			value = hoisted_local(value, hoisted) if hoist
+
+			if string && !reference
+				return Piece.new(nodes: [Refract::StringNode.new(unescaped: " #{name}=\""), quoted(value), Refract::StringNode.new(unescaped: '"')], raises: false)
+			end
+
+			Piece.new(
+				nodes: [
+					Refract::CallNode.new(
+						receiver: attributes_module,
+						name: reference ? :reference_attribute : :attribute,
+						arguments: Refract::ArgumentsNode.new(arguments: [key, Refract::StringNode.new(unescaped: name), value])
+					),
+				],
+				raises: true
+			)
+		end
+
+		# An interpolation is always a String, so it only needs its quotes escaped.
+		private def quoted(node)
+			Refract::CallNode.new(
+				receiver: node,
+				name: :gsub,
+				arguments: Refract::ArgumentsNode.new(
+					arguments: [Refract::StringNode.new(unescaped: '"'), Refract::StringNode.new(unescaped: "&quot;")]
+				)
+			)
+		end
+
+		private def hoisted_local(node, hoisted)
+			local = local(:value)
+			hoisted << Refract::LocalVariableWriteNode.new(name: local, value: visit(node))
+			Refract::LocalVariableReadNode.new(name: local)
+		end
+
+		private def serialized_attribute(key, value)
+			Refract::StringNode.new(unescaped: Phlex::SGML::Attributes.generate_attributes({ key => value }))
+		end
+
+		# The runtime builds the whole attribute string before appending any of
+		# it, so if a value is invalid the tag closes empty. Pieces that can raise
+		# are all evaluated in the first slot, and appended from locals after.
+		private def attribute_chain(pieces, closing)
+			raising = pieces.select(&:raises)
+			return pieces.flat_map { |piece| piece.nodes.map { |node| append(node) } } if raising.empty?
+
+			if raising == [pieces.first]
+				slots = [close_tag_on_exception(pieces.first.nodes, closing), *pieces.drop(1).flat_map(&:nodes)]
+			else
+				locals = raising.to_h { |piece| [piece, local(:attribute)] }
+				writes = raising.map { |piece| Refract::LocalVariableWriteNode.new(name: locals[piece], value: piece.nodes.first) }
+				slots = pieces.flat_map { |piece| locals.key?(piece) ? [Refract::LocalVariableReadNode.new(name: locals[piece])] : piece.nodes }
+				slots[0] = close_tag_on_exception([*writes, slots[0]], closing)
+			end
+
+			slots.map { |slot| append(slot) }
+		end
+
+		private def compile_attribute_hash(element, keyword_hash, closing)
 			hash = Refract::HashNode.new(elements: keyword_hash.elements)
 
 			if pure?(hash)
-				Attributes.new(hoisted: [], nodes: [append(close_tag_on_exception(attributes_call(node.name, hash), closing))])
+				Attributes.new(hoisted: [], nodes: [append(close_tag_on_exception([attributes_call(element, hash)], closing))])
 			else
 				local = local(:value)
 				Attributes.new(
 					hoisted: [Refract::LocalVariableWriteNode.new(name: local, value: visit(hash))],
-					nodes: [append(close_tag_on_exception(attributes_call(node.name, Refract::LocalVariableReadNode.new(name: local)), closing))]
+					nodes: [append(close_tag_on_exception([attributes_call(element, Refract::LocalVariableReadNode.new(name: local))], closing))]
 				)
 			end
 		end
 
 		# The runtime closes the opening tag even when serialising the attributes
 		# raises. Wrapping the expression itself keeps it inside the append chain.
-		private def close_tag_on_exception(expression, closing)
+		private def close_tag_on_exception(statements, closing)
 			Refract::BeginNode.new(
-				statements: Refract::StatementsNode.new(body: [expression]),
+				statements: Refract::StatementsNode.new(body: statements),
 				rescue_clause: Refract::RescueNode.new(
 					exceptions: [Refract::ConstantPathNode.new(name: "Exception")],
 					reference: nil,
@@ -442,6 +568,16 @@ module Phlex::Compiler
 			)
 		end
 
+		private def attributes_module
+			Refract::ConstantPathNode.new(
+				parent: Refract::ConstantPathNode.new(
+					parent: Refract::ConstantPathNode.new(name: "Phlex"),
+					name: "SGML"
+				),
+				name: "Attributes"
+			)
+		end
+
 		private def normalize_attributes(element, attributes)
 			if (normalizer = Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS[element])
 				Phlex::SGML::Elements.public_send(normalizer, attributes)
@@ -450,6 +586,11 @@ module Phlex::Compiler
 
 		private def static_attributes(keyword_hash)
 			catch(:dynamic) { static_hash(keyword_hash.elements) }
+		end
+
+		# The value wrapped in an array, since a static value can be nil.
+		private def static_attribute_value(node)
+			catch(:dynamic) { [static_value(node)] }
 		end
 
 		private def static_hash(elements)
@@ -497,9 +638,57 @@ module Phlex::Compiler
 			@unqualified_set_is_standard = false
 		end
 
+		# Rebuilds a conditional with each literal branch replaced by the block's
+		# result, or returns nil if a branch isn't a literal the block handles or
+		# a nested condition isn't pure. The outermost condition is left for the
+		# caller to check, since the whole conditional can be hoisted. A branch
+		# that's missing evaluates to nil, so it gets a nil leaf, which is why a
+		# modifier form becomes a block form.
+		private def fold_conditional(node, &leaf)
+			case node
+			in Refract::IfNode | Refract::UnlessNode then catch(:dynamic) { fold(node, &leaf) }
+			in Refract::ParenthesesNode[body: Refract::StatementsNode[body: [inner]]] then fold_conditional(inner, &leaf)
+			else nil
+			end
+		end
+
+		private def fold(node, &leaf)
+			case node
+			in Refract::IfNode
+				node.copy(inline: false, statements: fold_branch(node.statements, &leaf), subsequent: fold_else(node.subsequent, &leaf))
+			in Refract::UnlessNode
+				node.copy(inline: false, statements: fold_branch(node.statements, &leaf), else_clause: fold_else(node.else_clause, &leaf))
+			in Refract::ElseNode
+				node.copy(statements: fold_branch(node.statements, &leaf))
+			in Refract::ParenthesesNode[body: Refract::StatementsNode[body: [inner]]]
+				node.copy(body: Refract::StatementsNode.new(body: [fold_nested(inner, &leaf)]))
+			else
+				leaf.call(node) || throw(:dynamic)
+			end
+		end
+
+		private def fold_nested(node, &leaf)
+			throw :dynamic if node in Refract::IfNode | Refract::UnlessNode and !pure?(node.predicate)
+
+			fold(node, &leaf)
+		end
+
+		private def fold_branch(statements, &leaf)
+			case statements
+			in nil then Refract::StatementsNode.new(body: [fold(Refract::NilNode.new, &leaf)])
+			in Refract::StatementsNode[body: [statement]] then Refract::StatementsNode.new(body: [fold_nested(statement, &leaf)])
+			else throw :dynamic
+			end
+		end
+
+		private def fold_else(node, &leaf)
+			node ? fold_nested(node, &leaf) : Refract::ElseNode.new(statements: fold_branch(nil, &leaf))
+		end
+
 		# Whether evaluating the node can't have side effects or raise, so it's
 		# safe to evaluate it inside an append that may be skipped. Constants are
-		# excluded: reading one can autoload or raise NameError.
+		# excluded: reading one can autoload or raise NameError. Conditionals
+		# over pure operands are pure, since they only choose between them.
 		private def pure?(node)
 			case node
 			in nil | Refract::StringNode | Refract::SymbolNode | Refract::IntegerNode | Refract::FloatNode |
@@ -514,6 +703,10 @@ module Phlex::Compiler
 			in Refract::EmbeddedStatementsNode then pure?(node.statements)
 			in Refract::ParenthesesNode then pure?(node.body)
 			in Refract::StatementsNode then node.body.all? { |statement| pure?(statement) }
+			in Refract::IfNode then pure?(node.predicate) && pure?(node.statements) && pure?(node.subsequent)
+			in Refract::UnlessNode then pure?(node.predicate) && pure?(node.statements) && pure?(node.else_clause)
+			in Refract::ElseNode then pure?(node.statements)
+			in Refract::AndNode | Refract::OrNode then pure?(node.left) && pure?(node.right)
 			else false
 			end
 		end
@@ -527,35 +720,55 @@ module Phlex::Compiler
 			end
 		end
 
+		# `raw safe("…")` is a literal that skips escaping.
+		private def compile_raw(node)
+			case node.arguments&.arguments
+			in [Refract::CallNode[receiver: nil, name: :safe, block: nil, arguments: Refract::ArgumentsNode[arguments: [Refract::StringNode => literal]]] => safe] if helper?(safe)
+				raw(literal.unescaped)
+			else
+				nil
+			end
+		end
+
 		private def compile_whitespace(node)
 			return unless node.arguments.nil?
+			return raw(" ") if node.block.nil?
 
-			case node.block
-			in nil
-				raw(" ")
-			in Refract::BlockNode => block if (content = literal_block_content(block))
-				Refract::StatementsNode.new(body: [raw(" "), content, raw(" ")])
-			else
-				compile_call_with_content(node)
-			end
+			compile_wrapped_content(node, " ", " ")
 		end
 
 		private def compile_comment(node)
 			return unless node.arguments.nil?
 
-			case node.block
-			in Refract::BlockNode => block if (content = literal_block_content(block))
-				Refract::StatementsNode.new(body: [raw("<!-- "), content, raw(" -->")])
-			else
-				compile_call_with_content(node)
-			end
+			compile_wrapped_content(node, "<!-- ", " -->")
 		end
 
-		private def literal_block_content(block)
-			return unless block.parameters.nil?
-			return unless block.body in Refract::StatementsNode[body: [statement]]
+		# Unlike an element, the runtime doesn't yield the block at all when the
+		# output is being skipped, so dynamic content needs the same guard. And
+		# with no `ensure`, a jump out of the block skips the closing text, so
+		# only a block that can be inlined is compiled. A forwarded block, which
+		# may be nil, keeps the runtime call too.
+		private def compile_wrapped_content(node, opening, closing)
+			block = node.block
+			return compile_call_with_content(node) unless inlinable_content?(block)
 
-			compile_literal_content(statement)
+			content = compile_content(block)
+			body = [raw(opening), *content, raw(closing)]
+			return Refract::StatementsNode.new(body:) if content.all? { |node| static?(node) }
+
+			Refract::IfNode.new(
+				inline: false,
+				predicate: should_render,
+				statements: Refract::StatementsNode.new(body:)
+			)
+		end
+
+		private def inlinable_content?(block)
+			case block
+			in nil then true
+			in Refract::BlockNode then block.body.nil? || inlinable?(block)
+			else false
+			end
 		end
 
 		private def compile_doctype(node)

@@ -9,6 +9,14 @@ module Phlex::SGML::Elements
 		input: :normalize_input_attributes,
 	}.freeze
 
+	# The attributes each normalizer rewrites, so the compiler can serialise the
+	# others on their own.
+	NORMALIZED_ATTRIBUTES = {
+		img: Set[:srcset],
+		link: Set[:media, :sizes, :imagesrcset],
+		input: Set[:accept],
+	}.freeze
+
 	def self.normalize_img_attributes(attributes)
 		if Array === (srcset_attribute = attributes[:srcset])
 			attributes[:srcset] = Phlex::SGML::Attributes.generate_nested_tokens(srcset_attribute, ", ", ",", "%2C")
