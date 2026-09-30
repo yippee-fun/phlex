@@ -23,10 +23,26 @@ class Phlex::FIFO
 		v if k.eql?(key)
 	end
 
-	def []=(key, value)
-		return if value.bytesize > @max_value_bytesize
-
+	# Returns the cached value for `key`, or yields to generate it and caches the
+	# result. Unlike `fifo[key] ||= value`, the key is only hashed once.
+	def fetch(key)
 		digest = key.hash
+		if (entry = @store[digest])
+			k, v = entry
+			return v if k.eql?(key)
+		end
+
+		value = yield
+		store(digest, key, value)
+		value
+	end
+
+	def []=(key, value)
+		store(key.hash, key, value)
+	end
+
+	private def store(digest, key, value)
+		return if value.bytesize > @max_value_bytesize
 
 		@mutex.synchronize do
 			# Check the key definitely doesn't exist now we have the lock
