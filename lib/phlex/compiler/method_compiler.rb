@@ -282,14 +282,46 @@ module Phlex::Compiler
 					[content]
 				elsif statements.length == 1 && pure?(statements[0])
 					[implicit_output(statements[0])]
+				elsif !BlockLocalsScanner.writes?(block.body)
+					inline_dynamic_content(block.body)
 				else
 					[yield_content(compile_block_unguarded(block))]
 				end
+			in Refract::BlockNode if block.parameters.nil? && !JumpScanner.jumps?(block.body) && !BlockLocalsScanner.writes?(block.body)
+				inline_dynamic_content(block.body)
 			in Refract::BlockNode
 				[yield_content(compile_block_unguarded(block))]
 			in Refract::BlockArgumentNode
 				[yield_content(block)]
 			end
+		end
+
+		private def inline_dynamic_content(body)
+			buffer = local(:content_buffer)
+			length = local(:content_length)
+			content = local(:content)
+			buffer_size = Refract::CallNode.new(
+				receiver: Refract::LocalVariableReadNode.new(name: buffer),
+				name: :bytesize
+			)
+
+			[
+				Refract::LocalVariableWriteNode.new(
+					name: buffer,
+					value: Refract::CallNode.new(receiver: Refract::LocalVariableReadNode.new(name: state_local), name: :buffer)
+				),
+				Refract::LocalVariableWriteNode.new(name: length, value: buffer_size),
+				Refract::LocalVariableWriteNode.new(name: content, value: Refract::ParenthesesNode.new(body: visit(body))),
+				Refract::IfNode.new(
+					inline: true,
+					predicate: Refract::CallNode.new(
+						receiver: Refract::LocalVariableReadNode.new(name: length),
+						name: :==,
+						arguments: Refract::ArgumentsNode.new(arguments: [buffer_size])
+					),
+					statements: Refract::StatementsNode.new(body: [implicit_output(Refract::LocalVariableReadNode.new(name: content))])
+				),
+			]
 		end
 
 		# A pure expression can't write to the buffer, so the runtime would always
@@ -478,6 +510,7 @@ module Phlex::Compiler
 		private def pure?(node)
 			case node
 			in nil | Refract::StringNode | Refract::SymbolNode | Refract::IntegerNode | Refract::FloatNode |
+				Refract::RationalNode | Refract::ImaginaryNode | Refract::RegularExpressionNode |
 				Refract::TrueNode | Refract::FalseNode | Refract::NilNode | Refract::SelfNode |
 				Refract::LocalVariableReadNode | Refract::InstanceVariableReadNode | Refract::EmbeddedVariableNode
 				true
