@@ -188,7 +188,11 @@ class Phlex::CSV
 					buffer << value
 				end
 			else # not escaping CSV injection
-				buffer << value
+				if value.match?(escape_regex)
+					buffer << '"' << value.gsub('"', '""') << '"'
+				else
+					buffer << value
+				end
 			end
 		else # not stripping whitespace
 			if escape_csv_injection

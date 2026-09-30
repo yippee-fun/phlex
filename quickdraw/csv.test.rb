@@ -50,10 +50,24 @@ CSV
    Banana,2.0
    strawberry,Three pounds
    =SUM(A1:B1),=SUM(A1:B1)
-   Abc, "def",Foo\nbar "baz"
+   "Abc, ""def""","Foo\nbar ""baz"""
    ,
    ,
 CSV
+	end
+
+	test "trimming without formula protection still quotes CSV syntax" do
+		example = Class.new(Phlex::CSV) do
+			def escape_csv_injection? = false
+			def trim_whitespace? = true
+
+			def row_template(value)
+				column "value", value
+			end
+		end
+
+		output = example.new([" a,b ", ' a"b ', " a\nb "]).call
+		assert_equal output, "value\n\"a,b\"\n\"a\"\"b\"\n\"a\nb\"\n"
 	end
 
 	test "escape csv injection, but don’t trim whitespace" do
