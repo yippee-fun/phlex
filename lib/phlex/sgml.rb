@@ -243,7 +243,7 @@ class Phlex::SGML
 			self.class.name,                                   # prevents collisions between classes
 			(self.class.object_id if enable_cache_reloading?), # enables reloading
 			location.base_label,                               # prevents collisions between different methods
-			location.lineno,                                   # prevents collisions between different lines
+			Phlex.__source_line__(location),                   # prevents collisions between different lines, compiled or not
 			cache_key,                                         # allows for custom cache keys
 		].freeze
 
@@ -438,7 +438,7 @@ class Phlex::SGML
 
 		exception.set_backtrace(
 			locations.map do |loc|
-				if (generation = Phlex::Compiler::MAP[loc.path]) && (line = generation.lines[loc.lineno])
+				if (generation = Phlex::COMPILED_SOURCE_MAPS[loc.path]) && (line = generation.lines[loc.lineno])
 					"#{generation.path}:#{line}:in '#{loc.label}'"
 				else
 					loc.to_s

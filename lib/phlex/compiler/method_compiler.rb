@@ -60,12 +60,16 @@ module Phlex::Compiler
 			Refract::StringNode.new(unescaped: @path)
 		end
 
+		# Generated locals all start with `__phlex_`, so a method that already uses
+		# a name like that is left alone rather than risk a collision.
 		visit Refract::DefNode do |node|
 			return node unless @stack.size == 1
+			return node if LocalsScanner.names(node).any? { |name| name.start_with?("__phlex_") }
 
 			body = visit(node.body)
 
 			node.copy(
+				parameters: visit(node.parameters),
 				body: Refract::BeginNode.new(
 					statements: Refract::StatementsNode.new(body: [*@preamble, body]),
 					rescue_clause: Refract::RescueNode.new(
@@ -468,16 +472,15 @@ module Phlex::Compiler
 			@unqualified_set_is_standard = false
 		end
 
-		# Whether evaluating the node can't have side effects, so it's safe to
-		# evaluate it inside an append that may be skipped.
+		# Whether evaluating the node can't have side effects or raise, so it's
+		# safe to evaluate it inside an append that may be skipped. Constants are
+		# excluded: reading one can autoload or raise NameError.
 		private def pure?(node)
 			case node
 			in nil | Refract::StringNode | Refract::SymbolNode | Refract::IntegerNode | Refract::FloatNode |
 				Refract::TrueNode | Refract::FalseNode | Refract::NilNode | Refract::SelfNode |
-				Refract::LocalVariableReadNode | Refract::InstanceVariableReadNode | Refract::ConstantReadNode |
-				Refract::EmbeddedVariableNode
+				Refract::LocalVariableReadNode | Refract::InstanceVariableReadNode | Refract::EmbeddedVariableNode
 				true
-			in Refract::ConstantPathNode then pure?(node.parent)
 			in Refract::ArrayNode | Refract::HashNode | Refract::KeywordHashNode then node.elements.all? { |element| pure?(element) }
 			in Refract::AssocNode then pure?(node.key) && pure?(node.value)
 			in Refract::AssocSplatNode then pure?(node.value)

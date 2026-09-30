@@ -133,6 +133,41 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "cache keys are the same before and after compilation" do
+		with_component_files(
+			"cached.rb" => <<~RUBY
+				# frozen_string_literal: true
+				require "json"
+
+				class LifecycleCached < Phlex::HTML
+					STORE = Class.new do
+						attr_reader :keys
+
+						def initialize = @keys = []
+
+						def fetch(key)
+							@keys << key
+							yield
+						end
+					end.new
+
+					def view_template
+						cache(:a) { div { "cached" } }
+					end
+
+					private def cache_store = STORE
+				end
+			RUBY
+		) do
+			LifecycleCached.new.call
+			Phlex::Compiler.compile(LifecycleCached)
+			LifecycleCached.new.call
+
+			assert compiled_method?(LifecycleCached, :view_template)
+			assert_equal LifecycleCached::STORE.keys.uniq.length, 1
+		end
+	end
+
 	test "anonymous and frozen components are left alone" do
 		component = Class.new(Phlex::HTML) do
 			def view_template = div { "anon" }

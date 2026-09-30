@@ -157,6 +157,7 @@ module Phlex::SGML::Elements
 		RUBY
 
 		__registered_elements__[method_name] = tag
+		__registered_void_elements__.delete(method_name)
 
 		method_name
 	end

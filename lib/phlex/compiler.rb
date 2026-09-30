@@ -23,6 +23,8 @@ require "refract"
 # - Methods a component gains from mixins aren't compiled.
 # - `break` out of a `head` block skips the automatic flush at runtime but not
 #   when compiled.
+# - A method marked with `ruby2_keywords` loses that flag when compiled, since
+#   Ruby offers no way to read it back.
 module Phlex::Compiler
 	# Compiled code is evaluated under a path of its own so its line numbers
 	# never collide with the file's, and each compilation of a file gets a new
@@ -30,7 +32,7 @@ module Phlex::Compiler
 	Generation = Data.define(:path, :lines)
 
 	# compiled path => Generation
-	MAP = {}
+	MAP = Phlex::COMPILED_SOURCE_MAPS
 	MUTEX = Mutex.new
 
 	Concat = Data.define(:node) do
