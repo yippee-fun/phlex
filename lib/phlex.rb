@@ -26,7 +26,7 @@ module Phlex
 
 	DEPLOYED_AT = Process.clock_gettime(Process::CLOCK_MONOTONIC, :millisecond)
 	CACHED_FILES = Set.new
-	ATTRIBUTE_CACHE = FIFO.new
+	ATTRIBUTE_CACHE = FIFO.new(max_bytesize: 2 ** 20)
 
 	UNBOUND_INSTANCE_METHOD_METHOD = Module.instance_method(:instance_method)
 
