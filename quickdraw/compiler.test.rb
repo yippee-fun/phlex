@@ -110,7 +110,7 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 	end
 
-	test "dynamic content keeps the runtime yield and closes the tag on any exit" do
+	test "dynamic content inlines the buffer check and closes the tag on any exit" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a
 				div { helper }
@@ -123,14 +123,15 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<div>")
 					end
 					nil)
-					__phlex_done_1__ = false
+					__phlex_done_4__ = false
 					begin
-						__yield_content__ {
-							helper
-						}
-						__phlex_done_1__ = true
+						__phlex_content_buffer_1__ = __phlex_state__.buffer
+						__phlex_content_length_2__ = __phlex_content_buffer_1__.bytesize
+						__phlex_content_3__ = (helper)
+						__implicit_output__(__phlex_content_3__) if __phlex_content_length_2__.==(__phlex_content_buffer_1__.bytesize)
+						__phlex_done_4__ = true
 					ensure
-						unless __phlex_done_1__
+						unless __phlex_done_4__
 							(if __phlex_state__.should_render?
 								__phlex_state__.buffer.<<("</div>")
 							end

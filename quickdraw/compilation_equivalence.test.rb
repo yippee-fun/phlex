@@ -48,6 +48,15 @@ class CompilationEquivalenceTest < Quickdraw::Test
 
 	require_relative "../fixtures/page"
 	require_relative "../fixtures/layout"
+	require_relative "../fixtures/dynamic_list"
+
+	test "dynamic list fixture" do
+		before = Example::DynamicList.new.call
+		Phlex::Compiler.compile(Example::DynamicList)
+		after = Example::DynamicList.new.call
+
+		assert_equal after, before
+	end
 
 	test "benchmark fixtures" do
 		before = Example::Page.new.call
