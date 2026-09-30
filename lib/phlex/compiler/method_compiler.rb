@@ -274,21 +274,16 @@ module Phlex::Compiler
 			in Refract::BlockNode if block.body.nil?
 				[]
 			in Refract::BlockNode if inlinable?(block)
-				statements = block.body.body
-
-				if returns_nil?(statements.last)
+				case block.body
+				in Refract::StatementsNode[body:] if returns_nil?(body.last)
 					[visit(block.body)]
-				elsif statements.length == 1 && (content = compile_literal_content(statements[0]))
+				in Refract::StatementsNode[body: [statement]] if (content = compile_literal_content(statement))
 					[content]
-				elsif statements.length == 1 && pure?(statements[0])
-					[implicit_output(statements[0])]
-				elsif !BlockLocalsScanner.writes?(block.body)
-					inline_dynamic_content(block.body)
+				in Refract::StatementsNode[body: [statement]] if pure?(statement)
+					[implicit_output(statement)]
 				else
-					[yield_content(compile_block_unguarded(block))]
+					inline_dynamic_content(block.body)
 				end
-			in Refract::BlockNode if block.parameters.nil? && !JumpScanner.jumps?(block.body) && !BlockLocalsScanner.writes?(block.body)
-				inline_dynamic_content(block.body)
 			in Refract::BlockNode
 				[yield_content(compile_block_unguarded(block))]
 			in Refract::BlockArgumentNode
@@ -324,8 +319,6 @@ module Phlex::Compiler
 			]
 		end
 
-		# A pure expression can't write to the buffer, so the runtime would always
-		# reach its implicit output of the block's value.
 		private def implicit_output(node)
 			Refract::CallNode.new(
 				name: :__implicit_output__,
@@ -338,7 +331,7 @@ module Phlex::Compiler
 		end
 
 		private def inlinable?(block)
-			block.parameters.nil? && Refract::StatementsNode === block.body && !JumpScanner.jumps?(block.body)
+			block.parameters.nil? && InlineScanner.inlinable?(block.body)
 		end
 
 		# Whether a statement's value is known to be nil, so the runtime's implicit

@@ -20,4 +20,4 @@ group :development do
 	gem "benchmark-ips"
 end
 
-gem "refract", github: "yippee-fun/refract", branch: "main"
+gem "refract", github: "yippee-fun/refract"

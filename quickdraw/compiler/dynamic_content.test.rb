@@ -73,6 +73,58 @@ class DynamicContentCompilerTest < Quickdraw::Test
 		RUBY
 	end
 
+	test "block local assignments retain their scope when the content ends with an element" do
+		compile_equivalent(<<~RUBY, "<div><span>block</span></div><div>method</div>")
+			def view_template
+				div { value = "block"; span { value } }
+				div { value }
+			end
+
+			def value
+				"method"
+			end
+		RUBY
+	end
+
+	test "jumps belonging to a loop in the content don't prevent inlining" do
+		source = compile_equivalent(<<~RUBY, "<h2>title</h2>")
+			def view_template
+				@index = 0
+				h2 do
+					while true
+						@index += 1
+						next if @index < 2
+						break
+					end
+					"title"
+				end
+			end
+		RUBY
+
+		refute source.include?("__yield_content__")
+	end
+
+	test "unrendered fragments skip the implicit output" do
+		compile_equivalent(<<~RUBY, "<h2>&lt;title&gt;</h2>", fragments: [:a])
+			def view_template
+				h1 { dynamic_title }
+				fragment(:a) { h2 { dynamic_title } }
+			end
+
+			def dynamic_title
+				"<title>"
+			end
+		RUBY
+	end
+
+	test "flushing in the content counts as writing to the buffer" do
+		compile_equivalent(<<~RUBY, "<div>before</div>")
+			def view_template
+				div { plain "before"; flush; "duplicate" }
+			end
+		RUBY
+	end
+
 	test "dynamic locals preserve implicit output formatting" do
 		compile_equivalent(<<~RUBY, "<h2><safe></h2><h2>&lt;symbol&gt;</h2><h2>42</h2><h2></h2>")
 			def view_template
@@ -139,7 +191,14 @@ class DynamicContentCompilerTest < Quickdraw::Test
 		RUBY
 	end
 
-	["next 'title'", "break 'title'", "value = 'title'; value", "redo if false; 'title'"].each do |expression|
+	[
+		"next 'title'",
+		"break 'title'",
+		"value = 'title'; value",
+		"redo if false; 'title'",
+		"class << (next 'title' if true); end",
+		"def (value = self).title = nil; value.title",
+	].each do |expression|
 		test "#{expression} retains its block boundary" do
 			source = compile_equivalent(<<~RUBY)
 				def view_template
@@ -176,17 +235,17 @@ class DynamicContentCompilerTest < Quickdraw::Test
 		assert source.include?("__yield_content__")
 	end
 
-	private def compile_equivalent(source, expected = nil)
+	private def compile_equivalent(source, expected = nil, **)
 		component = Class.new(Phlex::HTML)
 		component.class_eval(source)
-		before = component.new.call
+		before = component.new.call(**)
 		assert_equal before, expected if expected
 
 		node = Refract::Converter.new.visit(Prism.parse(source).value.statements.body.first)
 		compiled = Phlex::Compiler::MethodCompiler.new(component, "/components/test.rb").compile(node)
 		formatted = Refract::Formatter.new.format_node(compiled).source
 		component.class_eval(formatted)
-		assert_equal component.new.call, before
+		assert_equal component.new.call(**), before
 		formatted
 	end
 end
