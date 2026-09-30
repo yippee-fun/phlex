@@ -11,6 +11,7 @@ module Phlex::SGML::Attributes
 		"newline" => "\n",
 	}.freeze
 	UNSAFE_ATTRIBUTE_NAME_CHARS = %r([<>&"'/=\s\x00])
+	SIMPLE_ATTRIBUTE_NAME = /\A[a-z-]+\z/
 
 	def generate_attributes(attributes, buffer = +"")
 		attributes.each do |k, v|
@@ -18,7 +19,7 @@ module Phlex::SGML::Attributes
 
 			name = case k
 				when String then k
-				when Symbol then k.name.tr("_", "-")
+				when Symbol then (n = k.name).include?("_") ? n.tr("_", "-") : n
 				else raise Phlex::ArgumentError.new("Attribute keys should be Strings or Symbols.")
 			end
 
@@ -26,9 +27,11 @@ module Phlex::SGML::Attributes
 			when true
 				true
 			when String
-				v.gsub('"', "&quot;")
+				v.include?('"') ? v.gsub('"', "&quot;") : v
 			when Symbol
-				v.name.tr("_", "-").gsub('"', "&quot;")
+				n = v.name
+				n = n.tr("_", "-") if n.include?("_")
+				n.include?('"') ? n.gsub('"', "&quot;") : n
 			when Integer, Float
 				v.to_s
 			when Date
@@ -66,17 +69,20 @@ module Phlex::SGML::Attributes
 				end
 			end
 
-			lower_name = name.downcase
+			if (simple_name = name.match?(SIMPLE_ATTRIBUTE_NAME))
+				# Fast path: the name is already lowercase and contains only `a-z` and `-`,
+				# so normalising it would be a no-op and it can't contain unsafe characters.
+				lower_name = normalized_name = name
+			else
+				lower_name = name.downcase
+				normalized_name = lower_name.delete("^a-z-")
+			end
 
 			unless Phlex::SGML::SafeObject === v
-				normalized_name = lower_name.delete("^a-z-")
-
 				if value != true && REF_ATTRIBUTES.include?(normalized_name)
 					case value
 					when String
-						decoded_value = decode_html_character_references(value)
-
-						if decoded_value.downcase.delete("^a-z:").start_with?("javascript:")
+						if unsafe_reference?(value)
 							# We just ignore these because they were likely not specified by the developer.
 							next
 						end
@@ -94,11 +100,11 @@ module Phlex::SGML::Attributes
 				end
 			end
 
-			if name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
+			if !simple_name && name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
 				raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
 			end
 
-			if lower_name.to_sym == :id && k != :id
+			if lower_name == "id" && k != :id
 				raise Phlex::ArgumentError.new(":id attribute should only be passed as a lowercase symbol.")
 			end
 
@@ -126,7 +132,7 @@ module Phlex::SGML::Attributes
 			else
 				name = case k
 					when String then k
-					when Symbol then k.name.tr("_", "-")
+					when Symbol then (n = k.name).include?("_") ? n.tr("_", "-") : n
 					else raise Phlex::ArgumentError.new("Attribute keys should be Strings or Symbols")
 				end
 
@@ -139,9 +145,11 @@ module Phlex::SGML::Attributes
 			when true
 				buffer << " " << base_name << name
 			when String
-				buffer << " " << base_name << name << '="' << v.gsub('"', "&quot;") << '"'
+				buffer << " " << base_name << name << '="' << (v.include?('"') ? v.gsub('"', "&quot;") : v) << '"'
 			when Symbol
-				buffer << " " << base_name << name << '="' << v.name.tr("_", "-").gsub('"', "&quot;") << '"'
+				n = v.name
+				n = n.tr("_", "-") if n.include?("_")
+				buffer << " " << base_name << name << '="' << (n.include?('"') ? n.gsub('"', "&quot;") : n) << '"'
 			when Integer, Float
 				buffer << " " << base_name << name << '="' << v.to_s << '"'
 			when Hash
@@ -165,6 +173,19 @@ module Phlex::SGML::Attributes
 			end
 
 			buffer
+		end
+	end
+
+	# Detects `javascript:` URLs, including ones obfuscated with HTML character
+	# references, whitespace or case. The full check has to decode and normalise
+	# the value, which allocates several strings, so it's skipped when the value
+	# can't possibly normalise to `javascript:`. Character references are the only
+	# way to introduce a `j` or a `:` that isn't already present in the value.
+	def unsafe_reference?(value)
+		if value.include?("&") || (value.include?(":") && (value.include?("j") || value.include?("J")))
+			decode_html_character_references(value).downcase.delete("^a-z:").start_with?("javascript:")
+		else
+			false
 		end
 	end
 
@@ -206,10 +227,12 @@ module Phlex::SGML::Attributes
 					buffer << token
 				end
 			when Symbol
+				token = token.name
+				token = token.tr("_", "-") if token.include?("_")
 				if i > 0
-					buffer << sep << token.name.tr("_", "-")
+					buffer << sep << token
 				else
-					buffer << token.name.tr("_", "-")
+					buffer << token
 				end
 			when Integer, Float, Phlex::SGML::SafeObject
 				if i > 0
@@ -244,7 +267,7 @@ module Phlex::SGML::Attributes
 
 		return if buffer.empty?
 
-		buffer.gsub('"', "&quot;")
+		buffer.include?('"') ? buffer.gsub('"', "&quot;") : buffer
 	end
 
 	# The result is unsafe so should be escaped.
