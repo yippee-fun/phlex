@@ -50,10 +50,24 @@ CSV
    Banana,2.0
    strawberry,Three pounds
    =SUM(A1:B1),=SUM(A1:B1)
-   Abc, "def",Foo\nbar "baz"
+   "Abc, ""def""","Foo\nbar ""baz"""
    ,
    ,
 CSV
+	end
+
+	test "trimming without formula protection still quotes CSV syntax" do
+		example = Class.new(Phlex::CSV) do
+			def escape_csv_injection? = false
+			def trim_whitespace? = true
+
+			def row_template(value)
+				column "value", value
+			end
+		end
+
+		output = example.new([" a,b ", ' a"b ', " a\nb "]).call
+		assert_equal output, "value\n\"a,b\"\n\"a\"\"b\"\n\"a\nb\"\n"
 	end
 
 	test "escape csv injection, but don’t trim whitespace" do
@@ -92,6 +106,23 @@ CSV
    ,
    ,
 CSV
+	end
+
+	test "internal carriage returns are quoted with every escape configuration" do
+		[true, false].each do |trim|
+			[true, false].each do |protect|
+				example = Class.new(Phlex::CSV) do
+					define_method(:escape_csv_injection?) { protect }
+					define_method(:trim_whitespace?) { trim }
+					def row_template(value)
+						column "head\rer", value
+					end
+				end
+
+				assert_equal example.new(["a\rb", "a\r\nb"]).call,
+					"\"head\rer\"\n\"a\rb\"\n\"a\r\nb\"\n"
+			end
+		end
 	end
 
 	test "no headers" do
