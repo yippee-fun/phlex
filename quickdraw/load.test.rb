@@ -1,6 +1,20 @@
 # frozen_string_literal: true
 
 class LoadTest < Quickdraw::Test
+	test "the FIFO cache works after requiring only phlex" do
+		script = <<~RUBY
+			require "phlex"
+
+			store = Phlex::FIFOCacheStore.new
+			print store.fetch(:key) { "cached" }
+			print store.fetch(:key) { raise "unexpected cache miss" }
+		RUBY
+
+		output = IO.popen([RbConfig.ruby, "-e", script], err: [:child, :out], &:read)
+		assert_equal $?.exitstatus, 0
+		assert_equal output, "cachedcached"
+	end
+
 	test "loading and rendering HTML and SVG with verbose warnings is quiet" do
 		script = <<~RUBY
 			require "phlex"
