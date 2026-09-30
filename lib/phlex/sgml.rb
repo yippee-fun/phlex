@@ -288,7 +288,13 @@ class Phlex::SGML
 	end
 
 	def json_escape(string)
-		ERB::Util.json_escape(string)
+		string.gsub(/[&<>\u2028\u2029]/, {
+			"&" => '\u0026',
+			"<" => '\u003c',
+			">" => '\u003e',
+			"\u2028" => '\u2028',
+			"\u2029" => '\u2029',
+		})
 	end
 
 	# Override this method to use a different deployment key.
