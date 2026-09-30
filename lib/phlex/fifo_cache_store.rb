@@ -18,7 +18,7 @@ class Phlex::FIFOCacheStore
 		else
 			result = yield
 
-			fifo[key] = JSON.fast_generate(result)
+			fifo[key] = JSON.generate(result)
 
 			result
 		end
