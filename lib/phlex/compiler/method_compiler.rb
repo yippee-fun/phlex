@@ -612,6 +612,9 @@ module Phlex::Compiler
 
 		# `raw safe("…")` is a literal that skips escaping.
 		private def compile_raw(node)
+			# Keep evaluation of forwarded block expressions, which may raise.
+			return keep_call(node, "it has a block") if node.block
+
 			case node.arguments&.arguments
 			in [Refract::CallNode[receiver: nil, name: :safe, block: nil, arguments: Refract::ArgumentsNode[arguments: [Refract::StringNode => text]]]] if @environment.helper?(:safe)
 				@environment.inlined << :safe
