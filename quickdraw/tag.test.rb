@@ -23,6 +23,34 @@ class TagTest < Quickdraw::Test
 		end
 	end
 
+	[
+		[Phlex::HTML, :div, :span],
+		[Phlex::HTML, :custom_tag, :span],
+		[Phlex::HTML, :svg, :span],
+		[Phlex::SVG, :g, :text],
+		[Phlex::SVG, :custom_tag, :text],
+	].each do |component_class, name, sibling|
+		[{}, { id: "example" }].each do |attributes|
+			test "#{component_class} #{name} closes when its block raises with #{attributes.inspect}" do
+				output = component_class.call do |component|
+					error = assert_raises RuntimeError do
+						component.tag(name, **attributes) do |content|
+							content.plain "before"
+							raise "example"
+						end
+					end
+
+					assert_equal error.message, "example"
+					component.tag(sibling) { "after" }
+				end
+
+				tag = name.name.tr("_", "-")
+				attribute = attributes.empty? ? "" : ' id="example"'
+				assert_equal output, "<#{tag}#{attribute}>before</#{tag}><#{sibling}>after</#{sibling}>"
+			end
+		end
+	end
+
 	Phlex::HTML::VoidElements.__registered_elements__.each do |method_name, tag|
 		test "<#{tag}> HTML tag without attributes" do
 			output = HTMLComponent.call(tag.to_sym)
