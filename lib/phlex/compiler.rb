@@ -54,6 +54,10 @@ module Phlex::Compiler
 
 	# compiled path => Generation
 	MAP = Phlex::COMPILED_SOURCE_MAPS
+
+	MODULE_INCLUDE = Module.instance_method(:include?)
+	MODULE_INSTANCE_METHODS = Module.instance_method(:instance_methods)
+	MODULE_PRIVATE_INSTANCE_METHODS = Module.instance_method(:private_instance_methods)
 	MUTEX = Mutex.new
 
 	# component => the exception that stopped it compiling on first render
@@ -164,7 +168,12 @@ module Phlex::Compiler
 		end
 
 		source = File.read(path)
-		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
+		targets = targets(path, components, recompile:)
+
+		# Watched before calls are resolved, so a module changed meanwhile is reported.
+		targets.each_value.map(&:component).uniq.each { |component| watch_mixins(component) } if inline
+
+		file_compiler = FileCompiler.new(path, targets:, recompile:, inline:)
 		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
@@ -197,7 +206,6 @@ module Phlex::Compiler
 
 			inlined = result.component.instance_variable_get(:@__phlex_inlined__) || Set.new
 			result.component.instance_variable_set(:@__phlex_inlined__, (inlined | result.inlined).freeze)
-			watch_mixins(result.component)
 		end
 
 		nil
@@ -217,7 +225,7 @@ module Phlex::Compiler
 		elsif Class === target
 			target.ancestors + descendants_of(target)
 		else
-			descendants_of(Phlex::SGML).select { |klass| klass.include?(target) }
+			descendants_of(Phlex::SGML).select { |klass| MODULE_INCLUDE.bind_call(klass, target) }.flat_map(&:ancestors).uniq
 		end
 		affected = related.select do |klass|
 			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
@@ -236,13 +244,23 @@ module Phlex::Compiler
 	end
 
 	# A compiled component inlines elements and helpers its modules define, so
-	# those modules, and any mixed in later, report their changes too.
+	# those modules, and any mixed in later, report their changes too. A
+	# module whose singleton class is frozen can't be watched, so it's refused.
 	def self.watch_mixins(component)
 		component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.each do |mod|
 			next if Class === mod || mod.frozen? || mod.singleton_class < MixinHooks
 
+			if mod.singleton_class.frozen?
+				raise Error, "#{mod} can't be watched for changes because its singleton class is frozen, so #{component} can't inline what it defines."
+			end
+
 			mod.singleton_class.prepend(MixinHooks)
 		end
+	end
+
+	# The names a module defines, read without dispatching to the module.
+	def self.method_names(mod)
+		MODULE_INSTANCE_METHODS.bind_call(mod) + MODULE_PRIVATE_INSTANCE_METHODS.bind_call(mod)
 	end
 
 	# Compiles the component's methods again, replacing the compiled ones.
@@ -419,15 +437,15 @@ module Phlex::Compiler
 	# mixes in, to report what Phlex::SGML's own hooks would for a class.
 	module MixinHooks
 		def include(*modules)
-			super
+			result = super
 			mixins_changed(modules)
-			self
+			result
 		end
 
 		def prepend(*modules)
-			super
+			result = super
 			mixins_changed(modules)
-			self
+			result
 		end
 
 		private def method_added(method_name)
@@ -447,7 +465,7 @@ module Phlex::Compiler
 
 		private def mixins_changed(modules)
 			modules.each { |mod| Phlex::Compiler.watch_mixins(mod) }
-			Phlex::Compiler.inlining_changed(self, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
+			Phlex::Compiler.inlining_changed(self, modules.flat_map { |mod| Phlex::Compiler.method_names(mod) })
 		end
 	end
 

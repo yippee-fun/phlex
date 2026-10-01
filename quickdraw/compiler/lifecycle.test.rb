@@ -278,6 +278,74 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "an element defined later on a module included into a subclass of a compiled class takes effect" do
+		with_component_files(
+			"inheriting.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleInlinedParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleInheritingChild < LifecycleInlinedParent
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleInheritingChild)
+
+			mixin = Module.new
+			LifecycleInheritingChild.include(mixin)
+			mixin.define_method(:div) { |**| plain("mixin div") }
+
+			assert_equal LifecycleInheritingChild.new.call, "mixin div"
+			assert_equal LifecycleInlinedParent.new.call, "<div>x</div>"
+		end
+	end
+
+	test "a watched module's own include and prepend keep their return values" do
+		with_component_files(
+			"returning.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleReturning
+					def self.include(*) = (super; :included)
+					def self.prepend(*) = (super; :prepended)
+				end
+
+				class LifecycleReturningComponent < Phlex::HTML
+					include LifecycleReturning
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleReturningComponent)
+
+			assert LifecycleReturning.singleton_class < Phlex::Compiler::MixinHooks
+			assert_equal LifecycleReturning.include(Module.new), :included
+			assert_equal LifecycleReturning.prepend(Module.new), :prepended
+		end
+	end
+
+	test "a module with a frozen singleton class is refused before anything is compiled" do
+		with_component_files(
+			"frozen_singleton.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleFrozenSingleton
+				end
+				LifecycleFrozenSingleton.singleton_class.freeze
+
+				class LifecycleFrozenSingletonComponent < Phlex::HTML
+					include LifecycleFrozenSingleton
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleFrozenSingletonComponent) }
+			assert_equal error.message, "LifecycleFrozenSingleton can't be watched for changes because its singleton class is frozen, so LifecycleFrozenSingletonComponent can't inline what it defines."
+			refute compiled_method?(LifecycleFrozenSingletonComponent, :view_template)
+		end
+	end
+
 	test "a module mixed into a class that isn't compiled isn't watched" do
 		with_component_files(
 			"unwatched.rb" => <<~RUBY

@@ -491,7 +491,7 @@ class Phlex::SGML
 
 		Phlex::Compiler.inlining_changed(self, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
 
-		if Phlex::Compiler.inlines?(self) || Phlex::Compiler.descendants_of(self).any? { |klass| Phlex::Compiler.inlines?(klass) }
+		if [*ancestors, *Phlex::Compiler.descendants_of(self)].any? { |klass| Phlex::Compiler.inlines?(klass) }
 			modules.each { |mod| Phlex::Compiler.watch_mixins(mod) }
 		end
 	end
