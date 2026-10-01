@@ -214,6 +214,8 @@ class Phlex::SGML
 		when Class
 			if renderable < Phlex::SGML
 				render(renderable.new, &)
+			else
+				raise Phlex::ArgumentError.new("You can't render a #{renderable.inspect}.")
 			end
 		when Enumerable
 			renderable.each { |r| render(r, &) }
