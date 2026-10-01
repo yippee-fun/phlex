@@ -393,6 +393,45 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "refinements of the methods the resolver calls don't break compilation" do
+		with_component_files(
+			"refined_call.rb" => <<~RUBY,
+				module LifecycleCallRefinements
+					refine(Method) { def call(*) = :refined }
+				end
+
+				using LifecycleCallRefinements
+
+				class LifecycleRefinedCall < Phlex::HTML
+					def view_template = div { "hello" }
+				end
+			RUBY
+			"refined_bind.rb" => <<~RUBY
+				module LifecycleBindRefinements
+					refine(UnboundMethod) { def bind(*) = :refined }
+
+					refine Phlex::HTML do
+						def div(**attributes, &block) = span(**attributes, &block)
+					end
+				end
+
+				using LifecycleBindRefinements
+
+				class LifecycleRefinedBind < Phlex::HTML
+					def view_template = div { "hello" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleRefinedCall)
+			Phlex::Compiler.compile(LifecycleRefinedBind)
+
+			refute LifecycleRefinedCall.instance_variable_get(:@__phlex_inlined__)
+			assert_equal LifecycleRefinedCall.call, "<div>hello</div>"
+			refute LifecycleRefinedBind.instance_variable_get(:@__phlex_inlined__)
+			assert_equal LifecycleRefinedBind.call, "<span>hello</span>"
+		end
+	end
+
 	test "a refinement used by one compiled file doesn't reach another" do
 		with_component_files(
 			"refined.rb" => <<~RUBY,

@@ -95,9 +95,13 @@ class Phlex::Compiler::Environment
 		component.subclasses.flat_map { |subclass| [subclass, *descendants_of(subclass)] }
 	end
 
+	# The resolver runs in the file's lexical scope, where a refinement of
+	# UnboundMethod#bind or Method#call could intercept it. Anything but the
+	# named method counts as unresolved, which only keeps the call as it is.
 	private def instance_method(name, component = @component)
-		@method_resolver.call(component, name)
-	rescue NameError
+		method = @method_resolver.call(component, name)
+		method if UnboundMethod === method && method.name == name
+	rescue
 		nil
 	end
 end
