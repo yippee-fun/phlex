@@ -7,12 +7,20 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 		super()
 		@component = component
 		@path = path
+		@definitions = []
 		@compiled_snippets = []
 		@visibilities = {}
 	end
 
 	def compile(node)
 		visit(node.body)
+
+		# Two definitions of a method on one line share a source location, so
+		# neither can be told apart from the live method.
+		@definitions.group_by { |definition| [definition.name, definition.start_line] }.each_value do |definitions|
+			compile_definition(definitions.first) if definitions.one?
+		end
+
 		@compiled_snippets.freeze
 	end
 
@@ -20,6 +28,22 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 		return if node.name == :initialize
 		return if node.receiver
 
+		@definitions << node
+	end
+
+	visit Refract::ClassNode do |node|
+		nil
+	end
+
+	visit Refract::ModuleNode do |node|
+		nil
+	end
+
+	visit Refract::BlockNode do |node|
+		nil
+	end
+
+	private def compile_definition(node)
 		method = begin
 			Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(@component, node.name)
 		rescue NameError
@@ -36,18 +60,6 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 
 		@compiled_snippets << compiled
 		@visibilities[node.name] = visibility_of(node.name)
-	end
-
-	visit Refract::ClassNode do |node|
-		nil
-	end
-
-	visit Refract::ModuleNode do |node|
-		nil
-	end
-
-	visit Refract::BlockNode do |node|
-		nil
 	end
 
 	private def visibility_of(name)
