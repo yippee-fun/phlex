@@ -524,6 +524,40 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a block built before rendering reads the state when it's called, and maps its exceptions" do
+		with_component_files(
+			"early_block.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleEarlyBlock < Phlex::HTML
+					def initialize(fail: false)
+						@fail = fail
+						@footer = footer
+					end
+
+					def view_template = div(&@footer)
+
+					private def footer
+						proc do
+							span { "footer" }
+							raise "boom" if @fail
+						end
+					end
+				end
+			RUBY
+		) do
+			assert_equal LifecycleEarlyBlock.new.call, "<div><span>footer</span></div>"
+
+			Phlex::Compiler.compile(LifecycleEarlyBlock)
+			assert compiled_method?(LifecycleEarlyBlock, :footer)
+
+			assert_equal LifecycleEarlyBlock.new.call, "<div><span>footer</span></div>"
+
+			error = assert_raises(RuntimeError) { LifecycleEarlyBlock.new(fail: true).call }
+			assert_equal error.backtrace.first[/early_block\.rb:(\d+):/, 1], "13"
+			refute error.backtrace.any? { |line| line.include?("(compiled") }
+		end
+	end
+
 	test "cache keys are the same before and after compilation" do
 		with_component_files(
 			"cached.rb" => <<~RUBY
