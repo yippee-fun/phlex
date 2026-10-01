@@ -22,6 +22,7 @@ module Phlex::Compiler
 			@preamble = []
 			@appends = 0
 			@locals = 0
+			@compiling_calls = true
 		end
 
 		def compile(node)
@@ -65,15 +66,20 @@ module Phlex::Compiler
 		end
 
 		# Generated locals all start with `__phlex_`, so a method that already uses
-		# a name like that is left alone rather than risk a collision.
+		# a name like that is left alone rather than risk a collision. Parameter
+		# defaults run before the body, so before the state local exists, so
+		# element calls in them stay as calls.
 		visit Refract::DefNode do |node|
 			return node unless @stack.size == 1
 			return node if LocalsScanner.names(node).any? { |name| name.start_with?("__phlex_") }
 
+			@compiling_calls = false
+			parameters = visit(node.parameters)
+			@compiling_calls = true
 			body = visit(node.body)
 
 			node.copy(
-				parameters: visit(node.parameters),
+				parameters:,
 				body: Refract::BeginNode.new(
 					statements: Refract::StatementsNode.new(body: [*@preamble, body]),
 					rescue_clause: Refract::RescueNode.new(
@@ -106,7 +112,7 @@ module Phlex::Compiler
 		end
 
 		visit Refract::CallNode do |node|
-			if statement?(node) && node.receiver.nil? && (compiled = compile_call(node))
+			if @compiling_calls && statement?(node) && node.receiver.nil? && (compiled = compile_call(node))
 				return compiled
 			end
 
