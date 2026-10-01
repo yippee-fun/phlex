@@ -88,9 +88,11 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		(@nesting.last || Object).const_get(name)
 	end
 
-	# `A::B` is looked up in A and its ancestors, but not at the top level
-	# unless A is Object.
+	# `A::B` is looked up in A, then its ancestors, which may start with a
+	# prepended module, but not at the top level unless A is Object.
 	private def scoped_lookup(scope, name)
+		return scope.const_get(name, false) if scope.const_defined?(name, false)
+
 		scope.ancestors.each do |ancestor|
 			break if ancestor == Object && scope != Object
 			return ancestor.const_get(name, false) if ancestor.const_defined?(name, false)
