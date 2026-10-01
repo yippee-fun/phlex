@@ -101,6 +101,25 @@ class SelectiveRenderingTest < Quickdraw::Test
 		refute called
 	end
 
+	test "symbol and string selectors match the same fragment and halt early" do
+		[[:target], [:target, "target"]].each do |fragments|
+			called = false
+			checker = -> { called = true }
+			output = StandardElementExample.new(checker).call(fragments:)
+
+			assert_equal output, %(<h1 id="target">Hello<strong>World</strong><img src="image.jpg"></h1>)
+			refute called
+		end
+	end
+
+	test "string selectors match symbol-named fragments without caching" do
+		output = Phlex::HTML.new.call(fragments: ["piece"]) do |view|
+			view.fragment(:piece) { view.span { "hello" } }
+		end
+
+		assert_equal output, "<span>hello</span>"
+	end
+
 	test "with a capture block doesn't render the capture block" do
 		output = WithCaptureBlock.new.call(fragments: ["after"])
 		assert_equal output, %(<h1 id="after">After</h1>)

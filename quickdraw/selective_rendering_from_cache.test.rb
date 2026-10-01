@@ -4,10 +4,10 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 	class SymbolFragmentTest < Phlex::HTML
 		attr_reader :cache_store
 
-		def initialize(page_id, cache_store:, string_fragment: false)
+		def initialize(page_id, cache_store:, piece_name: :piece)
 			@page_id = page_id
 			@cache_store = cache_store
-			@string_fragment = string_fragment
+			@piece_name = piece_name
 		end
 
 		def view_template
@@ -15,8 +15,8 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 				fragment(:outer) do
 					div do
 						low_level_cache("inner") do
-							fragment(:piece) { span { "hello" } }
-							fragment("piece") { span { "world" } } if @string_fragment
+							fragment(@piece_name) { span { "hello" } }
+							fragment("other") { span { "world" } }
 						end
 					end
 				end
@@ -31,31 +31,46 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 		end
 	end
 
-	test "symbol and string fragments remain distinct on cache misses and hits" do
-		[
-			[[:piece], "<span>hello</span>"],
-			[["piece"], "<span>world</span>"],
-			[[:piece, "piece"], "<span>hello</span><span>world</span>"],
-			[[:outer, :piece, "piece"], "<div><span>hello</span><span>world</span></div>"],
-		].each do |fragments, expected|
-			cache_store = Phlex::FIFOCacheStore.new
-			2.times do
-				assert_equal SymbolFragmentTest.new(1, cache_store:, string_fragment: true).call(fragments:), expected
+	test "symbol and string fragment names are equivalent on cache misses and hits" do
+		[:piece, "piece"].each do |piece_name|
+			[
+				[[:piece], "<span>hello</span>"],
+				[["piece"], "<span>hello</span>"],
+				[[:piece, "piece"], "<span>hello</span>"],
+				[[:piece, :other], "<span>hello</span><span>world</span>"],
+				[[:outer, :piece, "other"], "<div><span>hello</span><span>world</span></div>"],
+				[["outer", "piece", :other], "<div><span>hello</span><span>world</span></div>"],
+			].each do |fragments, expected|
+				cache_store = Phlex::FIFOCacheStore.new
+				2.times do
+					assert_equal SymbolFragmentTest.new(1, cache_store:, piece_name:).call(fragments:), expected
+				end
 			end
 		end
 	end
 
 	test "symbol fragments imported from an inner cache preserve their names and nesting" do
 		cache_store = Phlex::FIFOCacheStore.new
-		SymbolFragmentTest.new(1, cache_store:, string_fragment: true).call
+		SymbolFragmentTest.new(1, cache_store:).call
 
 		2.times do
-			output = SymbolFragmentTest.new(2, cache_store:, string_fragment: true).call(fragments: [:outer, :piece, "piece"])
+			output = SymbolFragmentTest.new(2, cache_store:).call(fragments: [:outer, :piece, "other"])
 			assert_equal output, "<div><span>hello</span><span>world</span></div>"
 
-			output = SymbolFragmentTest.new(2, cache_store:, string_fragment: true).call(fragments: [:piece])
+			output = SymbolFragmentTest.new(2, cache_store:).call(fragments: [:piece])
 			assert_equal output, "<span>hello</span>"
 		end
+	end
+
+	test "compiled symbol fragments render with string selectors on cache misses and hits" do
+		Phlex::Compiler.compile(SymbolFragmentTest)
+		cache_store = Phlex::FIFOCacheStore.new
+		2.times do
+			output = SymbolFragmentTest.new(1, cache_store:).call(fragments: ["outer", "piece", :other])
+			assert_equal output, "<div><span>hello</span><span>world</span></div>"
+		end
+	ensure
+		Phlex::Compiler.decompile(SymbolFragmentTest)
 	end
 
 	class CacheTest < Phlex::HTML
