@@ -131,7 +131,8 @@ class CompilerLifecycleTest < Quickdraw::Test
 		) do
 			failures = []
 			Sabotage.active = true
-			Phlex::Compiler.enable!(on_failure: -> (component, error) { failures << [component, error.message] })
+			# The handler renders the component itself, which must not deadlock on the compiler lock.
+			Phlex::Compiler.enable!(on_failure: -> (component, error) { failures << [component, error.message, component.new.call] })
 
 			begin
 				assert_equal LifecycleFailing.new.call, "<div>still works</div>"
@@ -142,7 +143,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 			end
 
 			refute compiled_method?(LifecycleFailing, :view_template)
-			assert_equal failures, [[LifecycleFailing, "sabotaged"]]
+			assert_equal failures, [[LifecycleFailing, "sabotaged", "<div>still works</div>"]]
 			assert_equal Phlex::Compiler.explain(LifecycleFailing).first.message, "compiling LifecycleFailing raised RuntimeError: sabotaged"
 
 			assert_raises(RuntimeError) do
@@ -251,6 +252,33 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert_raises(Phlex::Compiler::Error) do
 				LifecycleKept.new.define_singleton_method(:span) { |**, &| nil }
 			end
+		end
+	end
+
+	test "freezing a compiled class restores its definitions, so it still follows changes above it" do
+		with_component_files(
+			"frozen_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleFrozenParent < Phlex::HTML
+				end
+			RUBY
+			"frozen_child.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFrozenChild < LifecycleFrozenParent
+					def view_template = div { "child" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenChild)
+			assert_equal LifecycleFrozenChild.instance_variable_get(:@__phlex_inlined__), Set[:div]
+
+			LifecycleFrozenChild.freeze
+			assert LifecycleFrozenChild.frozen?
+			assert_equal LifecycleFrozenChild.new.call, "<div>child</div>"
+			assert_equal LifecycleFrozenChild.instance_variable_get(:@__phlex_inlined__), Set[]
+
+			LifecycleFrozenParent.class_eval { def div(**, &) = plain("parent div") }
+			assert_equal LifecycleFrozenChild.new.call, "parent div"
 		end
 	end
 

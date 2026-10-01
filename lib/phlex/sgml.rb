@@ -462,6 +462,14 @@ class Phlex::SGML
 		self
 	end
 
+	# A frozen class can't be recompiled when an element or helper it inlined
+	# changes, so its original definitions are put back first.
+	def self.freeze
+		Phlex::Compiler.decompile(self) if !Phlex::COMPILED_SOURCE_MAPS.empty? && Phlex::Compiler.compiled?(self) && !frozen?
+
+		super
+	end
+
 	# Compiled methods inline elements and helpers as they were at compile
 	# time, so a change to one has to be seen. Nothing to do until something
 	# has been compiled.

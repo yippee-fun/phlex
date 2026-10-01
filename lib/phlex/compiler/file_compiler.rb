@@ -12,12 +12,13 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	# A statement in the file and the class and module statements around it.
 	Scoped = Data.define(:namespace, :node)
 
-	def initialize(path, targets:, diagnostics: Phlex::Compiler::Diagnostics.new(path), recompile: false)
+	def initialize(path, targets:, diagnostics: Phlex::Compiler::Diagnostics.new(path), recompile: false, inline: true)
 		super()
 		@path = path
 		@targets = targets
 		@diagnostics = diagnostics
 		@recompile = recompile
+		@inline = inline
 		@current_namespace = []
 		@definitions = []
 		@usings = []
@@ -83,11 +84,11 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	private def ruby2_keywords_names(node)
-		(node.arguments&.arguments || []).filter_map do |argument|
+		(node.arguments&.arguments || []).map do |argument|
 			case argument
 			in Refract::SymbolNode then argument.unescaped.to_sym
 			in Refract::DefNode then argument.name
-			else nil
+			else @diagnostics.refuse(node, "ruby2_keywords is given arguments the compiler can't read, so it can't tell which methods it marks")
 			end
 		end
 	end
@@ -164,7 +165,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 				raise Phlex::Compiler::Error, "#{@path}:#{first.start_line} defines #{component}##{first.name}, but reopening its class and module statements reaches #{probe.component.inspect}"
 			end
 
-			environment = environments[component] ||= Phlex::Compiler::Environment.new(component, standard_set: probe.set.equal?(::Set))
+			environment = environments[component] ||= Phlex::Compiler::Environment.new(component, standard_set: probe.set.equal?(::Set), inline: @inline)
 			snippets = []
 			visibilities = {}
 

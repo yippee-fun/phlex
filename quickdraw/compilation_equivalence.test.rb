@@ -24,6 +24,7 @@ class CompilationEquivalenceTest < Quickdraw::Test
 		"refinement_mid_file" => /`using` applies to only part of the file/,
 		"ruby2_keywords" => /marked ruby2_keywords/,
 		"conditional_using" => /isn.t a plain top-level statement naming a constant/,
+		"ruby2_keywords_splat" => /arguments the compiler can.t read/,
 	}.freeze
 
 	DEFAULT_SCENARIOS = {

@@ -92,18 +92,21 @@ module Phlex::Compiler
 	end
 
 	# The failure check and the compilation share the lock, so two first
-	# renders racing each other still compile and report once.
+	# renders racing each other still compile and report once. The handler
+	# runs outside it, since it may well render something.
 	def self.compile_on_first_render(component)
-		MUTEX.synchronize do
+		error = MUTEX.synchronize do
 			return if compiled?(component) || FAILURES.key?(component)
 
 			begin
 				compile_ancestry(component)
-			rescue StandardError, ScriptError => error
-				FAILURES[component] = error
-				@on_failure.call(component, error)
+				nil
+			rescue StandardError, ScriptError => e
+				FAILURES[component] = e
 			end
 		end
+
+		@on_failure.call(component, error) if error
 	end
 
 	# Compiles the methods of the component and its Phlex ancestors wherever
@@ -150,13 +153,13 @@ module Phlex::Compiler
 
 	# Compiles the methods that the given components, by default every loaded
 	# one, define in an already-loaded file.
-	def self.compile_file(path, components: loaded_components, recompile: false)
+	def self.compile_file(path, components: loaded_components, recompile: false, inline: true)
 		unless File.exist?(path)
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
 		source = File.read(path)
-		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:)
+		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
 		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
@@ -213,18 +216,29 @@ module Phlex::Compiler
 			raise Error, "#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling."
 		end
 
+		if (frozen = affected.select(&:frozen?)).any?
+			raise Error, "#{names.join(', ')} can't be redefined: #{frozen.join(', ')} compiled it inline and was frozen without Phlex::SGML.freeze restoring it."
+		end
+
 		affected.each { |component| recompile(component) }
 	end
 
 	# Compiles the component's methods again, replacing the compiled ones.
-	def self.recompile(component)
+	def self.recompile(component, inline: true)
 		MUTEX.synchronize do
 			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
 
 			defining_files(component).each do |path|
-				compile_file(path, components: [component], recompile: true)
+				compile_file(path, components: [component], recompile: true, inline:)
 			end
 		end
+	end
+
+	# Reinstalls the component's original definitions. A frozen class can't be
+	# recompiled when something it inlined changes, so Phlex::SGML.freeze
+	# restores a compiled class first.
+	def self.decompile(component)
+		recompile(component, inline: false)
 	end
 
 	# Reopens the class and module statements around a definition with nothing
