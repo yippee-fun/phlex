@@ -8,6 +8,7 @@ require "zeitwerk"
 module Phlex
 	Loader = Zeitwerk::Loader.for_gem.tap do |loader|
 		loader.ignore("#{__dir__}/ruby_lsp")
+		loader.ignore("#{__dir__}/phlex/compiler/scope.rb")
 
 		loader.inflector.inflect(
 			"csv" => "CSV",

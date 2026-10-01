@@ -16,12 +16,16 @@ class Phlex::Compiler::Environment
 
 	attr_reader :component
 
-	# The element and helper names compiled methods have taken the meaning of.
+	# The element and helper names whose implementation compiled methods have
+	# baked in, by inlining them or by relying on what they return.
 	attr_reader :inlined
 
-	def initialize(component, standard_set: standard_set_on?(component))
+	# With `inline: false` nothing is recognised, so every method compiles to
+	# its original definition. Used to restore a class before it's frozen.
+	def initialize(component, standard_set: standard_set_on?(component), inline: true)
 		@component = component
 		@standard_set = standard_set
+		@inline = inline
 		@elements = {}
 		@helpers = {}
 		@inlined = Set.new
@@ -32,21 +36,19 @@ class Phlex::Compiler::Environment
 	# The element a bare call to the method renders, if it's a registered
 	# element that no loaded descendant overrides.
 	def element(name)
+		return unless @inline
 		return @elements[name] if @elements.key?(name)
 
-		element = @elements[name] = resolve_element(name)
-		@inlined << name if element
-		element
+		@elements[name] = resolve_element(name)
 	end
 
 	# Whether a bare call to the method reaches one of the SGML helpers, such
 	# as `plain`, that no loaded descendant overrides.
 	def helper?(name)
+		return false unless @inline
 		return @helpers[name] if @helpers.key?(name)
 
-		helper = @helpers[name] = resolve_helper(name)
-		@inlined << name if helper
-		helper
+		@helpers[name] = resolve_helper(name)
 	end
 
 	# Without the lexical scopes, the class and its ancestors are the best guess.

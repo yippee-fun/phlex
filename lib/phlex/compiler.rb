@@ -63,6 +63,10 @@ module Phlex::Compiler
 	end
 
 	PROBE_PATH = "(phlex compiler probe)"
+	SCOPE_PATH = File.expand_path("compiler/scope.rb", __dir__)
+
+	# Bindings handed over by compiler/scope.rb as it's loaded.
+	SCOPES = []
 
 	@enabled = false
 	@generations = 0
@@ -87,13 +91,22 @@ module Phlex::Compiler
 		component.instance_variable_get(:@__phlex_compiled__) == true
 	end
 
+	# The failure check and the compilation share the lock, so two first
+	# renders racing each other still compile and report once. The handler
+	# runs outside it, since it may well render something.
 	def self.compile_on_first_render(component)
-		return if compiled?(component) || FAILURES.key?(component)
+		error = MUTEX.synchronize do
+			return if compiled?(component) || FAILURES.key?(component)
 
-		compile(component)
-	rescue StandardError, ScriptError => error
-		FAILURES[component] = error
-		@on_failure.call(component, error)
+			begin
+				compile_ancestry(component)
+				nil
+			rescue StandardError, ScriptError => e
+				FAILURES[component] = e
+			end
+		end
+
+		@on_failure.call(component, error) if error
 	end
 
 	# Compiles the methods of the component and its Phlex ancestors wherever
@@ -101,20 +114,20 @@ module Phlex::Compiler
 	def self.compile(component)
 		component!(component)
 
-		return if component.frozen?
+		MUTEX.synchronize { compile_ancestry(component) }
+	end
 
-		MUTEX.synchronize do
-			return if compiled?(component)
+	def self.compile_ancestry(component)
+		return if component.frozen? || compiled?(component)
 
-			ancestors = phlex_ancestors(component).reject { |ancestor| ancestor.frozen? || compiled?(ancestor) }
-			components = ancestors.select { |ancestor| live?(ancestor) }
+		ancestors = phlex_ancestors(component).reject { |ancestor| ancestor.frozen? || compiled?(ancestor) }
+		components = ancestors.select { |ancestor| live?(ancestor) }
 
-			components.flat_map { |ancestor| defining_files(ancestor) }.uniq.each do |path|
-				compile_file(path, components:)
-			end
-
-			ancestors.each { |ancestor| ancestor.instance_variable_set(:@__phlex_compiled__, true) }
+		components.flat_map { |ancestor| defining_files(ancestor) }.uniq.each do |path|
+			compile_file(path, components:)
 		end
+
+		ancestors.each { |ancestor| ancestor.instance_variable_set(:@__phlex_compiled__, true) }
 	end
 
 	# Why parts of the files defining the component and its Phlex ancestors are
@@ -140,13 +153,13 @@ module Phlex::Compiler
 
 	# Compiles the methods that the given components, by default every loaded
 	# one, define in an already-loaded file.
-	def self.compile_file(path, components: loaded_components, recompile: false)
+	def self.compile_file(path, components: loaded_components, recompile: false, inline: true)
 		unless File.exist?(path)
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
 		source = File.read(path)
-		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:)
+		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
 		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
@@ -160,7 +173,7 @@ module Phlex::Compiler
 		without_redefinition_warnings do
 			eval(
 				"#{magic_comments(source)}#{formatting_result.source}",
-				TOPLEVEL_BINDING,
+				scope,
 				compiled_path,
 				1
 			)
@@ -185,15 +198,17 @@ module Phlex::Compiler
 	end
 
 	# Called by Phlex::SGML when methods are defined on, removed from or mixed
-	# into a class or singleton class. A compiled ancestor that inlined one of
-	# them is recompiled, and with the override now loaded it stops inlining
-	# that name, so the change takes effect just as it would have uncompiled.
-	# An override on a single instance can't be compiled for, so it's refused.
+	# into a class or singleton class. A compiled class above or below it that
+	# inlined one of them is recompiled, and with the change now loaded it
+	# stops inlining that name, so the change takes effect just as it would
+	# have uncompiled. An override on a single instance can't be compiled for,
+	# so it's refused.
 	def self.inlining_changed(target, names)
 		return if MUTEX.owned?
 
-		affected = target.ancestors.select do |ancestor|
-			(inlined = ancestor.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
+		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
+		affected = related.select do |klass|
+			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end
 		return if affected.empty?
 
@@ -201,18 +216,29 @@ module Phlex::Compiler
 			raise Error, "#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling."
 		end
 
+		if (frozen = affected.select(&:frozen?)).any?
+			raise Error, "#{names.join(', ')} can't be redefined: #{frozen.join(', ')} compiled it inline and was frozen without Phlex::SGML.freeze restoring it."
+		end
+
 		affected.each { |component| recompile(component) }
 	end
 
 	# Compiles the component's methods again, replacing the compiled ones.
-	def self.recompile(component)
+	def self.recompile(component, inline: true)
 		MUTEX.synchronize do
 			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
 
 			defining_files(component).each do |path|
-				compile_file(path, components: [component], recompile: true)
+				compile_file(path, components: [component], recompile: true, inline:)
 			end
 		end
+	end
+
+	# Reinstalls the component's original definitions. A frozen class can't be
+	# recompiled when something it inlined changes, so Phlex::SGML.freeze
+	# restores a compiled class first.
+	def self.decompile(component)
+		recompile(component, inline: false)
 	end
 
 	# Reopens the class and module statements around a definition with nothing
@@ -224,8 +250,16 @@ module Phlex::Compiler
 		source = Refract::Formatter.new.format_node(wrap_in_namespace(namespace, [report])).source
 
 		Thread.current[:__phlex_compiler_probe__] = nil
-		eval(source, TOPLEVEL_BINDING, PROBE_PATH, 1)
+		eval(source, scope, PROBE_PATH, 1)
 		Thread.current[:__phlex_compiler_probe__] or raise Error, "Reopening the class and module statements didn't reach a class body:\n#{source}"
+	end
+
+	# A fresh top-level binding, so refinements a compiled file activates stay
+	# in it, as they would in a real file. TOPLEVEL_BINDING is shared, and a
+	# `using` evaluated there applies to everything evaluated there after.
+	def self.scope
+		load SCOPE_PATH
+		SCOPES.pop
 	end
 
 	def self.__probe__(component, set)
@@ -275,9 +309,24 @@ module Phlex::Compiler
 		end
 	end
 
-	# `initialize` runs before the component has any state to render into.
+	# The methods the component defines itself. `initialize` runs before the
+	# component has any state to render into.
 	def self.own_methods(component)
-		component.instance_methods(false) + component.private_instance_methods(false) + component.protected_instance_methods(false) - [:initialize]
+		names = component.instance_methods(false) + component.private_instance_methods(false) + component.protected_instance_methods(false) - [:initialize]
+		names.reject { |name| revisibilised?(component, name) }
+	end
+
+	# Changing the visibility of an inherited method lists it on the component,
+	# with the component as its owner, but its source is still the ancestor's.
+	def self.revisibilised?(component, name)
+		location = component.instance_method(name).source_location
+
+		component.ancestors.any? do |ancestor|
+			next false if ancestor.equal?(component)
+
+			defined = ancestor.method_defined?(name, false) || ancestor.private_method_defined?(name, false) || ancestor.protected_method_defined?(name, false)
+			defined && ancestor.instance_method(name).source_location == location
+		end
 	end
 
 	def self.defining_files(component)

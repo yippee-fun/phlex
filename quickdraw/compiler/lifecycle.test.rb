@@ -131,7 +131,8 @@ class CompilerLifecycleTest < Quickdraw::Test
 		) do
 			failures = []
 			Sabotage.active = true
-			Phlex::Compiler.enable!(on_failure: -> (component, error) { failures << [component, error.message] })
+			# The handler renders the component itself, which must not deadlock on the compiler lock.
+			Phlex::Compiler.enable!(on_failure: -> (component, error) { failures << [component, error.message, component.new.call] })
 
 			begin
 				assert_equal LifecycleFailing.new.call, "<div>still works</div>"
@@ -142,7 +143,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 			end
 
 			refute compiled_method?(LifecycleFailing, :view_template)
-			assert_equal failures, [[LifecycleFailing, "sabotaged"]]
+			assert_equal failures, [[LifecycleFailing, "sabotaged", "<div>still works</div>"]]
 			assert_equal Phlex::Compiler.explain(LifecycleFailing).first.message, "compiling LifecycleFailing raised RuntimeError: sabotaged"
 
 			assert_raises(RuntimeError) do
@@ -199,6 +200,148 @@ class CompilerLifecycleTest < Quickdraw::Test
 			LifecycleLate.include(Module.new { def span(**, &) = plain("included span") })
 			assert_equal LifecycleLate.new.call, "<div>parent</div>included span"
 			assert_equal LifecycleLate.new.extend(Module.new { def span(**, &) = plain("extended span") }).call, "<div>parent</div>extended span" # rubocop:disable Lint/DuplicateMethods
+		end
+	end
+
+	test "an element defined on an ancestor after a descendant compiled takes effect in the descendant" do
+		with_component_files(
+			"ancestor.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleAncestor < Phlex::HTML
+				end
+			RUBY
+			"descendant.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDescendant < LifecycleAncestor
+					def view_template = div { "descendant" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleDescendant)
+			assert_equal LifecycleDescendant.new.call, "<div>descendant</div>"
+
+			LifecycleAncestor.class_eval { def div(**, &) = plain("ancestor div") }
+			assert_equal LifecycleDescendant.new.call, "ancestor div"
+			assert compiled_method?(LifecycleDescendant, :view_template)
+
+			LifecycleAncestor.include(Module.new { def plain(content) = super("included #{content}") })
+			assert_equal LifecycleDescendant.new.call, "included ancestor div"
+		end
+	end
+
+	test "a call kept as it was isn't recorded as inlined, so it can still be overridden on an instance" do
+		with_component_files(
+			"kept.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleKept < Phlex::HTML
+					def view_template
+						div("positional")
+						span { "compiled" }
+						section { @text ? "text" : div("positional") }
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleKept)
+			assert compiled_method?(LifecycleKept, :view_template)
+			assert_equal LifecycleKept.instance_variable_get(:@__phlex_inlined__), Set[:span, :section]
+
+			instance = LifecycleKept.new
+			instance.define_singleton_method(:div) { |*, **, &| plain("singleton div") }
+			assert_equal instance.call, "singleton div<span>compiled</span><section>singleton div</section>"
+
+			assert_raises(Phlex::Compiler::Error) do
+				LifecycleKept.new.define_singleton_method(:span) { |**, &| nil }
+			end
+		end
+	end
+
+	test "freezing a compiled class restores its definitions, so it still follows changes above it" do
+		with_component_files(
+			"frozen_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleFrozenParent < Phlex::HTML
+				end
+			RUBY
+			"frozen_child.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFrozenChild < LifecycleFrozenParent
+					def view_template = div { "child" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenChild)
+			assert_equal LifecycleFrozenChild.instance_variable_get(:@__phlex_inlined__), Set[:div]
+
+			LifecycleFrozenChild.freeze
+			assert LifecycleFrozenChild.frozen?
+			assert_equal LifecycleFrozenChild.new.call, "<div>child</div>"
+			assert_equal LifecycleFrozenChild.instance_variable_get(:@__phlex_inlined__), Set[]
+
+			LifecycleFrozenParent.class_eval { def div(**, &) = plain("parent div") }
+			assert_equal LifecycleFrozenChild.new.call, "parent div"
+		end
+	end
+
+	test "a refinement used by one compiled file doesn't reach another" do
+		with_component_files(
+			"refined.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				module LifecycleShout
+					refine(String) { def shout = upcase + "!" }
+				end
+
+				using LifecycleShout
+
+				class LifecycleRefined < Phlex::HTML
+					def view_template = div { "hi".shout }
+				end
+			RUBY
+			"unrefined.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleUnrefined < Phlex::HTML
+					def view_template = div { "hi".respond_to?(:shout).to_s }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleRefined)
+			Phlex::Compiler.compile(LifecycleUnrefined)
+
+			assert_equal LifecycleRefined.new.call, "<div>HI!</div>"
+			assert_equal LifecycleUnrefined.new.call, "<div>false</div>"
+		end
+	end
+
+	test "include and prepend still return the class, and only the component's own methods are compiled" do
+		with_component_files(
+			"mixed_in.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleMixin
+					def content = span { "mixin" }
+				end
+
+				class LifecycleMixedIn < Phlex::HTML
+					def view_template
+						div { content }
+						flush
+					end
+				end
+			RUBY
+		) do
+			assert LifecycleMixedIn.include(LifecycleMixin).equal?(LifecycleMixedIn)
+			assert LifecycleMixedIn.prepend(Module.new).equal?(LifecycleMixedIn)
+			LifecycleMixedIn.__send__(:private, :content)
+
+			Phlex::Compiler.compile(LifecycleMixedIn)
+
+			assert compiled_method?(LifecycleMixedIn, :view_template)
+			refute compiled_method?(LifecycleMixedIn, :content)
+			assert_equal LifecycleMixedIn.new.call, "<div><span>mixin</span></div>"
+
+			# flush was recognised but kept as a call, so overriding it is fine.
+			instance = LifecycleMixedIn.new
+			instance.define_singleton_method(:flush) { nil }
+			assert_equal instance.call, "<div><span>mixin</span></div>"
 		end
 	end
 

@@ -120,7 +120,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				"15: comment keeps its call because its block is forwarded or it has parameters or contains a return, break, next or local assignment",
 				"16: doctype keeps its call because it has arguments or a block",
 				"17: fragment keeps its call because its block has parameters or is forwarded",
-				"25: twice is defined more than once on this line, so the compiler can't tell which is live",
+				"25: more than one method is defined on this line, so the compiler can't tell which definition is live",
 				"27: __phlex_x__ is a local the compiler reserves; names starting with __phlex_ can't be used",
 				"32: hr keeps its call because it's in a parameter default",
 			]
@@ -130,7 +130,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 
 			# Compiling refuses the first construct it can't compile faithfully.
 			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(DiagnosticsCase::Component) }
-			assert_equal error.message, "#{path}:25: twice is defined more than once on this line, so the compiler can't tell which is live"
+			assert_equal error.message, "#{path}:25: more than one method is defined on this line, so the compiler can't tell which definition is live"
 		ensure
 			DiagnosticsCase.__send__(:remove_const, :Component)
 			Object.__send__(:remove_const, :DiagnosticsCase)
