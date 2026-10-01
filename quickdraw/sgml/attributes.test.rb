@@ -328,6 +328,43 @@ class AttributesTest < Quickdraw::Test
 		assert_equal output, %(<div attribute="hello"></div>)
 	end
 
+	test "_, Array(nil | token)" do
+		output = phlex { div(class: [nil, "foo"]) }
+		assert_equal output, %(<div class="foo"></div>)
+
+		output = phlex { div(class: [nil, :foo]) }
+		assert_equal output, %(<div class="foo"></div>)
+
+		output = phlex { div(class: [nil, 42]) }
+		assert_equal output, %(<div class="42"></div>)
+
+		output = phlex { div(class: [nil, Phlex::SGML::SafeValue.new("foo")]) }
+		assert_equal output, %(<div class="foo"></div>)
+
+		output = phlex { div(class: [nil, ["foo"]]) }
+		assert_equal output, %(<div class="foo"></div>)
+
+		output = phlex { div(class: [nil, Set["foo"]]) }
+		assert_equal output, %(<div class="foo"></div>)
+
+		output = phlex { div(class: [nil, nil, "foo", nil, "bar"]) }
+		assert_equal output, %(<div class="foo bar"></div>)
+	end
+
+	test "_, Array(EmptyArray | String)" do
+		output = phlex { div(class: [[], "foo"]) }
+		assert_equal output, %(<div class="foo"></div>)
+
+		output = phlex { div(class: [Set[], "foo"]) }
+		assert_equal output, %(<div class="foo"></div>)
+
+		output = phlex { div(class: [[nil, nil], "foo"]) }
+		assert_equal output, %(<div class="foo"></div>)
+
+		output = phlex { div(class: [[[], nil], ["foo"]]) }
+		assert_equal output, %(<div class="foo"></div>)
+	end
+
 	test "_, Array(*invalid*)" do
 		assert_raises(Phlex::ArgumentError) do
 			phlex { div(attribute: [Object.new]) }
@@ -729,6 +766,12 @@ class AttributesTest < Quickdraw::Test
 
 		output = phlex { img(srcset: ["/width=400/image.jpg 1x", ["/width=400,dpr=2/image.jpg 2x"]]) }
 		assert_equal output, %(<img srcset="/width=400/image.jpg 1x, /width=400%2Cdpr=2/image.jpg 2x">)
+
+		output = phlex { img(srcset: [nil, "a.png 1x"]) }
+		assert_equal output, %(<img srcset="a.png 1x">)
+
+		output = phlex { img(srcset: [[], nil, "a.png 1x", nil, "b.png 2x"]) }
+		assert_equal output, %(<img srcset="a.png 1x, b.png 2x">)
 	end
 
 	test ":media on link with an Array" do
