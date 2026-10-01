@@ -78,6 +78,37 @@ class CompilerMagicCommentsTest < Quickdraw::Test
 		assert_equal results, ["<div>x</div>false", "<div>x</div>false"]
 	end
 
+	test "a frozen string literal comment after a token the AST leaves out is ignored" do
+		results = render_before_and_after_compiling("MagicCommentsAfterSemicolon", <<~RUBY)
+			;
+			# typed: true
+			# frozen_string_literal: true
+			class MagicCommentsAfterSemicolon < Phlex::HTML
+				def view_template
+					div { "x" }
+					plain "abc".frozen?.to_s
+				end
+			end
+		RUBY
+
+		assert_equal results, ["<div>x</div>false", "<div>x</div>false"]
+	end
+
+	test "an invalid frozen string literal value doesn't override an earlier valid one" do
+		results = render_before_and_after_compiling("MagicCommentsInvalidValue", <<~RUBY)
+			# frozen_string_literal: true
+			# frozen_string_literal: yes
+			class MagicCommentsInvalidValue < Phlex::HTML
+				def view_template
+					div { "x" }
+					plain "abc".frozen?.to_s
+				end
+			end
+		RUBY
+
+		assert_equal results, ["<div>x</div>true", "<div>x</div>true"]
+	end
+
 	test "the encoding comment is forwarded alongside frozen string literals" do
 		results = render_before_and_after_compiling("MagicCommentsEncoding", <<~RUBY)
 			# encoding: ascii-8bit

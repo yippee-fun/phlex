@@ -387,16 +387,33 @@ module Phlex::Compiler
 	end
 
 	# Ruby only reads a frozen string literal comment from the comment block
-	# before the first token, with the last one there winning.
+	# before the first token, with the last valid one there winning.
 	def self.frozen_string_literal?(parse_result)
-		first_token = parse_result.value.statements.body.first&.location&.start_offset || Float::INFINITY
+		first_token = first_token_offset(parse_result)
 
 		comment = parse_result.magic_comments.reverse_each.find do |magic_comment|
 			magic_comment.key_loc.start_offset < first_token &&
-				magic_comment.key.tr("-", "_").casecmp?("frozen_string_literal")
+				magic_comment.key.tr("-", "_").casecmp?("frozen_string_literal") &&
+				(magic_comment.value.casecmp?("true") || magic_comment.value.casecmp?("false"))
 		end
 
 		comment&.value&.casecmp?("true") || false
+	end
+
+	# The byte offset of the first token, found by skipping the byte order
+	# mark, whitespace and comments. The AST can't tell us this because it
+	# leaves out tokens such as a lone semicolon.
+	def self.first_token_offset(parse_result)
+		source = parse_result.source.source.b
+		comments = parse_result.comments.to_h { |comment| [comment.location.start_offset, comment.location.end_offset] }
+		offset = source.start_with?("\xEF\xBB\xBF".b) ? 3 : 0
+
+		loop do
+			offset = source.index(/[^ \t\r\n\f\v]/n, offset) || source.bytesize
+			break offset unless (comment_end = comments[offset])
+
+			offset = comment_end
+		end
 	end
 
 	def self.wrap_in_namespace(namespace, body)
