@@ -57,6 +57,7 @@ module Phlex::Compiler
 
 	MODULE_INCLUDE = Module.instance_method(:include?)
 	MODULE_ANCESTORS = Module.instance_method(:ancestors)
+	MODULE_SINGLETON_CLASS = Module.instance_method(:singleton_class?)
 	KERNEL_FROZEN = Kernel.instance_method(:frozen?)
 	MODULE_INSTANCE_METHODS = Module.instance_method(:instance_methods)
 	MODULE_PRIVATE_INSTANCE_METHODS = Module.instance_method(:private_instance_methods)
@@ -70,6 +71,11 @@ module Phlex::Compiler
 	end
 
 	PROBE_PATH = "(phlex compiler probe)"
+
+	# Entered in MAP as the first compilation starts, so Phlex::SGML's hooks,
+	# which do nothing while it's empty, report changes made meanwhile. No
+	# method is ever defined at this path.
+	STARTED_PATH = "(phlex compiler started)"
 	SCOPE_PATH = File.expand_path("compiler/scope.rb", __dir__)
 
 	# Bindings handed over by compiler/scope.rb as it's loaded.
@@ -174,6 +180,8 @@ module Phlex::Compiler
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
+		MAP[STARTED_PATH] ||= Generation.new(path: STARTED_PATH, lines: {}.freeze)
+
 		source = File.read(path)
 		targets = targets(path, components, recompile:)
 
@@ -255,7 +263,7 @@ module Phlex::Compiler
 		end
 		return if affected.empty?
 
-		if target.singleton_class?
+		if MODULE_SINGLETON_CLASS.bind_call(target)
 			raise Error, "#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling."
 		end
 
@@ -268,19 +276,34 @@ module Phlex::Compiler
 
 	# The classes whose compiled methods a change to the target can affect.
 	def self.related(target)
-		if target.singleton_class?
-			target.ancestors
+		if MODULE_SINGLETON_CLASS.bind_call(target)
+			MODULE_ANCESTORS.bind_call(target)
 		elsif Class === target
-			target.ancestors + descendants_of(target)
+			MODULE_ANCESTORS.bind_call(target) + descendants_of(target)
 		else
-			descendants_of(Phlex::SGML).select { |klass| MODULE_INCLUDE.bind_call(klass, target) }.flat_map(&:ancestors).uniq
+			descendants_of(Phlex::SGML).select { |klass| MODULE_INCLUDE.bind_call(klass, target) }.flat_map { |klass| MODULE_ANCESTORS.bind_call(klass) }.uniq
 		end
 	end
 
 	# A compiled component inlines elements and helpers its modules define, so
 	# those modules, and any mixed in later, report their changes too.
 	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Phlex::SGML })
-		unwatched_mixins(component, modules).each { |mod| mod.singleton_class.prepend(MixinHooks) }
+		unwatched_mixins(component, modules).each { |mod| mod.singleton_class.prepend(mixin_hooks_for(mod)) }
+	end
+
+	# MixinHooks, or a copy keeping `include` and `prepend` as private or
+	# protected as the module has them.
+	def self.mixin_hooks_for(mod)
+		restricted = %i[include prepend].reject { |name| mod.singleton_class.public_method_defined?(name) }
+		return MixinHooks if restricted.empty?
+
+		Module.new do
+			include MixinHooks
+
+			restricted.each do |name|
+				__send__(mod.singleton_class.private_method_defined?(name) ? :private : :protected, name)
+			end
+		end
 	end
 
 	# The modules still to be watched. A module whose singleton class is frozen

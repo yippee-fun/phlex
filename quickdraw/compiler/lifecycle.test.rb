@@ -647,6 +647,75 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a watched module's private include stays private" do
+		with_component_files(
+			"private_include.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecyclePrivateInclude
+					private_class_method :include
+				end
+
+				class LifecyclePrivateIncludeComponent < Phlex::HTML
+					include LifecyclePrivateInclude
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecyclePrivateIncludeComponent)
+
+			assert LifecyclePrivateInclude.singleton_class < Phlex::Compiler::MixinHooks
+			assert_raises(NoMethodError) { LifecyclePrivateInclude.include(Module.new) }
+			assert LifecyclePrivateInclude.respond_to?(:prepend)
+
+			hidden = Module.new
+			LifecyclePrivateInclude.__send__(:include, hidden)
+			hidden.define_method(:div) { |**| plain("hidden div") }
+			assert_equal LifecyclePrivateIncludeComponent.new.call, "hidden div"
+		end
+	end
+
+	test "modules overriding singleton_class? and including classes overriding ancestors are still watched" do
+		with_component_files(
+			"singleton_claims.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleClaimsSingleton
+					def self.singleton_class? = true
+				end
+
+				module LifecycleOverriddenAncestry
+				end
+
+				class LifecycleClaimsSingletonParent < Phlex::HTML
+					def view_template
+						div { "x" }
+						span { "y" }
+					end
+				end
+
+				class LifecycleClaimsSingletonChild < LifecycleClaimsSingletonParent
+					include LifecycleClaimsSingleton
+				end
+
+				class LifecycleOverriddenAncestryChild < LifecycleClaimsSingletonParent
+					include LifecycleOverriddenAncestry
+
+					def self.ancestors = [self]
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleClaimsSingletonParent)
+			assert_equal LifecycleClaimsSingletonParent.instance_variable_get(:@__phlex_inlined__), Set[:div, :span]
+
+			LifecycleClaimsSingleton.define_method(:div) { |**| plain("claimed div") }
+			assert_equal LifecycleClaimsSingletonChild.new.call, "claimed div<span>y</span>"
+
+			LifecycleOverriddenAncestry.define_method(:span) { |**| plain("overridden span") }
+			assert_equal LifecycleOverriddenAncestryChild.new.call, "<div>x</div>overridden span"
+			assert_equal LifecycleClaimsSingletonParent.new.call, "<div>x</div><span>y</span>"
+		end
+	end
+
 	test "a module mixed into a class that isn't compiled isn't watched" do
 		with_component_files(
 			"unwatched.rb" => <<~RUBY
