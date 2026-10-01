@@ -39,7 +39,7 @@ class Phlex::SGML
 		state = Phlex::SGML::State.new(
 			user_context: context,
 			output_buffer: buffer,
-			fragments: fragments&.to_set,
+			fragments: fragments&.to_set(&:to_s),
 		)
 
 		internal_call(parent: nil, state:, &)
@@ -175,6 +175,7 @@ class Phlex::SGML
 
 	# Define a named fragment that can be selectively rendered.
 	def fragment(name)
+		name = name.to_s
 		state = @_state
 		state.begin_fragment(name)
 		completed = false
