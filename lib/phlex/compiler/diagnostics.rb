@@ -38,6 +38,6 @@ class Phlex::Compiler::Diagnostics
 	end
 
 	private def line_of(node)
-		Integer === node ? node : node&.start_line
+		(Integer === node) ? node : node&.start_line
 	end
 end
