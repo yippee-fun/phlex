@@ -120,6 +120,62 @@ class SelectiveRenderingTest < Quickdraw::Test
 		assert_equal output, "<span>hello</span>"
 	end
 
+	test "rescued fragment exceptions stop rendering outside the selected fragment" do
+		error = RuntimeError.new("example")
+		rescued = nil
+		output = Phlex::HTML.new.call(fragments: ["selected"]) do |view|
+			begin
+				view.fragment("selected") { raise error }
+			rescue RuntimeError => e
+				rescued = e
+				view.span { "outside selected fragment" }
+			end
+
+			view.fragment("other") { view.span { "other fragment" } }
+		end
+
+		assert_equal output, ""
+		assert_same rescued, error
+	end
+
+	test "fragment cleanup preserves an unrescued exception" do
+		error = RuntimeError.new("example")
+		raised = assert_raises(RuntimeError) do
+			Phlex::HTML.new.call(fragments: ["selected"]) do |view|
+				view.fragment("selected") { raise error }
+			end
+		end
+
+		assert_same raised, error
+	end
+
+	test "rescued nested fragment exceptions preserve the selected outer fragment" do
+		output = Phlex::HTML.new.call(fragments: ["outer", "inner", "later"]) do |view|
+			view.fragment("outer") do
+				view.fragment("inner") { raise "example" }
+			rescue RuntimeError
+				view.span { "inside outer" }
+			end
+			view.span { "outside selected fragments" }
+			view.fragment("later") { view.span { "later fragment" } }
+		end
+
+		assert_equal output, "<span>inside outer</span><span>later fragment</span>"
+	end
+
+	test "fragment cleanup preserves nonlocal exits" do
+		result = nil
+		output = Phlex::HTML.new.call(fragments: ["selected"]) do |view|
+			result = catch(:done) do
+				view.fragment("selected") { throw :done, :result }
+			end
+			view.span { "outside selected fragment" }
+		end
+
+		assert_equal output, ""
+		assert_equal result, :result
+	end
+
 	test "with a capture block doesn't render the capture block" do
 		output = WithCaptureBlock.new.call(fragments: ["after"])
 		assert_equal output, %(<h1 id="after">After</h1>)
