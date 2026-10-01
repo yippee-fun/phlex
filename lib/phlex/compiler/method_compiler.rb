@@ -175,7 +175,11 @@ module Phlex::Compiler
 			end
 		end
 
+		# A forwarded block is evaluated before the element opens and may be nil,
+		# so it keeps the runtime call.
 		private def compile_standard_element(node, tag)
+			return compile_call_with_content(node) if Refract::BlockArgumentNode === node.block
+
 			attributes = compile_attributes(node, node.block ? ">" : "></#{tag}>")
 			return compile_call_with_content(node) unless attributes
 
@@ -302,8 +306,6 @@ module Phlex::Compiler
 				end
 			in Refract::BlockNode
 				[yield_content(compile_block_unguarded(block))]
-			in Refract::BlockArgumentNode
-				[yield_content(block)]
 			end
 		end
 

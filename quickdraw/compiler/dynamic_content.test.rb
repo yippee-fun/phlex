@@ -224,15 +224,17 @@ class DynamicContentCompilerTest < Quickdraw::Test
 		assert source.include?("__yield_content__")
 	end
 
-	test "block arguments retain the runtime fallback" do
-		source = compile_equivalent(<<~RUBY, "<h2>title</h2>")
+	test "a forwarded block keeps the element call" do
+		source = compile_equivalent(<<~RUBY, "<p>before</p><h2>title</h2>")
 			def view_template
+				p { "before" }
 				content = ->(component) { "title" }
 				h2(&content)
 			end
 		RUBY
 
-		assert source.include?("__yield_content__")
+		assert source.include?("h2(&content)")
+		refute source.include?("__yield_content__")
 	end
 
 	private def compile_equivalent(source, expected = nil, **)
