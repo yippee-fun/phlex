@@ -117,6 +117,20 @@ class DynamicContentCompilerTest < Quickdraw::Test
 		RUBY
 	end
 
+	test "rescued fragment exceptions restore selective rendering" do
+		compile_equivalent(<<~RUBY, "<span>later fragment</span>", fragments: [:selected, :later])
+			def view_template
+				begin
+					fragment(:selected) { raise "example" }
+				rescue RuntimeError
+					span { "outside selected fragment" }
+				end
+				fragment(:other) { span { "other fragment" } }
+				fragment(:later) { span { "later fragment" } }
+			end
+		RUBY
+	end
+
 	test "flushing in the content counts as writing to the buffer" do
 		compile_equivalent(<<~RUBY, "<div>before</div>")
 			def view_template

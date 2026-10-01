@@ -19,6 +19,46 @@ class FIFOTest < Quickdraw::Test
 		assert_equal fifo[0], "a"
 	end
 
+	test "doesn't retain keys for empty values" do
+		fifo = Phlex::FIFO.new(max_bytesize: 2)
+
+		1_000.times do |i|
+			fifo[{ i => nil }] = ""
+		end
+
+		assert_equal fifo.bytesize, 0
+		assert_equal fifo.size, 0
+	end
+
+	test "fetch returns empty attribute strings without retaining their keys" do
+		fifo = Phlex::FIFO.new(max_bytesize: 2)
+
+		1_000.times do |i|
+			attributes = { "data-#{i}" => nil }
+			value = fifo.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+
+			assert_equal value, ""
+		end
+
+		assert_equal fifo.bytesize, 0
+		assert_equal fifo.size, 0
+	end
+
+	test "empty values don't affect eviction or accounting for nonempty values" do
+		fifo = Phlex::FIFO.new(max_bytesize: 2)
+		fifo[:first] = "a"
+		fifo[:empty] = ""
+		fifo[:second] = "b"
+		fifo[:third] = "c"
+
+		assert_equal fifo[:first], nil
+		assert_equal fifo[:empty], nil
+		assert_equal fifo[:second], "b"
+		assert_equal fifo[:third], "c"
+		assert_equal fifo.bytesize, 2
+		assert_equal fifo.size, 2
+	end
+
 	test "ignores values that are too large" do
 		fifo = Phlex::FIFO.new(max_bytesize: 100, max_value_bytesize: 10)
 

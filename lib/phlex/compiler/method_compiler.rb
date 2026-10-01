@@ -47,7 +47,7 @@ module Phlex::Compiler
 		end
 
 		visit Refract::LambdaNode do |node|
-			node
+			without_compiling_calls { super(node) }
 		end
 
 		# A modifier form guards a single statement, so once its body compiles to

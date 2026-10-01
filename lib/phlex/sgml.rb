@@ -179,8 +179,13 @@ class Phlex::SGML
 	def fragment(name)
 		state = @_state
 		state.begin_fragment(name)
-		yield
-		state.end_fragment(name)
+		completed = false
+		begin
+			yield
+			completed = true
+		ensure
+			state.end_fragment(name, halt: completed)
+		end
 		nil
 	end
 
