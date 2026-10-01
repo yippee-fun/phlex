@@ -501,62 +501,81 @@ module Phlex::Compiler
 
 		# The runtime builds the whole attribute string before appending any of
 		# it, so if a value is invalid the tag closes empty. Pieces that can raise
-		# are all evaluated in the first slot, and appended from locals after.
+		# are all evaluated into locals in the first slot, and appended after.
 		private def attribute_chain(pieces, closing)
 			raising = pieces.select(&:raises)
 			return pieces.flat_map { |piece| piece.nodes.map { |node| append(node) } } if raising.empty?
 
-			if raising == [pieces.first]
-				slots = [close_tag_on_exception(pieces.first.nodes, closing), *pieces.drop(1).flat_map(&:nodes)]
-			else
-				locals = raising.to_h { |piece| [piece, local(:attribute)] }
-				writes = raising.map { |piece| Refract::LocalVariableWriteNode.new(name: locals[piece], value: piece.nodes.first) }
-				slots = pieces.flat_map { |piece| locals.key?(piece) ? [Refract::LocalVariableReadNode.new(name: locals[piece])] : piece.nodes }
-				slots[0] = close_tag_on_exception([*writes, slots[0]], closing)
-			end
+			locals = raising.to_h { |piece| [piece, local(:attribute)] }
+			writes = raising.map { |piece| Refract::LocalVariableWriteNode.new(name: locals[piece], value: piece.nodes.first) }
+			slots = pieces.flat_map { |piece| locals.key?(piece) ? [Refract::LocalVariableReadNode.new(name: locals[piece])] : piece.nodes }
+			slots[0] = close_tag_on_exit(writes, slots[0], closing)
 
 			slots.map { |slot| append(slot) }
 		end
 
 		private def compile_attribute_hash(element, keyword_hash, closing)
 			hash = Refract::HashNode.new(elements: keyword_hash.elements)
+			hoisted = []
+			hash = hoisted_local(hash, hoisted) unless pure?(hash)
+			attributes = local(:attributes)
 
-			if pure?(hash)
-				Attributes.new(hoisted: [], nodes: [append(close_tag_on_exception([attributes_call(element, hash)], closing))])
-			else
-				local = local(:value)
-				Attributes.new(
-					hoisted: [Refract::LocalVariableWriteNode.new(name: local, value: visit(hash))],
-					nodes: [append(close_tag_on_exception([attributes_call(element, Refract::LocalVariableReadNode.new(name: local))], closing))]
-				)
-			end
+			Attributes.new(
+				hoisted:,
+				nodes: [
+					append(
+						close_tag_on_exit(
+							[Refract::LocalVariableWriteNode.new(name: attributes, value: attributes_call(element, hash))],
+							Refract::LocalVariableReadNode.new(name: attributes),
+							closing
+						)
+					),
+				]
+			)
 		end
 
-		# The runtime closes the opening tag even when serialising the attributes
-		# raises. Wrapping the expression itself keeps it inside the append chain.
-		private def close_tag_on_exception(statements, closing)
+		# Evaluates the statements and then the result, appending the closing text
+		# if the statements exit early. The runtime closes the opening tag in an
+		# `ensure`, so a `throw` out of serialising a value closes it too, not
+		# only an exception. The result must not be able to raise. Wrapping the
+		# expression itself keeps it inside the append chain.
+		private def close_tag_on_exit(statements, result, closing)
+			done = local(:done)
+
 			Refract::BeginNode.new(
-				statements: Refract::StatementsNode.new(body: statements),
-				rescue_clause: Refract::RescueNode.new(
-					exceptions: [Refract::ConstantPathNode.new(name: "Exception")],
-					reference: nil,
+				statements: Refract::StatementsNode.new(
+					body: [
+						Refract::LocalVariableWriteNode.new(name: done, value: Refract::FalseNode.new),
+						*statements,
+						Refract::LocalVariableWriteNode.new(name: done, value: Refract::TrueNode.new),
+						result,
+					]
+				),
+				rescue_clause: nil,
+				else_clause: nil,
+				ensure_clause: Refract::EnsureNode.new(
 					statements: Refract::StatementsNode.new(
 						body: [
-							Refract::CallNode.new(
-								receiver: Refract::CallNode.new(
-									receiver: Refract::LocalVariableReadNode.new(name: state_local),
-									name: :buffer
+							Refract::UnlessNode.new(
+								inline: true,
+								predicate: Refract::LocalVariableReadNode.new(name: done),
+								statements: Refract::StatementsNode.new(
+									body: [
+										Refract::CallNode.new(
+											receiver: Refract::CallNode.new(
+												receiver: Refract::LocalVariableReadNode.new(name: state_local),
+												name: :buffer
+											),
+											name: :<<,
+											arguments: Refract::ArgumentsNode.new(arguments: [Refract::StringNode.new(unescaped: closing)])
+										),
+									]
 								),
-								name: :<<,
-								arguments: Refract::ArgumentsNode.new(arguments: [Refract::StringNode.new(unescaped: closing)])
+								else_clause: nil
 							),
-							Refract::CallNode.new(name: :raise),
 						]
-					),
-					subsequent: nil
-				),
-				else_clause: nil,
-				ensure_clause: nil
+					)
+				)
 			)
 		end
 

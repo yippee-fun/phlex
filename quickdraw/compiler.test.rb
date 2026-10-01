@@ -66,10 +66,12 @@ class CompilerTest < Quickdraw::Test
 					__phlex_state__ = @_state
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
-							::Phlex::SGML::Attributes.attribute(:class, "class", @cls)
-						rescue ::Exception
-							__phlex_state__.buffer.<<(">")
-							raise()
+							__phlex_done_2__ = false
+							__phlex_attribute_1__ = ::Phlex::SGML::Attributes.attribute(:class, "class", @cls)
+							__phlex_done_2__ = true
+							__phlex_attribute_1__
+						ensure
+							__phlex_state__.buffer.<<(">") unless __phlex_done_2__
 						end).<<(">x</div>")
 					end
 					nil)
@@ -92,10 +94,12 @@ class CompilerTest < Quickdraw::Test
 					__phlex_value_1__ = dom_id
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
-							::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
-						rescue ::Exception
-							__phlex_state__.buffer.<<(">")
-							raise()
+							__phlex_done_3__ = false
+							__phlex_attribute_2__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
+							__phlex_done_3__ = true
+							__phlex_attribute_2__
+						ensure
+							__phlex_state__.buffer.<<(">") unless __phlex_done_3__
 						end).<<(">x</div>")
 					end
 					nil)
@@ -119,12 +123,13 @@ class CompilerTest < Quickdraw::Test
 					__phlex_value_2__ = dom_id
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<a").<<(begin
+							__phlex_done_5__ = false
 							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.reference_attribute(:href, "href", __phlex_value_1__)
 							__phlex_attribute_4__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							__phlex_done_5__ = true
 							__phlex_attribute_3__
-						rescue ::Exception
-							__phlex_state__.buffer.<<(">")
-							raise()
+						ensure
+							__phlex_state__.buffer.<<(">") unless __phlex_done_5__
 						end).<<(' class="x"').<<(__phlex_attribute_4__).<<(">x</a>")
 					end
 					nil)
@@ -152,11 +157,12 @@ class CompilerTest < Quickdraw::Test
 					__phlex_value_2__ = @id
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
+							__phlex_done_4__ = false
 							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							__phlex_done_4__ = true
 							__phlex_value_1__
-						rescue ::Exception
-							__phlex_state__.buffer.<<("></div>")
-							raise()
+						ensure
+							__phlex_state__.buffer.<<("></div>") unless __phlex_done_4__
 						end).<<(__phlex_attribute_3__).<<("></div>")
 					end
 					nil)
