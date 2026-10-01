@@ -147,8 +147,10 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 				unmatched << definition
 			elsif target.compiled
 				compiled << definition
-			elsif @keyword_flagged.any? { |flagged| flagged.namespace == definition.namespace && flagged.node == definition.node.name }
-				@diagnostics.refuse(definition.node, "#{definition.node.name} is marked ruby2_keywords, which the compiler can't preserve")
+			elsif @keyword_flagged.any? { |flagged| flagged.node == definition.node.name }
+				# Matched by name alone, since the mark can sit in a later reopening
+				# of the class, whose statements are different nodes.
+				@diagnostics.refuse(definition.node, "#{definition.node.name} is marked ruby2_keywords in this file, which the compiler can't preserve")
 			else
 				targeted << definition
 			end

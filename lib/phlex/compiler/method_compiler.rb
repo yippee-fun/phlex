@@ -287,23 +287,32 @@ module Phlex::Compiler
 		end
 
 		# Whether a statement's value is known to be nil, so the runtime's implicit
-		# output of a block's return value can be skipped.
+		# output of a block's return value can be skipped. The elements and
+		# helpers that answer is built on are recorded as relied on, but only
+		# when the answer is yes, since otherwise nothing is built on them.
 		private def returns_nil?(node)
+			relied = []
+			known = nil_valued?(node, relied)
+			@environment.inlined.merge(relied) if known
+			known
+		end
+
+		private def nil_valued?(node, relied)
 			case node
 			in nil | Refract::NilNode
 				true
 			in Refract::CallNode if node.receiver.nil?
 				known = @environment.element(node.name) || (@environment.helper?(node.name) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw)
-				@environment.inlined << node.name if known
+				relied << node.name if known
 				known
 			in Refract::IfNode
-				returns_nil?(node.statements&.body&.last) && returns_nil?(node.subsequent)
+				nil_valued?(node.statements&.body&.last, relied) && nil_valued?(node.subsequent, relied)
 			in Refract::UnlessNode
-				returns_nil?(node.statements&.body&.last) && returns_nil?(node.else_clause)
+				nil_valued?(node.statements&.body&.last, relied) && nil_valued?(node.else_clause, relied)
 			in Refract::ElseNode
-				returns_nil?(node.statements&.body&.last)
+				nil_valued?(node.statements&.body&.last, relied)
 			in Refract::CaseNode | Refract::CaseMatchNode
-				node.conditions.all? { |condition| returns_nil?(condition.statements&.body&.last) } && returns_nil?(node.else_clause)
+				node.conditions.all? { |condition| nil_valued?(condition.statements&.body&.last, relied) } && nil_valued?(node.else_clause, relied)
 			else
 				false
 			end

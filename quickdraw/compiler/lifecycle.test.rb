@@ -237,17 +237,18 @@ class CompilerLifecycleTest < Quickdraw::Test
 					def view_template
 						div("positional")
 						span { "compiled" }
+						section { @text ? "text" : div("positional") }
 					end
 				end
 			RUBY
 		) do
 			Phlex::Compiler.compile(LifecycleKept)
 			assert compiled_method?(LifecycleKept, :view_template)
-			assert_equal LifecycleKept.instance_variable_get(:@__phlex_inlined__), Set[:span]
+			assert_equal LifecycleKept.instance_variable_get(:@__phlex_inlined__), Set[:span, :section]
 
 			instance = LifecycleKept.new
 			instance.define_singleton_method(:div) { |*, **, &| plain("singleton div") }
-			assert_equal instance.call, "singleton div<span>compiled</span>"
+			assert_equal instance.call, "singleton div<span>compiled</span><section>singleton div</section>"
 
 			assert_raises(Phlex::Compiler::Error) do
 				LifecycleKept.new.define_singleton_method(:span) { |**, &| nil }
