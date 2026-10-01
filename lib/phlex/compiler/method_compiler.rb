@@ -2,9 +2,6 @@
 
 module Phlex::Compiler
 	class MethodCompiler < Refract::MutationVisitor
-		ELEMENTS_SOURCE_PATH = Phlex::SGML::Elements.instance_method(:register_element).source_location[0]
-		HELPERS_SOURCE_PATH = Phlex::SGML.instance_method(:plain).source_location[0]
-		HELPER_OWNERS = Set[Phlex::SGML, Phlex::HTML, Phlex::SVG].freeze
 		STATE_LOCAL = :__phlex_state__
 		SELF_LOCAL = :__phlex_self__
 
@@ -15,11 +12,10 @@ module Phlex::Compiler
 		# the text to append, and whether evaluating them can raise.
 		Piece = Data.define(:nodes, :raises)
 
-		def initialize(component, path, nesting: [component])
+		def initialize(environment, path)
 			super()
-			@component = component
+			@environment = environment
 			@path = path
-			@nesting = nesting
 			@preamble = []
 			@appends = 0
 			@locals = 0
@@ -156,14 +152,9 @@ module Phlex::Compiler
 		end
 
 		private def compile_call(node)
-			if (element = element(node))
-				element => [kind, tag]
-
-				case kind
-				in :void then compile_void_element(node, tag)
-				in :standard then compile_standard_element(node, tag)
-				end
-			elsif helper?(node)
+			if (element = @environment.element(node.name))
+				element.void ? compile_void_element(node, element.tag) : compile_standard_element(node, element.tag)
+			elsif @environment.helper?(node.name)
 				case node.name
 				in :plain then compile_plain(node)
 				in :raw then compile_raw(node)
@@ -360,7 +351,7 @@ module Phlex::Compiler
 			in nil | Refract::NilNode
 				true
 			in Refract::CallNode if node.receiver.nil?
-				element(node) || (helper?(node) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw)
+				@environment.element(node.name) || (@environment.helper?(node.name) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw)
 			in Refract::IfNode
 				returns_nil?(node.statements&.body&.last) && returns_nil?(node.subsequent)
 			in Refract::UnlessNode
@@ -651,23 +642,9 @@ module Phlex::Compiler
 
 		private def set_literal?(node)
 			node.name == :[] && node.block.nil? && node.arguments && (
-				(Refract::ConstantReadNode === node.receiver && node.receiver.name == :Set && unqualified_set_is_standard?) ||
+				(Refract::ConstantReadNode === node.receiver && node.receiver.name == :Set && @environment.unqualified_set_is_standard?) ||
 				(Refract::ConstantPathNode === node.receiver && node.receiver.parent.nil? && node.receiver.name == :Set)
 			)
-		end
-
-		# Whether a bare `Set` in the method resolves to the standard library's,
-		# checking the lexical scopes the method was defined in first.
-		private def unqualified_set_is_standard?
-			return @unqualified_set_is_standard if defined?(@unqualified_set_is_standard)
-
-			@nesting.reverse_each do |scope|
-				return @unqualified_set_is_standard = scope.const_get(:Set, false).equal?(::Set) if scope.const_defined?(:Set, false)
-			end
-
-			@unqualified_set_is_standard = @component.const_get(:Set).equal?(::Set)
-		rescue NameError
-			@unqualified_set_is_standard = false
 		end
 
 		# Rebuilds a conditional with each literal branch replaced by the block's
@@ -755,7 +732,7 @@ module Phlex::Compiler
 		# `raw safe("…")` is a literal that skips escaping.
 		private def compile_raw(node)
 			case node.arguments&.arguments
-			in [Refract::CallNode[receiver: nil, name: :safe, block: nil, arguments: Refract::ArgumentsNode[arguments: [Refract::StringNode => literal]]] => safe] if helper?(safe)
+			in [Refract::CallNode[receiver: nil, name: :safe, block: nil, arguments: Refract::ArgumentsNode[arguments: [Refract::StringNode => literal]]]] if @environment.helper?(:safe)
 				raw(literal.unescaped)
 			else
 				nil
@@ -813,51 +790,6 @@ module Phlex::Compiler
 			return unless node.block in Refract::BlockNode[parameters: nil]
 
 			compile_call_with_content(node)
-		end
-
-		private def element(node)
-			return unless node.receiver.nil?
-			return unless (method = instance_method(node.name))
-
-			owner = method.owner
-			return unless owner.respond_to?(:__registered_elements__)
-			return unless method.source_location&.first == ELEMENTS_SOURCE_PATH
-			return unless (tag = owner.__registered_elements__[node.name])
-			return if overridden_by_descendant?(node.name, owner)
-
-			[owner.__registered_void_elements__.key?(node.name) ? :void : :standard, tag]
-		end
-
-		private def helper?(node)
-			return false unless (method = instance_method(node.name))
-
-			HELPER_OWNERS.include?(method.owner) &&
-				method.source_location&.first == HELPERS_SOURCE_PATH &&
-				!overridden_by_descendant?(node.name, method.owner)
-		end
-
-		# A compiled method is inherited, so it must not bake in a method that a
-		# loaded subclass overrides.
-		private def overridden_by_descendant?(name, owner)
-			descendants.any? do |descendant|
-				Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(descendant, name).owner != owner
-			rescue NameError
-				true
-			end
-		end
-
-		private def descendants
-			@descendants ||= descendants_of(@component)
-		end
-
-		private def descendants_of(component)
-			component.subclasses.flat_map { |subclass| [subclass, *descendants_of(subclass)] }
-		end
-
-		private def instance_method(name)
-			Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(@component, name)
-		rescue NameError
-			nil
 		end
 
 		private def plain(value)

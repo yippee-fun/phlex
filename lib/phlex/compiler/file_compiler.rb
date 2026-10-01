@@ -23,7 +23,8 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	visit Refract::ClassNode do |node|
 		enter(node) do
 			if (component = current_component)
-				class_compiler = Phlex::Compiler::ClassCompiler.new(component, @path, nesting: @nesting.dup.freeze)
+				environment = Phlex::Compiler::Environment.new(component, nesting: @nesting.dup.freeze)
+				class_compiler = Phlex::Compiler::ClassCompiler.new(environment, @path)
 
 				@results << Result.new(
 					namespace: @current_namespace.dup.freeze,

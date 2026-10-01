@@ -10,7 +10,7 @@ class CompilerTest < Quickdraw::Test
 
 	def compile(source)
 		node = Refract::Converter.new.visit(Prism.parse(source).value).statements.body.first
-		compiled = Phlex::Compiler::MethodCompiler.new(COMPONENT, "/components/test.rb").compile(node)
+		compiled = Phlex::Compiler::MethodCompiler.new(Phlex::Compiler::Environment.new(COMPONENT), "/components/test.rb").compile(node)
 		compiled && "#{Refract::Formatter.new.format_node(compiled).source}\n"
 	end
 

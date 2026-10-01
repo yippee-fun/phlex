@@ -244,7 +244,7 @@ class DynamicContentCompilerTest < Quickdraw::Test
 		assert_equal before, expected if expected
 
 		node = Refract::Converter.new.visit(Prism.parse(source).value.statements.body.first)
-		compiled = Phlex::Compiler::MethodCompiler.new(component, "/components/test.rb").compile(node)
+		compiled = Phlex::Compiler::MethodCompiler.new(Phlex::Compiler::Environment.new(component), "/components/test.rb").compile(node)
 		formatted = Refract::Formatter.new.format_node(compiled).source
 		component.class_eval(formatted)
 		assert_equal component.new.call(**), before
