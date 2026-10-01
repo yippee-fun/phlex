@@ -21,18 +21,24 @@ require "refract"
 # compiled definitions are evaluated inside the original nesting under a path
 # of their own, and exceptions are mapped back to the real file.
 #
-# Known differences from uncompiled rendering, all limited to unusual code:
-# - A `to_s` or `to_hash` with side effects on an interpolated variable or
-#   splatted attributes isn't called for elements skipped by fragment selection,
-#   and if it raises, text before it in the same append has already been written.
+# The compiler is meant to be invisible: a compiled component renders exactly
+# what it would have uncompiled, and code that can't be compiled faithfully is
+# refused with a Phlex::Compiler::Error naming the file and line rather than
+# compiled approximately. Refused: a method marked `ruby2_keywords`, a `using`
+# that applies to only part of its file, two definitions of a method on one
+# line, a local named like one the compiler generates (`__phlex_…`), a file
+# edited since it was loaded, and redefining an inlined element or helper on
+# a single instance with `extend` or a singleton method. Redefining one on a
+# class or by including a module recompiles whatever inlined it.
+#
+# Two differences remain, both deliberate:
 # - Attributes with literal keys are serialised without the attribute cache, so
-#   a value's `to_s`, `to_h` or `iso8601` runs on every render.
-# - Element methods a compiled method inlines can't be overridden by a subclass
-#   loaded after compilation, by a module included afterwards, or by singleton
-#   methods on an instance. Subclasses loaded before compilation are detected.
-# - Methods a component gains from mixins aren't compiled.
-# - A method marked with `ruby2_keywords` loses that flag when compiled, since
-#   Ruby offers no way to read it back.
+#   a value's `to_s`, `to_h` or `iso8601` runs on every render rather than once
+#   per distinct set of attributes.
+# - Method#source_location of a compiled method names the generated source;
+#   exceptions are mapped back to the real file.
+#
+# Methods a component gains from mixins aren't compiled, which only costs speed.
 module Phlex::Compiler
 	# Compiled code is evaluated under a path of its own so its line numbers
 	# never collide with the file's, and each compilation of a file gets a new
