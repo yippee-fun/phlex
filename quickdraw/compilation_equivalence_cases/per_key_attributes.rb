@@ -22,6 +22,7 @@ module EquivalenceCases
 				@style_list = ["color: red", "top: 0;", { left: 1 }]
 				@to_hash = ToHash.new(1, "two")
 				@date = Date.new(2020, 1, 2)
+				@time = Time.at(0).utc
 			end
 
 			def view_template
@@ -35,6 +36,7 @@ module EquivalenceCases
 				div(style: @string)
 				div(class: safe("<b>"), onclick: safe("alert(1)"))
 				div(data: @to_hash, title: @date)
+				div(data: { on: @date, at: @time, point: @to_hash }, datetime: @time)
 				div(class: @string, "class" => "string key") # rubocop:disable Style/HashSyntax
 				img(src: "/a.png", alt: @string)
 				input(type: "text", name: @string, value: @string)

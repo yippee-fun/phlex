@@ -450,6 +450,35 @@ class AttributesTest < Quickdraw::Test
 		assert_equal output, %(<div></div>)
 	end
 
+	test "_, Hash(_, Date)" do
+		output = phlex { div(data: { on: Date.new(2023, 1, 15) }) }
+		assert_equal output, %(<div data-on="2023-01-15"></div>)
+	end
+
+	test "_, Hash(_, Time)" do
+		output = phlex { div(data: { at: Time.new(2023, 1, 15, 12, 30, 45, "+00:00") }) }
+		assert_equal output, %(<div data-at="2023-01-15T12:30:45+00:00"></div>)
+
+		output = phlex { div(data: { at: Time.at(0).utc }) }
+		assert_equal output, %(<div data-at="1970-01-01T00:00:00Z"></div>)
+	end
+
+	test "_, Hash(_, Hash(_, Time))" do
+		output = phlex { div(data: { event: { at: Time.at(0).utc } }) }
+		assert_equal output, %(<div data-event-at="1970-01-01T00:00:00Z"></div>)
+	end
+
+	test "_, Hash(_, *responds to to_h*)" do
+		output = phlex { div(data: { controller: Data.define(:hello).new(hello: "world") }) }
+		assert_equal output, %(<div data-controller-hello="world"></div>)
+	end
+
+	test "_, Hash(_, *invalid*)" do
+		assert_raises(Phlex::ArgumentError) do
+			phlex { div(data: { controller: Object.new }) }
+		end
+	end
+
 	test "_, Hash(_, Phlex::SGML::SafeObject)" do
 		output = phlex { div(data: { controller: Phlex::SGML::SafeValue.new("Hello") }) }
 		assert_equal output, %(<div data-controller="Hello"></div>)
