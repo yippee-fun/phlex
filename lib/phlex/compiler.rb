@@ -48,14 +48,25 @@ module Phlex::Compiler
 	MAP = Phlex::COMPILED_SOURCE_MAPS
 	MUTEX = Mutex.new
 
+	# component => the exception that stopped it compiling on first render
+	FAILURES = {}.compare_by_identity
+
+	DEFAULT_FAILURE_HANDLER = lambda do |component, error|
+		warn "Phlex::Compiler couldn't compile #{component}, so it renders uncompiled: #{error.class}: #{error.message}\n\t#{error.backtrace&.first(5)&.join("\n\t")}"
+	end
+
 	@enabled = false
 	@generations = 0
+	@on_failure = DEFAULT_FAILURE_HANDLER
 
 	def self.enabled? = @enabled
 
-	# Compile each component on its first render.
-	def self.enable!
+	# Compile each component on its first render. A component that fails to
+	# compile is reported to `on_failure` once and keeps rendering uncompiled,
+	# so a compiler bug costs speed, never a page.
+	def self.enable!(on_failure: DEFAULT_FAILURE_HANDLER)
 		Phlex::SGML.prepend(LazyCompilation) unless Phlex::SGML < LazyCompilation
+		@on_failure = on_failure
 		@enabled = true
 	end
 
@@ -65,6 +76,15 @@ module Phlex::Compiler
 
 	def self.compiled?(component)
 		component.instance_variable_get(:@__phlex_compiled__) == true
+	end
+
+	def self.compile_on_first_render(component)
+		return if compiled?(component) || FAILURES.key?(component)
+
+		compile(component)
+	rescue StandardError, ScriptError => error
+		FAILURES[component] = error
+		@on_failure.call(component, error)
 	end
 
 	# Compiles every file that defines methods on the component or on its
@@ -119,7 +139,13 @@ module Phlex::Compiler
 
 		ancestors = component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }
 
-		ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.flat_map do |path|
+		failures = ancestors.filter_map do |ancestor|
+			next unless (error = FAILURES[ancestor])
+
+			Diagnostics::Diagnostic.new(path: constant_source_path(ancestor), line: nil, message: "compiling #{ancestor} raised #{error.class}: #{error.message}")
+		end
+
+		failures + ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.flat_map do |path|
 			diagnostics = Diagnostics.new(path)
 			FileCompiler.new(path, diagnostics:).compile(parse(File.read(path), path))
 			diagnostics.to_a
@@ -209,9 +235,7 @@ module Phlex::Compiler
 
 	module LazyCompilation
 		def internal_call(...)
-			if Phlex::Compiler.enabled? && !Phlex::Compiler.compiled?(self.class)
-				Phlex::Compiler.compile(self.class)
-			end
+			Phlex::Compiler.compile_on_first_render(self.class) if Phlex::Compiler.enabled?
 
 			super
 		end

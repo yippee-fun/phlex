@@ -103,6 +103,57 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	# Makes the compiler raise on demand, standing in for a compiler bug.
+	module Sabotage
+		def self.active = @active
+
+		def self.active=(active)
+			@active = active
+		end
+
+		def compile(node)
+			raise "sabotaged" if Sabotage.active
+
+			super
+		end
+	end
+
+	Phlex::Compiler::MethodCompiler.prepend(Sabotage)
+
+	test "a component that fails to compile on first render is reported once and renders uncompiled" do
+		with_component_files(
+			"failing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFailing < Phlex::HTML
+					def view_template = div { "still works" }
+				end
+			RUBY
+		) do
+			failures = []
+			Sabotage.active = true
+			Phlex::Compiler.enable!(on_failure: -> (component, error) { failures << [component, error.message] })
+
+			begin
+				assert_equal LifecycleFailing.new.call, "<div>still works</div>"
+				assert_equal LifecycleFailing.new.call, "<div>still works</div>"
+			ensure
+				Phlex::Compiler.disable!
+				Sabotage.active = false
+			end
+
+			refute compiled_method?(LifecycleFailing, :view_template)
+			assert_equal failures, [[LifecycleFailing, "sabotaged"]]
+			assert_equal Phlex::Compiler.explain(LifecycleFailing).first.message, "compiling LifecycleFailing raised RuntimeError: sabotaged"
+
+			assert_raises(RuntimeError) do
+				Sabotage.active = true
+				Phlex::Compiler.compile(LifecycleFailing)
+			ensure
+				Sabotage.active = false
+			end
+		end
+	end
+
 	test "exceptions map to the right line after the file is reloaded with more lines" do
 		with_component_files(
 			"reloaded.rb" => <<~RUBY
