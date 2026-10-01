@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "weakref"
+
 class CapturedFragmentsTest < Quickdraw::Test
 	class View < Phlex::HTML
 		attr_reader :cache_store
@@ -108,6 +110,60 @@ class CapturedFragmentsTest < Quickdraw::Test
 		assert_cached_fragments(content, "<span>other</span>", ["piece"], "")
 	end
 
+	test "discarded and flushed captures can be collected while the render state is alive" do
+		output = Object.new
+		def output.<<(_chunk) = nil
+		state = Phlex::SGML::State.new(output_buffer: output, fragments: nil)
+		references = temporary_captures(state)
+
+		10.times do
+			GC.start
+			break if references.count(&:weakref_alive?) < 10
+		end
+
+		assert references.count(&:weakref_alive?) < 10
+		assert state.should_render?
+	end
+
+	test "retained captures keep their fragments across garbage collection and repeated insertion" do
+		content = -> (view) do
+			view.instance_exec do
+				captured = capture { fragment("piece") { span { "hello" } } }
+				GC.start
+				fragment("outer") do
+					div do
+						raw safe(captured)
+						plain "gap"
+						raw safe(captured)
+					end
+				end
+			end
+		end
+
+		full = "<div><span>hello</span>gap<span>hello</span></div>"
+		assert_cached_fragments(content, full, ["piece"], "<span>hello</span>")
+		assert_cached_fragments(content, full, ["outer", "piece"], full)
+	end
+
+	test "many captured siblings retain ordered descendants on cache misses and hits" do
+		content = -> (view) do
+			view.instance_exec do
+				fragment("outer") do
+					1000.times do |id|
+						raw safe(capture { fragment(id.to_s) { span { id } } })
+					end
+				end
+			end
+		end
+
+		store = Phlex::FIFOCacheStore.new
+		full = View.new(store).call(&content)
+		_buffer, fragments = store.fetch("page") { raise "missing cache" }
+		assert_equal fragments["outer"][2], (0...1000).map(&:to_s)
+		assert_equal View.new(store).call(fragments: ["outer", "999"], &content), full
+		assert_equal View.new(store).call(fragments: ["999"], &content), "<span>999</span>"
+	end
+
 	[false, true].each do |attributes|
 		test "captured fragments returned as safe element content with attributes=#{attributes}" do
 			content = -> (view) do
@@ -131,6 +187,21 @@ class CapturedFragmentsTest < Quickdraw::Test
 		end
 
 		assert_cached_fragments(content, "<!-- <span>hello</span> -->", ["piece"], "<span>hello</span>")
+	end
+
+	private def temporary_captures(state)
+		Array.new(100) do |id|
+			captured = state.capture do
+				state.begin_fragment(id)
+				state.buffer << ("x" * 1024)
+				state.end_fragment(id)
+			end
+			if id.even?
+				state.append(captured)
+				state.flush
+			end
+			WeakRef.new(captured)
+		end
 	end
 
 	private def assert_cached_fragments(content, full, fragments, selective)
