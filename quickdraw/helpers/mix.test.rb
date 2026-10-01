@@ -71,6 +71,35 @@ class MixTest < Quickdraw::Test
 		assert_equal output, { class: "bar" }
 	end
 
+	test "string keys" do
+		output = mix({ "class" => "foo" }, { "class" => "bar" })
+		assert_equal output, { "class" => "foo bar" }
+	end
+
+	test "string keys ending in a bang are literal" do
+		output = mix({ "class" => "foo" }, { "class!" => "bar" })
+		assert_equal output, { "class" => "foo", "class!" => "bar" }
+	end
+
+	test "merge after a literal string key ending in a bang" do
+		output = mix({ "class" => "foo" }, { "class!" => "bar" }, { "class" => "baz" })
+		assert_equal output, { "class" => "foo baz", "class!" => "bar" }
+	end
+
+	test "merge string keys ending in a bang" do
+		output = mix({ "class!" => "foo" }, { "class!" => "bar" })
+		assert_equal output, { "class!" => "foo bar" }
+	end
+
+	test "nested string keys ending in a bang are literal" do
+		output = mix(
+			{ "data" => { "controller" => "foo" } },
+			{ "data" => { "controller!" => "bar" } },
+		)
+
+		assert_equal output, { "data" => { "controller" => "foo", "controller!" => "bar" } }
+	end
+
 	test "set + set" do
 		output = mix({ class: Set["foo"] }, { class: Set["bar"] })
 		assert_equal output, { class: Set["foo", "bar"] }
