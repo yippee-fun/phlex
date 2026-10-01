@@ -105,6 +105,8 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				class SupersededUnrelated; def x = 1; def y = 2; end
 
 				class SupersededCase < Phlex::HTML
+					def self.register(*) = nil
+					register("\\xFF")
 					def initialize = @title = "live"
 					def view_template = h1 { title }
 					def title = "default"

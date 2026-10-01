@@ -91,15 +91,16 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	# may be what defines a live method, whose source location is then the
 	# call's line, or for `define_method` its block's. Any receiverless call
 	# naming a method with a literal is recorded, so a `def` it replaced isn't
-	# mistaken for a sign the file has changed.
+	# mistaken for a sign the file has changed. Names are kept as strings,
+	# since a call that defines nothing may be given one that isn't a valid
+	# symbol.
 	private def record_generated(node)
 		lines = [node.start_line, node.block&.start_line].compact.uniq
 
 		node.arguments&.arguments&.each do |argument|
 			next unless Refract::SymbolNode === argument || Refract::StringNode === argument
 
-			name = argument.unescaped.to_sym
-			lines.each { |line| @generated << [name, line] }
+			lines.each { |line| @generated << [argument.unescaped, line] }
 		end
 	end
 
@@ -133,7 +134,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	private def definitions_by_namespace
 		orphaned = @targets.values.reject do |target|
 			@definitions.any? { |definition| definition.node.start_line == target.line && definition.node.name == target.name } ||
-				@generated.include?([target.name, target.line])
+				@generated.include?([target.name.name, target.line])
 		end
 
 		unique_definitions.group_by(&:namespace).filter_map do |namespace, definitions|
