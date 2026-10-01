@@ -85,7 +85,7 @@ class Phlex::SGML::State
 	def caching(&)
 		result = nil
 
-		capture do
+		capture(cache: true) do
 			@cache_stack.push([buffer, {}].freeze)
 			begin
 				yield
@@ -102,27 +102,48 @@ class Phlex::SGML::State
 		@cache_stack.length > 0
 	end
 
-	def capture
+	def capture(cache: false)
 		new_buffer = +""
 		original_buffer = @buffer
 		original_capturing = @capturing
 		original_fragments = @fragments
 		original_should_render = @should_render
+		original_cache_stack = @cache_stack
+		fragment_map = {} unless cache
 
 		begin
 			@buffer = new_buffer
 			@capturing = true
 			@fragments = nil
 			@should_render = true
+			# Captured output may be inserted later, elsewhere, or not at all.
+			# Track its fragments locally until the original string is inserted.
+			@cache_stack = [[new_buffer, fragment_map]] unless cache
 			yield
 		ensure
 			@buffer = original_buffer
 			@capturing = original_capturing
 			@fragments = original_fragments
 			@should_render = original_should_render
+			@cache_stack = original_cache_stack
+		end
+
+		if fragment_map && !fragment_map.empty?
+			(@captured_fragments ||= {}.compare_by_identity)[new_buffer] = [new_buffer.dup.freeze, fragment_map]
 		end
 
 		new_buffer
+	end
+
+	def append(content)
+		# Changed strings no longer have reliable fragment offsets.
+		if caching? && (captured = @captured_fragments&.[](content)) && captured[0] == content
+			captured[1].each do |id, (offset, length, nested_fragments)|
+				record_fragment(id, offset, length, nested_fragments)
+			end
+		end
+
+		@buffer << content
 	end
 
 	def flush
