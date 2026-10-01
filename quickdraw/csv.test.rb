@@ -210,6 +210,29 @@ CSV
 		CSV
 	end
 
+	test "does not write a row with a header mismatch" do
+		example = Class.new(Phlex::CSV) do
+			def escape_csv_injection? = false
+
+			def row_template(row)
+				column("A", row[0])
+				column(row[1], row[2])
+			end
+
+			def around_row(row)
+				super
+			rescue Phlex::RuntimeError
+				nil
+			end
+		end
+
+		assert_equal example.new([[1, "B", 2], [3, "C", 4], [5, "B", 6]]).call, <<~CSV
+			A,B
+			1,2
+			5,6
+		CSV
+	end
+
 	test "with a custom around_row" do
 		example = Class.new(Phlex::CSV) do
 			def escape_csv_injection? = true
