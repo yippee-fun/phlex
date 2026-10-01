@@ -157,13 +157,15 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				end
 
 				class ReflectiveLegacy
-					ruby2_keywords def other(*args) = args
+					ruby2_keywords def unrelated(*args) = args
 				end
 			RUBY
 			load path
 
 			Class.new(ReflectiveCase) do
 				def self.instance_method(*) = raise("overridden")
+				def self.instance_methods(*) = raise("overridden")
+				def self.private_instance_methods(*) = raise("overridden")
 				def own = nil
 			end
 

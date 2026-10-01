@@ -305,7 +305,7 @@ module Phlex::Compiler
 
 			own_methods(component).each do |name|
 				method = component.instance_method(name)
-				next unless method.original_name == name && defined_by_def?(method) && (location = method.source_location)
+				next unless method.original_name == name && (location = method.source_location)
 
 				source_path, line = location
 
@@ -313,21 +313,28 @@ module Phlex::Compiler
 					next unless generation.path == path && (line = generation.lines[line])
 
 					targets[line] = Target.new(component:, name:, line:, compiled: !recompile, replaced: true)
-				elsif source_path == path
+				elsif source_path == path && defined_by_def?(method)
 					targets[line] = Target.new(component:, name:, line:, compiled: false, replaced: false)
 				end
 			end
 		end
 	end
 
-	# Whether the method was made by `def`. Only CRuby can tell, so elsewhere
-	# every method is assumed to be, and a `def` that an `attr_reader` or
-	# `define_method` replaced is refused as if the file had been edited.
+	# Whether the method was made by `def`. Only CRuby can tell: a method from
+	# `attr_reader` has no instruction sequence, and one from `define_method`
+	# has a block's. Anything else, or any method elsewhere, is assumed to be,
+	# so a change in how Ruby labels them makes a `def` that an `attr_reader`
+	# or `define_method` replaced refused, rather than stopping compilation.
 	def self.defined_by_def?(method)
 		return true unless defined?(RubyVM::InstructionSequence)
 
-		RubyVM::InstructionSequence.of(method)&.label == method.original_name.name
+		iseq = RubyVM::InstructionSequence.of(method)
+		!iseq.nil? && !iseq.label.start_with?("block ")
 	end
+
+	# Module's own method listings, called directly so a class overriding them
+	# can't change what the compiler sees.
+	METHOD_LISTS = [:instance_methods, :private_instance_methods, :protected_instance_methods].map { |list| Module.instance_method(list) }.freeze
 
 	# The aliases, in the component or a descendant, that share a body with
 	# the component's method, as [owner, name] pairs. A descendant isn't being
@@ -337,7 +344,7 @@ module Phlex::Compiler
 		method = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
 
 		[component, *descendants_of(component)].flat_map do |owner|
-			names = owner.instance_methods(false) + owner.private_instance_methods(false) + owner.protected_instance_methods(false)
+			names = METHOD_LISTS.flat_map { |list| list.bind_call(owner, false) }
 
 			names.filter_map do |alias_name|
 				next if alias_name == name

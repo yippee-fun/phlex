@@ -25,6 +25,7 @@ class CompilationEquivalenceTest < Quickdraw::Test
 		"ruby2_keywords" => /marked ruby2_keywords/,
 		"ruby2_keywords_reopened" => /marked ruby2_keywords/,
 		"ruby2_keywords_alias" => /delegate is marked ruby2_keywords/,
+		"ruby2_keywords_alias_elsewhere" => /delegate is marked ruby2_keywords/,
 		"conditional_using" => /isn.t a plain top-level statement naming a constant/,
 		"ruby2_keywords_splat" => /arguments the compiler can.t read/,
 		"refinement_same_line" => /`using` applies to only part of the file/,

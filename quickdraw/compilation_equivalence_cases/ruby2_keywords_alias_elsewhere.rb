@@ -2,8 +2,10 @@
 
 module EquivalenceCases
 	module Ruby2KeywordsAliasElsewhere
-		# Marks a method of its own that has the alias's name, which doesn't mark
-		# the component's alias.
+		# Marks a method of its own that has the alias's name. That doesn't mark
+		# the component's alias, but telling which class a mark is in would mean
+		# evaluating the class's statements, so marks are matched by name and
+		# `delegate` is refused.
 		class Legacy
 			ruby2_keywords def forward(*args, &block) = target(*args, &block)
 

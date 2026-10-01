@@ -176,30 +176,27 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# Marking an alias marks the body it shares with the method, so the
-	# method's aliases are checked too. A mark of the alias's name counts only
-	# when it's made in the alias's own class.
+	# method's aliases are checked too. Like the method's own name, an alias's
+	# is matched wherever in the file it's marked: telling which class a mark
+	# is in would mean evaluating that class's statements.
 	private def keyword_flagged?(target)
 		return false if @keyword_flagged.empty?
-		return true if @keyword_flagged.any? { |flagged| flagged.node == target.name }
 
-		Phlex::Compiler.aliases_sharing(target.component, target.name).any? do |owner, name|
-			@keyword_flagged.any? { |flagged| flagged.node == name && reaches?(flagged.namespace, owner) }
-		end
-	end
-
-	private def reaches?(namespace, component)
-		Phlex::Compiler.probe(namespace).component.equal?(component)
-	rescue Phlex::Compiler::Error
-		false
+		names = [target.name, *Phlex::Compiler.aliases_sharing(target.component, target.name).map { |_owner, name| name }]
+		@keyword_flagged.any? { |flagged| names.include?(flagged.node) }
 	end
 
 	private def compile_namespace(namespace, definitions)
 		probe = Phlex::Compiler.probe(namespace, usings:)
 		environments = {}.compare_by_identity
 
-		definitions.group_by { |definition| @targets[definition.node.start_line].component }.map do |component, component_definitions|
+		definitions.group_by { |definition| @targets[definition.node.start_line].component }.filter_map do |component, component_definitions|
 			unless probe.component.equal?(component)
-				first = component_definitions.first.node
+				copied, others = component_definitions.partition { |definition| copied?(component, probe.component, definition.node.name) }
+				copied.each { |definition| @diagnostics.report(definition.node, "#{component}##{definition.node.name} is copied from #{probe.component}'s definition, so it's left alone") }
+				next if others.empty?
+
+				first = others.first.node
 				raise Phlex::Compiler::Error, "#{@path}:#{first.start_line} defines #{component}##{first.name}, but reopening its class and module statements reaches #{probe.component.inspect}"
 			end
 
@@ -222,6 +219,19 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 
 			Result.new(namespace:, component:, compiled_snippets: snippets.freeze, visibilities: visibilities.freeze, inlined: environment.inlined)
 		end
+	end
+
+	# A method given to `define_method` from another module keeps that
+	# module's source location, so its definition is reached by reopening
+	# that module rather than the component.
+	private def copied?(component, owner, name)
+		return false unless Module === owner
+
+		defining = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(owner, name)
+		live = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
+		defining.source_location == live.source_location && defining.original_name == live.original_name
+	rescue NameError
+		false
 	end
 
 	private def visibility_of(component, name)
