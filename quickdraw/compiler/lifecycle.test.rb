@@ -499,7 +499,13 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert_equal LifecycleReprepended.new.call, "<lifecycle-badge>x</lifecycle-badge>"
 
 			LifecycleReprepended.prepend(LifecycleReprependedHelpers)
-			assert_equal LifecycleReprepended.new.call, "helper badge"
+
+			# TruffleRuby leaves a module already further up where it is.
+			if LifecycleReprepended.ancestors.first == LifecycleReprependedHelpers
+				assert_equal LifecycleReprepended.new.call, "helper badge"
+			else
+				assert_equal LifecycleReprepended.new.call, "<lifecycle-badge>x</lifecycle-badge>"
+			end
 		end
 	end
 
