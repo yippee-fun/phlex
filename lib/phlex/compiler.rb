@@ -289,8 +289,12 @@ module Phlex::Compiler
 		descendants_of(Phlex::SGML).select { |component| live?(component) }
 	end
 
+	# Class#subclasses is called directly, so a class overriding it can't hide
+	# or invent descendants.
+	SUBCLASSES = Class.instance_method(:subclasses)
+
 	def self.descendants_of(component)
-		component.subclasses.flat_map { |subclass| [subclass, *descendants_of(subclass)] }
+		SUBCLASSES.bind_call(component).flat_map { |subclass| [subclass, *descendants_of(subclass)] }
 	end
 
 	# The lines in the file that define the components' live methods. A method

@@ -162,16 +162,22 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 			RUBY
 			load path
 
-			Class.new(ReflectiveCase) do
+			descendant = Class.new(ReflectiveCase) do
 				def self.instance_method(*) = raise("overridden")
 				def self.instance_methods(*) = raise("overridden")
 				def self.private_instance_methods(*) = raise("overridden")
+				def self.subclasses = raise("overridden")
 				def own = nil
 			end
 
 			Phlex::Compiler.compile(ReflectiveCase)
 			assert Phlex::Compiler::MAP.key?(ReflectiveCase.instance_method(:view_template).source_location[0])
 		ensure
+			# The class outlives the test, so it mustn't break other compiles.
+			%i[instance_method instance_methods private_instance_methods subclasses].each do |name|
+				descendant&.singleton_class&.__send__(:remove_method, name)
+			end
+
 			Object.__send__(:remove_const, :ReflectiveCase)
 			Object.__send__(:remove_const, :ReflectiveLegacy)
 		end

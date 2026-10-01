@@ -88,11 +88,7 @@ class Phlex::Compiler::Environment
 	end
 
 	private def descendants
-		@descendants ||= descendants_of(@component)
-	end
-
-	private def descendants_of(component)
-		component.subclasses.flat_map { |subclass| [subclass, *descendants_of(subclass)] }
+		@descendants ||= Phlex::Compiler.descendants_of(@component)
 	end
 
 	# The resolver runs in the file's lexical scope, where a refinement of
