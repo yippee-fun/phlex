@@ -71,6 +71,30 @@ class MixTest < Quickdraw::Test
 		assert_equal output, { class: "bar" }
 	end
 
+	test "string keys" do
+		output = mix({ "class" => "foo" }, { "class" => "bar" })
+		assert_equal output, { "class" => "foo bar" }
+	end
+
+	test "string key override" do
+		output = mix({ "class" => "foo" }, { "class!" => "bar" })
+		assert_equal output, { "class" => "bar" }
+	end
+
+	test "merge after string key override" do
+		output = mix({ "class" => "foo" }, { "class!" => "bar" }, { "class" => "baz" })
+		assert_equal output, { "class" => "bar baz" }
+	end
+
+	test "nested string key override" do
+		output = mix(
+			{ "data" => { "controller" => "foo" } },
+			{ "data" => { "controller!" => "bar" } },
+		)
+
+		assert_equal output, { "data" => { "controller" => "bar" } }
+	end
+
 	test "set + set" do
 		output = mix({ class: Set["foo"] }, { class: Set["bar"] })
 		assert_equal output, { class: Set["foo", "bar"] }
