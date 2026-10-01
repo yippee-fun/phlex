@@ -98,7 +98,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
-	test "a call naming a moved method in another class doesn't hide the edit" do
+	test "a definition naming a moved method in another class doesn't hide the edit" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "moved.rb")
 			File.write(path, <<~RUBY)
@@ -110,7 +110,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 
 			File.write(path, <<~RUBY)
 				# The call below is at the line view_template was loaded from.
-				class MovedRegistry; def self.register(*) = nil; register(:view_template); end
+				class MovedRegistry; attr_reader :view_template; end
 				class MovedCase < Phlex::HTML
 					def view_template = div { "x" }
 				end
@@ -120,6 +120,58 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 			assert_equal error.message, "#{path}:4: no live method is defined at this line, so the file has changed since it was loaded"
 		ensure
 			Object.__send__(:remove_const, :MovedCase)
+		end
+	end
+
+	test "a call that doesn't define methods doesn't hide the edit" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "registered.rb")
+			File.write(path, <<~RUBY)
+				class RegisteredCase < Phlex::HTML
+					def view_template = div { "x" }
+					def self.register(*) = nil
+				end
+			RUBY
+			load path
+
+			File.write(path, <<~RUBY)
+				class RegisteredCase < Phlex::HTML
+					register(:view_template)
+					def view_template = div { "x" }
+					def self.register(*) = nil
+				end
+			RUBY
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(RegisteredCase) }
+			assert_equal error.message, "#{path}:3: no live method is defined at this line, so the file has changed since it was loaded"
+		ensure
+			Object.__send__(:remove_const, :RegisteredCase)
+		end
+	end
+
+	test "explain reports a `using` it can't reproduce rather than raising" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "dynamic_using.rb")
+			File.write(path, <<~RUBY)
+				module DynamicUsingRefinement
+					refine(String) { def shout = upcase }
+				end
+
+				refinement = DynamicUsingRefinement
+				using refinement
+
+				class DynamicUsingCase < Phlex::HTML
+					def view_template = div { "x".shout }
+				end
+			RUBY
+			load path
+
+			assert_equal Phlex::Compiler.explain(DynamicUsingCase).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, [
+				"6: this `using` isn't a plain top-level statement naming a constant, which the compiler can't reproduce",
+			]
+		ensure
+			Object.__send__(:remove_const, :DynamicUsingCase)
+			Object.__send__(:remove_const, :DynamicUsingRefinement)
 		end
 	end
 

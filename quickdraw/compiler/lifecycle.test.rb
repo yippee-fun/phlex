@@ -224,6 +224,56 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a descendant's alias of a compiled method follows it when it's recompiled" do
+		with_component_files(
+			"descendant_alias.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleAliasParent < Phlex::HTML
+					def heading = div { "heading" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleAliasParent)
+			child = Class.new(LifecycleAliasParent) do
+				alias_method :alternative, :heading
+				def view_template = alternative
+			end
+			assert_equal child.new.call, "<div>heading</div>"
+
+			LifecycleAliasParent.include(Module.new { def div(**, &) = plain("included div") })
+			assert_equal child.new.call, "included div"
+		end
+	end
+
+	test "recompiling leaves a method above a `using` that never compiled alone" do
+		with_component_files(
+			"boundary.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleShout
+					refine(String) { def shout = upcase }
+				end
+
+				class LifecycleBoundary < Phlex::HTML
+					def label = "label"
+				end
+
+				using LifecycleShout
+
+				class LifecycleBoundary
+					def view_template = div { label.shout }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleBoundary)
+			assert compiled_method?(LifecycleBoundary, :view_template)
+			assert_equal LifecycleBoundary.new.call, "<div>LABEL</div>"
+
+			LifecycleBoundary.include(Module.new { def div(**, &) = plain("included div") })
+			assert_equal LifecycleBoundary.new.call, "included div"
+			refute compiled_method?(LifecycleBoundary, :label)
+		end
+	end
+
 	test "an element defined on an ancestor after a descendant compiled takes effect in the descendant" do
 		with_component_files(
 			"ancestor.rb" => <<~RUBY,

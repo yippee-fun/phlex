@@ -9,6 +9,9 @@
 class Phlex::Compiler::FileCompiler < Refract::Visitor
 	Result = Data.define(:namespace, :component, :compiled_snippets, :visibilities, :inlined)
 
+	# The calls that define methods named by their arguments.
+	GENERATORS = Set[:attr, :attr_reader, :attr_writer, :attr_accessor, :define_method].freeze
+
 	# A statement in the file and the class and module statements around it.
 	Scoped = Data.define(:namespace, :node)
 
@@ -74,11 +77,13 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 
 			case node.name
 			in :using
-				unless @stack[-2].equal?(@top_level) && node.arguments&.arguments in [Refract::ConstantReadNode | Refract::ConstantPathNode]
+				# A refused `using` isn't copied, since its constant or local may
+				# not be reachable from the probe's fresh scope.
+				if @stack[-2].equal?(@top_level) && node.arguments&.arguments in [Refract::ConstantReadNode | Refract::ConstantPathNode]
+					@usings << Scoped.new(namespace: @current_namespace.dup.freeze, node:)
+				else
 					@diagnostics.refuse(node, "this `using` isn't a plain top-level statement naming a constant, which the compiler can't reproduce")
 				end
-
-				@usings << Scoped.new(namespace: @current_namespace.dup.freeze, node:)
 			in :ruby2_keywords
 				@keyword_flagged.concat(ruby2_keywords_names(node).map { |name| Scoped.new(namespace: @current_namespace.dup.freeze, node: name) })
 			else nil
@@ -90,16 +95,18 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 
 	# A call such as `attr_reader :title` or `define_method(:title) { … }`
 	# may be what defines a live method, whose source location is then the
-	# call's line, or for `define_method` its block's. Any receiverless call
-	# naming a method with a literal is recorded, so a `def` it replaced isn't
-	# mistaken for a sign the file has changed. Names are kept as strings,
-	# since a call that defines nothing may be given one that isn't a valid
-	# symbol.
+	# call's line, or for `define_method` its block's. The methods such a call
+	# names with a literal are recorded, so a `def` it replaced isn't mistaken
+	# for a sign the file has changed. Names are kept as strings, since one
+	# that isn't a valid symbol could still be given.
 	private def record_generated(node)
-		lines = [node.start_line, node.block&.start_line].compact.uniq
-		writers = node.name == :attr_writer || node.name == :attr_accessor
+		return unless GENERATORS.include?(node.name)
 
-		node.arguments&.arguments&.each do |argument|
+		arguments = node.arguments&.arguments || []
+		lines = [node.start_line, node.block&.start_line].compact.uniq
+		writers = node.name == :attr_writer || node.name == :attr_accessor || (node.name == :attr && arguments in [_, Refract::TrueNode])
+
+		arguments.each do |argument|
 			next unless Refract::SymbolNode === argument || Refract::StringNode === argument
 
 			names = [argument.unescaped]
@@ -189,7 +196,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 				unmatched << definition
 			elsif target.compiled
 				compiled << definition
-			elsif @keyword_flagged.any? { |flagged| flagged.node == definition.node.name }
+			elsif keyword_flagged?(target)
 				# Matched by name alone, since the mark can sit in a later reopening
 				# of the class, whose statements are different nodes.
 				@diagnostics.refuse(definition.node, "#{definition.node.name} is marked ruby2_keywords in this file, which the compiler can't preserve")
@@ -197,6 +204,13 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 				targeted << definition
 			end
 		end
+	end
+
+	# Marking an alias marks the body it shares with the method, so the
+	# method's aliases are checked too.
+	private def keyword_flagged?(target)
+		names = [target.name, *Phlex::Compiler.aliases_sharing(target.component, [target.name]).map { |_owner, name| name }]
+		@keyword_flagged.any? { |flagged| names.include?(flagged.node) }
 	end
 
 	private def compile_namespace(namespace, definitions)
@@ -214,7 +228,11 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 			visibilities = {}
 
 			component_definitions.each do |definition|
-				compiled = Phlex::Compiler::MethodCompiler.new(environment, @path, diagnostics: @diagnostics).compile(definition.node, keep_uncompiled: @recompile)
+				# The original is reinstalled only over a compiled method. One that
+				# was never replaced is already live, and copying it could put it
+				# below a `using` it was above.
+				keep_uncompiled = @recompile && @targets[definition.node.start_line].replaced
+				compiled = Phlex::Compiler::MethodCompiler.new(environment, @path, diagnostics: @diagnostics).compile(definition.node, keep_uncompiled:)
 				next unless compiled
 
 				snippets << compiled

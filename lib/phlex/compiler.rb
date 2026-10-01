@@ -46,7 +46,7 @@ module Phlex::Compiler
 	Generation = Data.define(:path, :lines)
 
 	# A live method and the line in the file being compiled that defines it.
-	Target = Data.define(:component, :name, :line, :compiled)
+	Target = Data.define(:component, :name, :line, :compiled, :replaced)
 
 	# What reopening a definition's class and module statements reached.
 	Probe = Data.define(:component, :set, :method_resolver)
@@ -179,9 +179,9 @@ module Phlex::Compiler
 				1
 			)
 
-			aliases.each do |component, name, original, visibility|
-				component.alias_method(name, original)
-				component.__send__(visibility, name)
+			aliases.each do |owner, name, component, original, visibility|
+				owner.define_method(name, component.instance_method(original))
+				owner.__send__(visibility, name)
 			end
 		end
 
@@ -316,32 +316,39 @@ module Phlex::Compiler
 				if (generation = MAP[source_path])
 					next unless generation.path == path && (line = generation.lines[line])
 
-					targets[line] = Target.new(component:, name:, line:, compiled: !recompile)
+					targets[line] = Target.new(component:, name:, line:, compiled: !recompile, replaced: true)
 				elsif source_path == path
-					targets[line] = Target.new(component:, name:, line:, compiled: false)
+					targets[line] = Target.new(component:, name:, line:, compiled: false, replaced: false)
 				end
 			end
 		end
 	end
 
-	# The component's aliases that still share a body with one of the named
-	# methods, so they can be pointed at its replacement. An alias of an
-	# earlier definition of the method is left alone.
+	# The aliases, in the component or a descendant, that still share a body
+	# with one of the component's named methods, so they can be pointed at its
+	# replacement. An alias of an earlier definition of the method is left
+	# alone. They're matched by source location rather than with `==`, which
+	# doesn't hold for an alias reinstalled with define_method.
 	def self.aliases_sharing(component, names)
-		own_methods(component).filter_map do |name|
-			method = component.instance_method(name)
-			original = method.original_name
-			next if original == name || !names.include?(original) || method != component.instance_method(original)
+		[component, *descendants_of(component)].reject(&:frozen?).flat_map do |owner|
+			own_methods(owner).filter_map do |name|
+				method = owner.instance_method(name)
+				original = method.original_name
+				next if original == name || !names.include?(original)
 
-			visibility = if component.private_method_defined?(name, false)
-				:private
-			elsif component.protected_method_defined?(name, false)
-				:protected
-			else
-				:public
+				source = component.instance_method(original)
+				next unless method.source_location == source.source_location && method.owner == owner
+
+				visibility = if owner.private_method_defined?(name, false)
+					:private
+				elsif owner.protected_method_defined?(name, false)
+					:protected
+				else
+					:public
+				end
+
+				[owner, name, component, original, visibility]
 			end
-
-			[component, name, original, visibility]
 		end
 	end
 

@@ -8,11 +8,13 @@ module EquivalenceCases
 			def initialize
 				self.title = "from attr_writer"
 				self.name = "from attr_accessor"
+				self.rank = "from attr"
 			end
 
 			def view_template
 				h1 { title }
 				h2 { name }
+				h3 { rank }
 				p { subtitle }
 				span { label }
 			end
@@ -24,6 +26,11 @@ module EquivalenceCases
 				@title = "default"
 			end
 			attr_writer :title
+
+			def rank=(value)
+				@rank = "default"
+			end
+			attr :rank, true
 
 			def name = "default"
 			def name=(value)
