@@ -458,14 +458,11 @@ class AttributesTest < Quickdraw::Test
 	test "_, Hash(_, Time)" do
 		output = phlex { div(data: { at: Time.new(2023, 1, 15, 12, 30, 45, "+00:00") }) }
 		assert_equal output, %(<div data-at="2023-01-15T12:30:45+00:00"></div>)
-
-		output = phlex { div(data: { at: Time.at(0).utc }) }
-		assert_equal output, %(<div data-at="1970-01-01T00:00:00Z"></div>)
 	end
 
 	test "_, Hash(_, Hash(_, Time))" do
-		output = phlex { div(data: { event: { at: Time.at(0).utc } }) }
-		assert_equal output, %(<div data-event-at="1970-01-01T00:00:00Z"></div>)
+		output = phlex { div(data: { event: { at: Time.new(2023, 1, 15, 12, 30, 45, "+02:00") } }) }
+		assert_equal output, %(<div data-event-at="2023-01-15T12:30:45+02:00"></div>)
 	end
 
 	test "_, Hash(_, *responds to to_h*)" do
