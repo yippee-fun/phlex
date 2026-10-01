@@ -579,7 +579,7 @@ class AttributesTest < Quickdraw::Test
 
 	test ":style, Array(nil)" do
 		output = phlex { div(style: [nil, nil, nil]) }
-		assert_equal output, %(<div style=""></div>)
+		assert_equal output, %(<div></div>)
 	end
 
 	test ":style, Array(Symbol)" do
@@ -612,9 +612,20 @@ class AttributesTest < Quickdraw::Test
 		assert_equal output, %(<div style="color: blue; font-weight: bold; line-height: 1.5;"></div>)
 	end
 
+	test ":style, Array with empty entries" do
+		output = phlex { div(style: ["color: red", {}, "", { top: nil }, "x: y"]) }
+		assert_equal output, %(<div style="color: red; x: y;"></div>)
+
+		output = phlex { div(style: []) }
+		assert_equal output, %(<div></div>)
+
+		output = phlex { div(style: ["", {}, { color: nil }]) }
+		assert_equal output, %(<div></div>)
+	end
+
 	test ":style, Set(nil)" do
 		output = phlex { div(style: Set[nil]) }
-		assert_equal output, %(<div style=""></div>)
+		assert_equal output, %(<div></div>)
 	end
 
 	test ":style, Set(String)" do
@@ -625,6 +636,17 @@ class AttributesTest < Quickdraw::Test
 	test ":style, Hash(Symbol, String)" do
 		output = phlex { div(style: { color: "blue", font_weight: "bold" }) }
 		assert_equal output, %(<div style="color: blue; font-weight: bold;"></div>)
+	end
+
+	test ":style, Hash with nil values" do
+		output = phlex { div(style: { top: nil, color: "blue", left: nil, font_weight: "bold" }) }
+		assert_equal output, %(<div style="color: blue; font-weight: bold;"></div>)
+
+		output = phlex { div(style: { color: nil }) }
+		assert_equal output, %(<div></div>)
+
+		output = phlex { div(style: {}) }
+		assert_equal output, %(<div></div>)
 	end
 
 	test ":style, Hash(Symbol, Integer)" do
@@ -652,7 +674,7 @@ class AttributesTest < Quickdraw::Test
 
 	test ":style, Hash(Symbol, nil)" do
 		output = phlex { div(style: { color: nil }) }
-		assert_equal output, %(<div style=""></div>)
+		assert_equal output, %(<div></div>)
 	end
 
 	test ":style, Hash(Symbol, *invalid*)" do

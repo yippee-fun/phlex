@@ -110,21 +110,21 @@ module Phlex::SGML::Attributes
 		when Hash
 			case k
 			when :style
-				generate_styles(v).gsub('"', "&quot;")
+				generate_styles(v)&.gsub('"', "&quot;")
 			else
 				generate_nested_attributes(v, "#{name}-", buffer)
 			end
 		when Array
 			case k
 			when :style
-				generate_styles(v).gsub('"', "&quot;")
+				generate_styles(v)&.gsub('"', "&quot;")
 			else
 				generate_nested_tokens(v)
 			end
 		when Set
 			case k
 			when :style
-				generate_styles(v).gsub('"', "&quot;")
+				generate_styles(v)&.gsub('"', "&quot;")
 			else
 				generate_nested_tokens(v.to_a)
 			end
@@ -336,10 +336,12 @@ module Phlex::SGML::Attributes
 	def generate_styles(styles)
 		case styles
 		when Array, Set
-			styles.filter_map do |s|
+			styles = styles.filter_map do |s|
 				case s
 				when String
-					if s == "" || s.end_with?(";")
+					if s == ""
+						next nil
+					elsif s.end_with?(";")
 						s
 					else
 						"#{s};"
@@ -354,10 +356,11 @@ module Phlex::SGML::Attributes
 				else
 					raise Phlex::ArgumentError.new("Invalid style: #{s.inspect}.")
 				end
-			end.join(" ")
+			end
+
+			styles.join(" ") unless styles.empty?
 		when Hash
 			buffer = +""
-			i = 0
 			styles.each do |k, v|
 				prop = case k
 				when String
@@ -382,17 +385,12 @@ module Phlex::SGML::Attributes
 				end
 
 				if value
-					if i == 0
-						buffer << prop << ": " << value << ";"
-					else
-						buffer << " " << prop << ": " << value << ";"
-					end
+					buffer << " " unless buffer.empty?
+					buffer << prop << ": " << value << ";"
 				end
-
-				i += 1
 			end
 
-			buffer
+			buffer unless buffer.empty?
 		end
 	end
 end
