@@ -20,6 +20,8 @@ module EquivalenceCases
 				@hash = { x: 1, "y" => "z", _: "root", nested: { deep: true } }
 				@styles = { color: "red", "font-size" => "1px", top: nil }
 				@style_list = ["color: red", "top: 0;", { left: 1 }]
+				@sparse_style_list = ["color: red", {}, "", { top: nil }, "x: y"]
+				@empty_styles = { color: nil }
 				@to_hash = ToHash.new(1, "two")
 				@date = Date.new(2020, 1, 2)
 				@time = Time.at(0).utc
@@ -33,6 +35,10 @@ module EquivalenceCases
 				div(class: @array, data_set: @set)
 				div(style: @styles)
 				div(style: @style_list)
+				div(style: @sparse_style_list)
+				div(style: @empty_styles, id: "empty-styles")
+				div(style: { color: nil }, id: "static-empty-styles")
+				div(style: ["color: red", {}, "x: y"], id: "static-sparse-styles")
 				div(style: @string)
 				div(class: safe("<b>"), onclick: safe("alert(1)"))
 				div(data: @to_hash, title: @date)
