@@ -488,7 +488,7 @@ class Phlex::SGML
 	private_class_method def self.__mix_in__(modules, &)
 		return yield if Phlex::COMPILED_SOURCE_MAPS.empty?
 
-		watch = [*ancestors, *Phlex::Compiler.descendants_of(self)].any? { |klass| Phlex::Compiler.inlines?(klass) }
+		watch = [*Phlex::Compiler::MODULE_ANCESTORS.bind_call(self), *Phlex::Compiler.descendants_of(self)].any? { |klass| Phlex::Compiler.inlines?(klass) }
 		Phlex::Compiler.mix_in(self, modules, watch:, &)
 	end
 

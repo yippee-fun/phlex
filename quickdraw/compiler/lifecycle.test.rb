@@ -716,6 +716,69 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a subclass's module changed on another thread while its parent compiles takes effect" do
+		with_component_files(
+			"concurrent_subclass.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleConcurrentSubclassHelpers
+				end
+
+				class LifecycleConcurrentParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleConcurrentChild < LifecycleConcurrentParent
+					include LifecycleConcurrentSubclassHelpers
+				end
+			RUBY
+		) do
+			Interleave.pending = -> { LifecycleConcurrentSubclassHelpers.define_method(:div) { |**| plain("concurrent div") } }
+			Phlex::Compiler.compile(LifecycleConcurrentParent)
+
+			assert_equal LifecycleConcurrentChild.new.call, "concurrent div"
+			assert_equal LifecycleConcurrentParent.new.call, "<div>x</div>"
+		ensure
+			Interleave.pending = nil
+		end
+	end
+
+	test "modules overriding singleton_class, and subclasses overriding ancestors, are still watched" do
+		with_component_files(
+			"singleton_override.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSingletonDecoy
+				end
+
+				module LifecycleOverridesSingleton
+					def self.singleton_class = LifecycleSingletonDecoy
+				end
+
+				class LifecycleOverridesSingletonComponent < Phlex::HTML
+					include LifecycleOverridesSingleton
+
+					def view_template
+						div { "x" }
+						span { "y" }
+					end
+				end
+
+				class LifecycleHidesParent < LifecycleOverridesSingletonComponent
+					def self.ancestors = [self]
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleOverridesSingletonComponent)
+
+			LifecycleOverridesSingleton.define_method(:div) { |**| plain("real div") }
+			assert_equal LifecycleOverridesSingletonComponent.new.call, "real div<span>y</span>"
+
+			later = Module.new
+			LifecycleHidesParent.include(later)
+			later.define_method(:span) { |**| plain("later span") }
+			assert_equal LifecycleHidesParent.new.call, "real divlater span"
+		end
+	end
+
 	test "a module mixed into a class that isn't compiled isn't watched" do
 		with_component_files(
 			"unwatched.rb" => <<~RUBY

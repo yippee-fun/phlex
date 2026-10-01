@@ -55,9 +55,9 @@ module Phlex::Compiler
 	# compiled path => Generation
 	MAP = Phlex::COMPILED_SOURCE_MAPS
 
-	MODULE_INCLUDE = Module.instance_method(:include?)
 	MODULE_ANCESTORS = Module.instance_method(:ancestors)
 	MODULE_SINGLETON_CLASS = Module.instance_method(:singleton_class?)
+	KERNEL_SINGLETON_CLASS = Kernel.instance_method(:singleton_class)
 	KERNEL_FROZEN = Kernel.instance_method(:frozen?)
 	MODULE_INSTANCE_METHODS = Module.instance_method(:instance_methods)
 	MODULE_PRIVATE_INSTANCE_METHODS = Module.instance_method(:private_instance_methods)
@@ -190,14 +190,20 @@ module Phlex::Compiler
 		# compiled again below.
 		changes = @changes
 		components = targets.each_value.map(&:component).uniq
-		components.each { |component| watch_mixins(component) } if inline
+
+		# Subclasses inherit what's inlined, so their modules are watched too,
+		# though one that can't be only matters if something is inlined.
+		if inline
+			components.each { |component| watch_mixins(component) }
+			components.flat_map { |component| descendants_of(component) }.uniq.each { |descendant| watch_mixins(descendant, strict: false) }
+		end
 
 		file_compiler = FileCompiler.new(path, targets:, recompile:, inline:)
 		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
-		# Subclasses inherit what was inlined, so their modules are watched too,
-		# before anything is replaced, along with any mixed in meanwhile.
+		# Before anything is replaced, modules mixed in meanwhile are watched,
+		# and those of subclasses inheriting something inlined must be.
 		if inline
 			components.each { |component| watch_mixins(component) }
 
@@ -281,38 +287,44 @@ module Phlex::Compiler
 		elsif Class === target
 			MODULE_ANCESTORS.bind_call(target) + descendants_of(target)
 		else
-			descendants_of(Phlex::SGML).select { |klass| MODULE_INCLUDE.bind_call(klass, target) }.flat_map { |klass| MODULE_ANCESTORS.bind_call(klass) }.uniq
+			descendants_of(Phlex::SGML).map { |klass| MODULE_ANCESTORS.bind_call(klass) }.select { |ancestors| ancestors.include?(target) }.flatten.uniq
 		end
 	end
 
 	# A compiled component inlines elements and helpers its modules define, so
 	# those modules, and any mixed in later, report their changes too.
-	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Phlex::SGML })
-		unwatched_mixins(component, modules).each { |mod| mod.singleton_class.prepend(mixin_hooks_for(mod)) }
+	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Phlex::SGML }, strict: true)
+		unwatched_mixins(component, modules, strict:).each { |mod| KERNEL_SINGLETON_CLASS.bind_call(mod).prepend(mixin_hooks_for(mod)) }
 	end
 
 	# MixinHooks, or a copy keeping `include` and `prepend` as private or
 	# protected as the module has them.
 	def self.mixin_hooks_for(mod)
-		restricted = %i[include prepend].reject { |name| mod.singleton_class.public_method_defined?(name) }
+		singleton = KERNEL_SINGLETON_CLASS.bind_call(mod)
+		restricted = %i[include prepend].reject { |name| singleton.public_method_defined?(name) }
 		return MixinHooks if restricted.empty?
 
 		Module.new do
 			include MixinHooks
 
 			restricted.each do |name|
-				__send__(mod.singleton_class.private_method_defined?(name) ? :private : :protected, name)
+				__send__(singleton.private_method_defined?(name) ? :private : :protected, name)
 			end
 		end
 	end
 
 	# The modules still to be watched. A module whose singleton class is frozen
-	# can't be, so it's refused.
-	def self.unwatched_mixins(component, modules)
-		modules.reject { |mod| Class === mod || KERNEL_FROZEN.bind_call(mod) || mod.singleton_class < MixinHooks }.each do |mod|
-			if KERNEL_FROZEN.bind_call(mod.singleton_class)
-				raise Error, "#{mod} can't be watched for changes because its singleton class is frozen, so #{component} can't inline what it defines."
-			end
+	# can't be, so it's refused, or when not `strict`, skipped.
+	def self.unwatched_mixins(component, modules, strict: true)
+		unwatched = modules.reject do |mod|
+			Class === mod || KERNEL_FROZEN.bind_call(mod) || KERNEL_SINGLETON_CLASS.bind_call(mod) < MixinHooks
+		end
+
+		unwatched.reject do |mod|
+			next false unless KERNEL_FROZEN.bind_call(KERNEL_SINGLETON_CLASS.bind_call(mod))
+			next true unless strict
+
+			raise Error, "#{mod} can't be watched for changes because its singleton class is frozen, so #{component} can't inline what it defines."
 		end
 	end
 
