@@ -634,19 +634,15 @@ module Phlex::Compiler
 			compile_wrapped_content(node, "<!-- ", " -->")
 		end
 
-		# Unlike an element, the runtime doesn't yield the block at all when the
-		# output is being skipped, so dynamic content needs the same guard. And
-		# with no `ensure`, a jump out of the block skips the closing text, so
-		# only a block that can be inlined is compiled. A forwarded block, which
-		# may be nil, keeps the runtime call too.
+		# Like an element, the runtime still yields the block when the output is
+		# being skipped, so fragments inside it can be found. But with no
+		# `ensure`, a jump out of the block skips the closing text, so only a
+		# block that can be inlined is compiled. A forwarded block, which may be
+		# nil, keeps the runtime call too.
 		private def compile_wrapped_content(node, opening, closing)
 			return compile_call_with_content(node, because: "its block is forwarded or #{UNINLINABLE_BLOCK}") unless inlinable_content?(node.block)
 
-			content = compile_content(node)
-			body = [raw(opening), *content, raw(closing)]
-			return statements(body) if Output.static?(content)
-
-			if_node(should_render, body)
+			statements([raw(opening), *compile_content(node), raw(closing)])
 		end
 
 		private def inlinable_content?(block)
