@@ -15,10 +15,11 @@ module Phlex::Compiler
 		# the text to append, and whether evaluating them can raise.
 		Piece = Data.define(:nodes, :raises)
 
-		def initialize(component, path)
+		def initialize(component, path, nesting: [component])
 			super()
 			@component = component
 			@path = path
+			@nesting = nesting
 			@preamble = []
 			@appends = 0
 			@locals = 0
@@ -655,17 +656,16 @@ module Phlex::Compiler
 			)
 		end
 
-		# Whether a bare `Set` in the component resolves to the standard library's,
-		# checking the lexical namespaces named by the class's constant path first.
+		# Whether a bare `Set` in the method resolves to the standard library's,
+		# checking the lexical scopes the method was defined in first.
 		private def unqualified_set_is_standard?
 			return @unqualified_set_is_standard if defined?(@unqualified_set_is_standard)
 
-			names = @component.name.to_s.split("::")
-			namespaces = (1...(names.length)).map { |depth| Object.const_get(names[0...depth].join("::")) }
+			@nesting.reverse_each do |scope|
+				return @unqualified_set_is_standard = scope.const_get(:Set, false).equal?(::Set) if scope.const_defined?(:Set, false)
+			end
 
-			@unqualified_set_is_standard =
-				namespaces.none? { |namespace| namespace.const_defined?(:Set, false) } &&
-				@component.const_get(:Set).equal?(::Set)
+			@unqualified_set_is_standard = @component.const_get(:Set).equal?(::Set)
 		rescue NameError
 			@unqualified_set_is_standard = false
 		end

@@ -3,10 +3,11 @@
 class Phlex::Compiler::ClassCompiler < Refract::Visitor
 	attr_reader :visibilities
 
-	def initialize(component, path)
+	def initialize(component, path, nesting: [component])
 		super()
 		@component = component
 		@path = path
+		@nesting = nesting
 		@definitions = []
 		@compiled_snippets = []
 		@visibilities = {}
@@ -55,7 +56,7 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 		return unless @path == path
 		return unless node.start_line == lineno
 
-		compiled = Phlex::Compiler::MethodCompiler.new(@component, @path).compile(node)
+		compiled = Phlex::Compiler::MethodCompiler.new(@component, @path, nesting: @nesting).compile(node)
 		return unless compiled
 
 		@compiled_snippets << compiled

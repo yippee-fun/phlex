@@ -7,6 +7,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		super()
 		@path = path
 		@current_namespace = []
+		@nesting = []
 		@results = []
 	end
 
@@ -16,29 +17,25 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	visit Refract::ModuleNode do |node|
-		@current_namespace.push(node)
-		super(node)
-		@current_namespace.pop
+		enter(node) { super(node) }
 	end
 
 	visit Refract::ClassNode do |node|
-		@current_namespace.push(node)
+		enter(node) do
+			if (component = current_component)
+				class_compiler = Phlex::Compiler::ClassCompiler.new(component, @path, nesting: @nesting.dup.freeze)
 
-		if (component = current_component)
-			class_compiler = Phlex::Compiler::ClassCompiler.new(component, @path)
+				@results << Result.new(
+					namespace: @current_namespace.dup.freeze,
+					component:,
+					compiled_snippets: class_compiler.compile(node),
+					visibilities: class_compiler.visibilities
+				)
+			end
 
-			@results << Result.new(
-				namespace: @current_namespace.dup.freeze,
-				component:,
-				compiled_snippets: class_compiler.compile(node),
-				visibilities: class_compiler.visibilities
-			)
+			# Components can be nested inside other classes, components included.
+			super(node)
 		end
-
-		# Components can be nested inside other classes, components included.
-		super(node)
-
-		@current_namespace.pop
 	end
 
 	visit Refract::DefNode do |node|
@@ -49,15 +46,50 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		nil
 	end
 
+	# Tracks both the lexical scope nodes, for reopening the class in the
+	# compiled source, and the modules they name, resolved as Ruby would.
+	private def enter(node)
+		@current_namespace.push(node)
+		@nesting.push(resolve(node.constant_path))
+		yield
+	ensure
+		@nesting.pop
+		@current_namespace.pop
+	end
+
 	private def current_component
-		constant_name = @current_namespace.reduce(nil) do |namespace, scope|
-			name = Refract::Formatter.new.format_node(scope.constant_path).source
-			(namespace && !name.start_with?("::")) ? "#{namespace}::#{name}" : name
+		const = @nesting.last
+		const if Class === const && Phlex::SGML > const && !const.frozen?
+	end
+
+	private def resolve(constant_path)
+		case constant_path
+		in Refract::ConstantReadNode[name:] then lexical_lookup(name)
+		in Refract::ConstantPathNode[parent: nil, name:] then Object.const_get(name, false)
+		in Refract::ConstantPathNode[parent:, name:] then (scope = resolve(parent)) && scoped_lookup(scope, name)
+		end
+	rescue NameError
+		nil
+	end
+
+	# A bare constant is looked up in each enclosing scope, innermost first,
+	# then in the innermost scope's ancestors.
+	private def lexical_lookup(name)
+		@nesting.reverse_each do |scope|
+			return scope.const_get(name, false) if scope&.const_defined?(name, false)
 		end
 
-		const = eval(constant_name, TOPLEVEL_BINDING)
-		const if Class === const && Phlex::SGML > const && !const.frozen?
-	rescue NameError
+		(@nesting.last || Object).const_get(name)
+	end
+
+	# `A::B` is looked up in A and its ancestors, but not at the top level
+	# unless A is Object.
+	private def scoped_lookup(scope, name)
+		scope.ancestors.each do |ancestor|
+			break if ancestor == Object && scope != Object
+			return ancestor.const_get(name, false) if ancestor.const_defined?(name, false)
+		end
+
 		nil
 	end
 end
