@@ -109,6 +109,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 			load path
 
 			File.write(path, <<~RUBY)
+				# The call below is at the line view_template was loaded from.
 				class MovedRegistry; def self.register(*) = nil; register(:view_template); end
 				class MovedCase < Phlex::HTML
 					def view_template = div { "x" }
@@ -116,7 +117,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 			RUBY
 
 			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(MovedCase) }
-			assert_equal error.message, "#{path}:3: no live method is defined at this line, so the file has changed since it was loaded"
+			assert_equal error.message, "#{path}:4: no live method is defined at this line, so the file has changed since it was loaded"
 		ensure
 			Object.__send__(:remove_const, :MovedCase)
 		end
