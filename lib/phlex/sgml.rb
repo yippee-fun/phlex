@@ -4,10 +4,6 @@
 class Phlex::SGML
 	include Phlex::Helpers
 
-	# Custom element names must start with an ASCII lowercase letter and contain a hyphen.
-	# [Spec](https://html.spec.whatwg.org/#valid-custom-element-name)
-	CUSTOM_ELEMENT_NAME = /\A[a-z][a-z0-9]*-[a-z0-9-]*\z/
-
 	class << self
 		# Render the view to a String. Arguments are delegated to {.new}.
 		def call(...)
@@ -433,35 +429,6 @@ class Phlex::SGML
 		end
 
 		true
-	end
-
-	# Returns the dasherized tag for a valid custom element name, or `nil`.
-	private def __custom_element_name__(name)
-		tag = name.name.tr("_", "-")
-		tag if CUSTOM_ELEMENT_NAME.match?(tag)
-	end
-
-	# Outputs a standard (non-void) element, closing it even if the content block raises.
-	private def __standard_tag__(tag, attributes, &)
-		buffer = @_state.buffer
-
-		if attributes.length > 0
-			buffer << "<#{tag}" << __attributes__(attributes) << ">"
-		else
-			buffer << "<#{tag}>"
-		end
-
-		if block_given?
-			begin
-				__yield_content__(&)
-			ensure
-				buffer << "</#{tag}>"
-			end
-		else
-			buffer << "</#{tag}>"
-		end
-
-		nil
 	end
 
 	private def __attributes__(attributes)
