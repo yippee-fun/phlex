@@ -363,6 +363,22 @@ class CompilerTest < Quickdraw::Test
 		assert_equal source.scan('"/components/test.rb"').size, 5
 	end
 
+	test "lambdas preserve __FILE__ without compiling their element or helper calls" do
+		source = compile(<<~RUBY)
+			def a
+				div { "top" }
+				->(path = __FILE__) { span { __FILE__ }; plain "text"; -> { __FILE__ } }
+				->(path: __FILE__) { path }
+			end
+		RUBY
+
+		assert source.include?("<div>top</div>")
+		refute source.include?("<span>")
+		assert source.include?('plain("text")')
+		refute source.include?("__FILE__")
+		assert_equal source.scan('"/components/test.rb"').size, 4
+	end
+
 	test "methods with nothing to compile are left alone" do
 		assert_equal compile(<<~RUBY), nil
 			def a
