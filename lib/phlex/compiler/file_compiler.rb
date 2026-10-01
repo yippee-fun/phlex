@@ -184,9 +184,9 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	private def visibility_of(component, name)
-		if component.private_instance_methods(false).include?(name)
+		if component.private_method_defined?(name, false)
 			:private
-		elsif component.protected_instance_methods(false).include?(name)
+		elsif component.protected_method_defined?(name, false)
 			:protected
 		else
 			:public

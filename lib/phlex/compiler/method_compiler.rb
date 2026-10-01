@@ -215,10 +215,6 @@ module Phlex::Compiler
 			[if_node(should_render, [call(nil, :flush)], inline: true)]
 		end
 
-		private def should_render
-			call(read(state_local), :should_render?)
-		end
-
 		# Keeps the runtime call, but still compiles inside its block. Only for
 		# methods that yield without changing self.
 		private def compile_call_with_content(node, because: nil)
@@ -470,7 +466,7 @@ module Phlex::Compiler
 		end
 
 		private def attributes_call(element, hash)
-			if (normalizer = Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS[element])
+			if (normalizer = attribute_normalizer(element))
 				hash = call(constant("Phlex::SGML::Elements"), normalizer, hash)
 			end
 
@@ -478,9 +474,13 @@ module Phlex::Compiler
 		end
 
 		private def normalize_attributes(element, attributes)
-			if (normalizer = Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS[element])
+			if (normalizer = attribute_normalizer(element))
 				Phlex::SGML::Elements.public_send(normalizer, attributes)
 			end
+		end
+
+		private def attribute_normalizer(element)
+			Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS[element]
 		end
 
 		private def static_attributes(keyword_hash)

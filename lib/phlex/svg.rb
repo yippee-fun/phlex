@@ -25,6 +25,8 @@ class Phlex::SVG < Phlex::SGML
 
 			raise Phlex::ArgumentError.new("Expected a String or block.")
 		end
+
+		nil
 	end
 
 	def tag(name, **attributes, &)

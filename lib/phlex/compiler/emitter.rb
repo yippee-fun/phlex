@@ -87,12 +87,4 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 			ensure_clause: ensure_node([unless_node(read(done), [call(buffer, :<<, string(part.closing))], inline: true)])
 		)
 	end
-
-	private def buffer
-		call(read(Phlex::Compiler::Locals::STATE), :buffer)
-	end
-
-	private def should_render
-		call(read(Phlex::Compiler::Locals::STATE), :should_render?)
-	end
 end
