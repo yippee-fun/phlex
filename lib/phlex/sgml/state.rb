@@ -40,14 +40,14 @@ class Phlex::SGML::State
 
 		if caching?
 			current_byte_offset = 0                                 		# Start tracking the byte offset of this fragment from the start of the cache buffer
-			@cache_stack.reverse_each do |(cache_buffer, fragment_map)| # We'll iterate deepest to shallowest
+			@cache_stack.reverse_each do |(cache_buffer, fragment_map, open_fragments)| # We'll iterate deepest to shallowest
 				current_byte_offset += cache_buffer.bytesize		      		# Add the length of the cache buffer to the current byte offset
 				fragment_map[id] = [current_byte_offset, nil, []]     		# Record the byte offset, length, and store a list of the nested fragments
 
-				fragment_map.each do |name, (_offset, length, nested_fragments)| # Iterate over the other fragments
-					next if name == id || length                       						 # Skip if it's the current fragment, or if the fragment has already ended
-					nested_fragments << id                                       	 # Add the current fragment to the list of nested fragments
-				end
+				# Visit only open ancestors; allocate descendant sets on their first child.
+				open_fragments.delete(id)
+				open_fragments.each_key { |name| (open_fragments[name] ||= Set.new) << id }
+				open_fragments[id] = nil
 			end
 		end
 	end
@@ -55,9 +55,12 @@ class Phlex::SGML::State
 	def end_fragment(id, halt: true)
 		if caching?
 			byte_length = nil
-			@cache_stack.reverse_each do |(cache_buffer, fragment_map)|   # We'll iterate deepest to shallowest
+			@cache_stack.reverse_each do |(cache_buffer, fragment_map, open_fragments)| # We'll iterate deepest to shallowest
 				byte_length ||= cache_buffer.bytesize - fragment_map[id][0] # The byte length is the difference between the current byte offset and the byte offset of the fragment
-				fragment_map[id][1] = byte_length                           # All cache contexts will use the same by
+				fragment_map[id][1] = byte_length                           # All cache contexts use the same byte length
+				if (descendants = open_fragments.delete(id))
+					fragment_map[id][2] = descendants.to_a
+				end
 			end
 		end
 
@@ -73,25 +76,23 @@ class Phlex::SGML::State
 	def record_fragment(id, offset, length, nested_fragments)
 		return unless caching?
 
-		@cache_stack.reverse_each do |(cache_buffer, fragment_map)|
+		@cache_stack.reverse_each do |(cache_buffer, fragment_map, open_fragments)|
 			offset += cache_buffer.bytesize
 			fragment_map[id] = [offset, length, nested_fragments]
 
-			fragment_map.each do |name, (_offset, fragment_length, descendants)|
-				next if name == id || fragment_length
-				descendants << id unless descendants.include?(id)
-			end
+			open_fragments.delete(id)
+			open_fragments.each_key { |name| (open_fragments[name] ||= Set.new) << id }
 		end
 	end
 
 	def caching(&)
 		result = nil
 
-		capture do
-			@cache_stack.push([buffer, {}].freeze)
+		capture(cache: true) do
+			@cache_stack.push([buffer, {}, {}].freeze)
 			begin
 				yield
-				result = @cache_stack.last
+				result = @cache_stack.last.first(2)
 			ensure
 				@cache_stack.pop
 			end
@@ -104,24 +105,36 @@ class Phlex::SGML::State
 		@cache_stack.length > 0
 	end
 
-	def capture
+	def capture(cache: false)
 		new_buffer = +""
 		original_buffer = @buffer
 		original_capturing = @capturing
 		original_fragments = @fragments
 		original_should_render = @should_render
+		original_cache_stack = @cache_stack
+		fragment_map = {} unless cache
 
 		begin
 			@buffer = new_buffer
 			@capturing = true
 			@fragments = nil
 			@should_render = true
+			# Captured output may be inserted later, elsewhere, or not at all.
+			# Track its fragments locally until the original string is inserted.
+			@cache_stack = [[new_buffer, fragment_map, {}]] unless cache
 			yield
 		ensure
 			@buffer = original_buffer
 			@capturing = original_capturing
 			@fragments = original_fragments
 			@should_render = original_should_render
+			@cache_stack = original_cache_stack
+		end
+
+		if fragment_map && !fragment_map.empty?
+			# Let the string own its metadata so discarded captures can be collected
+			# without losing metadata for strings that will be inserted again.
+			new_buffer.instance_variable_set(:@__phlex_fragments, [new_buffer.dup.freeze, fragment_map])
 		end
 
 		new_buffer
@@ -130,6 +143,17 @@ class Phlex::SGML::State
 	# Flushing moves bytes out of the buffer without changing how much was written.
 	def output_bytesize
 		@flushed_bytesize + @buffer.bytesize
+	end
+
+	def append(content)
+		# Changed strings no longer have reliable fragment offsets.
+		if caching? && (captured = content.instance_variable_get(:@__phlex_fragments)) && captured[0] == content
+			captured[1].each do |id, (offset, length, nested_fragments)|
+				record_fragment(id, offset, length, nested_fragments)
+			end
+		end
+
+		@buffer << content
 	end
 
 	def flush
