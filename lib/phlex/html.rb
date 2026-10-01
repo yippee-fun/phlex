@@ -87,6 +87,10 @@ class Phlex::HTML < Phlex::SGML
 			end
 
 			if attributes.length > 0 # with attributes
+				if (normalizer = Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS[name])
+					Phlex::SGML::Elements.public_send(normalizer, attributes)
+				end
+
 				buffer << "<#{tag}" << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << ">"
 			else # without attributes
 				buffer << "<#{tag}>"

@@ -23,6 +23,39 @@ class TagTest < Quickdraw::Test
 		end
 	end
 
+	[
+		[:img, { srcset: ["a.png 1x", "b.png 2x"] }, %(<img srcset="a.png 1x, b.png 2x">)],
+		[:img, { srcset: ["a.png 1x", ["b,c.png 2x"]] }, %(<img srcset="a.png 1x, b%2Cc.png 2x">)],
+		[:img, { srcset: [] }, "<img>"],
+		[:img, { srcset: "a.png 1x, b.png 2x" }, %(<img srcset="a.png 1x, b.png 2x">)],
+		[:link, { media: ["screen", "print"], sizes: ["16x16", "32x32"] }, %(<link media="screen, print" sizes="16x16, 32x32">)],
+		[:link, { rel: "preload", as: "image", imagesrcset: ["a.png 1x", "b.png 2x"] }, %(<link rel="preload" as="image" imagesrcset="a.png 1x, b.png 2x">)],
+		[:link, { rel: :preload, as: :image, imagesrcset: ["a.png 1x", "b.png 2x"] }, %(<link rel="preload" as="image" imagesrcset="a.png 1x, b.png 2x">)],
+		[:link, { "rel" => "preload", "as" => "image", :imagesrcset => ["a.png 1x", "b.png 2x"] }, %(<link rel="preload" as="image" imagesrcset="a.png 1x, b.png 2x">)],
+		[:link, { rel: "stylesheet", as: "image", imagesrcset: ["a.png 1x", "b.png 2x"] }, %(<link rel="stylesheet" as="image" imagesrcset="a.png 1x b.png 2x">)],
+		[:link, { rel: "preload", as: "script", imagesrcset: ["a.png 1x", "b.png 2x"] }, %(<link rel="preload" as="script" imagesrcset="a.png 1x b.png 2x">)],
+		[:input, { type: "file", accept: ["image/webp", "image/avif"] }, %(<input type="file" accept="image/webp, image/avif">)],
+		[:input, { type: :file, accept: ["image/webp", "image/avif"] }, %(<input type="file" accept="image/webp, image/avif">)],
+		[:input, { "type" => "file", :accept => ["image/webp", "image/avif"] }, %(<input type="file" accept="image/webp, image/avif">)],
+		[:input, { type: "text", accept: ["image/webp", "image/avif"] }, %(<input type="text" accept="image/webp image/avif">)],
+	].each do |name, attributes, expected|
+		test "<#{name}> normalizes #{attributes.inspect} like its registered method" do
+			assert_equal HTMLComponent.call(name, **attributes), expected
+			assert_equal Phlex.html { public_send(name, **attributes) }, expected
+		end
+	end
+
+	test "element normalization happens before looking up cached attributes" do
+		attributes = { srcset: ["a.png 1x", "b.png 2x"].freeze }.freeze
+
+		assert_equal HTMLComponent.call(:div, **attributes), %(<div srcset="a.png 1x b.png 2x"></div>)
+		2.times do
+			assert_equal HTMLComponent.call(:img, **attributes), %(<img srcset="a.png 1x, b.png 2x">)
+		end
+		assert_equal HTMLComponent.call(:div, **attributes), %(<div srcset="a.png 1x b.png 2x"></div>)
+		assert_equal attributes[:srcset], ["a.png 1x", "b.png 2x"]
+	end
+
 	Phlex::HTML::VoidElements.__registered_elements__.each do |method_name, tag|
 		test "<#{tag}> HTML tag without attributes" do
 			output = HTMLComponent.call(tag.to_sym)
