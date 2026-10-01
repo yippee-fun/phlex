@@ -75,8 +75,8 @@ module Phlex::Compiler
 		visit Refract::DefNode do |node|
 			return node unless @stack.size == 1
 
-			if LocalsScanner.names(node).any? { |name| name.start_with?("__phlex_") }
-				@diagnostics.report(node, "#{node.name} isn't compiled because it uses a local that starts with __phlex_")
+			if (reserved = LocalsScanner.names(node).find { |name| name.start_with?("__phlex_") })
+				@diagnostics.refuse(node, "#{reserved} is a local the compiler reserves; names starting with __phlex_ can't be used")
 				return node
 			end
 

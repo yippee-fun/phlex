@@ -67,13 +67,34 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 			RUBY
 
 			assert_equal Phlex::Compiler.explain(EditedCase).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, [
-				"3: view_template isn't compiled because no live method is defined at this line, so the file may have changed since it was loaded",
+				"3: no live method is defined at this line, so the file has changed since it was loaded",
 			]
 
-			Phlex::Compiler.compile(EditedCase)
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(EditedCase) }
+			assert_equal error.message, "#{path}:3: no live method is defined at this line, so the file has changed since it was loaded"
 			refute Phlex::Compiler::MAP.key?(EditedCase.instance_method(:view_template).source_location[0])
 		ensure
 			Object.__send__(:remove_const, :EditedCase)
+		end
+	end
+
+	test "a compiled method is reported as such" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "clean.rb")
+			File.write(path, <<~RUBY)
+				class CleanCase < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+			load path
+
+			Phlex::Compiler.compile(CleanCase)
+
+			assert_equal Phlex::Compiler.explain(CleanCase).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, [
+				"2: view_template is already compiled",
+			]
+		ensure
+			Object.__send__(:remove_const, :CleanCase)
 		end
 	end
 
@@ -99,17 +120,17 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				"15: comment keeps its call because its block is forwarded or it has parameters or contains a return, break, next or local assignment",
 				"16: doctype keeps its call because it has arguments or a block",
 				"17: fragment keeps its call because its block has parameters or is forwarded",
-				"25: twice isn't compiled because it's defined more than once on this line",
-				"27: reserved isn't compiled because it uses a local that starts with __phlex_",
+				"25: twice is defined more than once on this line, so the compiler can't tell which is live",
+				"27: __phlex_x__ is a local the compiler reserves; names starting with __phlex_ can't be used",
 				"32: hr keeps its call because it's in a parameter default",
 			]
 
 			assert diagnostics.all? { |diagnostic| diagnostic.path == path }
 			assert_equal diagnostics.first.to_s, "#{path}:5: div keeps its call because its block is forwarded"
 
-			Phlex::Compiler.compile(DiagnosticsCase::Component)
-
-			assert Phlex::Compiler.explain(DiagnosticsCase::Component).map(&:message).include?("view_template is already compiled")
+			# Compiling refuses the first construct it can't compile faithfully.
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(DiagnosticsCase::Component) }
+			assert_equal error.message, "#{path}:25: twice is defined more than once on this line, so the compiler can't tell which is live"
 		ensure
 			DiagnosticsCase.__send__(:remove_const, :Component)
 			Object.__send__(:remove_const, :DiagnosticsCase)

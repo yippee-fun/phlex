@@ -56,8 +56,16 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		nil
 	end
 
+	# Ruby offers no way to read the `ruby2_keywords` flag back, so a compiled
+	# method would lose it.
 	visit Refract::CallNode do |node|
-		@usings << Scoped.new(namespace: @current_namespace.dup.freeze, node:) if node.receiver.nil? && node.name == :using
+		if node.receiver.nil?
+			case node.name
+			in :using then @usings << Scoped.new(namespace: @current_namespace.dup.freeze, node:)
+			in :ruby2_keywords then @diagnostics.refuse(node, "ruby2_keywords can't be preserved by the compiler")
+			else nil
+			end
+		end
 
 		super(node)
 	end
@@ -69,13 +77,14 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		partial = @usings.find { |using| !using.namespace.empty? || (first_definition && using.node.start_line > first_definition) }
 		return true unless partial
 
-		@diagnostics.report(partial.node, "nothing in this file is compiled because this `using` applies to only part of it")
+		@diagnostics.refuse(partial.node, "this `using` applies to only part of the file, which the compiler can't reproduce")
 		false
 	end
 
-	# A definition with no live method at its line is worth reporting when it
-	# sits in a class body that has live methods, or shares its name with a
-	# live method whose own line has no definition, as after the file is edited.
+	# A definition with no live method at its line is usually just one that a
+	# later definition replaced. It means the file has changed since it was
+	# loaded when a live method of the same name has no definition at its own
+	# line, in which case compiling from this file would install the wrong code.
 	private def definitions_by_namespace
 		orphaned = @targets.values.reject do |target|
 			@definitions.any? { |definition| definition.node.start_line == target.line && definition.node.name == target.name }
@@ -83,14 +92,13 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 
 		unique_definitions.group_by(&:namespace).filter_map do |namespace, definitions|
 			targeted, compiled, unmatched = partition_by_target(definitions)
-			component_body = !(targeted.empty? && compiled.empty?)
 
 			compiled.each { |definition| @diagnostics.report(definition.node, "#{definition.node.name} is already compiled") }
 
 			unmatched.each do |definition|
-				next unless component_body || orphaned.any? { |target| target.name == definition.node.name }
+				next unless orphaned.any? { |target| target.name == definition.node.name }
 
-				@diagnostics.report(definition.node, "#{definition.node.name} isn't compiled because no live method is defined at this line, so the file may have changed since it was loaded")
+				@diagnostics.refuse(definition.node, "no live method is defined at this line, so the file has changed since it was loaded")
 			end
 
 			[namespace, targeted] unless targeted.empty?
@@ -103,7 +111,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		@definitions.group_by { |definition| [definition.node.name, definition.node.start_line] }.filter_map do |_key, definitions|
 			next definitions.first if definitions.one?
 
-			@diagnostics.report(definitions.first.node, "#{definitions.first.node.name} isn't compiled because it's defined more than once on this line")
+			@diagnostics.refuse(definitions.first.node, "#{definitions.first.node.name} is defined more than once on this line, so the compiler can't tell which is live")
 			nil
 		end
 	end

@@ -126,7 +126,7 @@ module Phlex::Compiler
 		end
 
 		failures + ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.flat_map do |path|
-			diagnostics = Diagnostics.new(path)
+			diagnostics = Diagnostics.new(path, strict: false)
 			FileCompiler.new(path, targets: targets(path, ancestors), diagnostics:).compile(parse(File.read(path), path))
 			diagnostics.to_a
 		end
