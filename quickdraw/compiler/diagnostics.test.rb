@@ -93,7 +93,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				"9: img's attributes are serialised together because srcset is rewritten by the element's attribute normaliser",
 				"10: div's attributes are serialised at runtime because serialising them now raised Phlex::ArgumentError: Unsafe attribute name detected: bad name.",
 				"11: ul's block is yielded at runtime because it has parameters or contains a return, break, next or local assignment",
-				"12: plain keeps its call because its argument isn't a literal or an interpolation of literals and variables",
+				"12: plain keeps its call because its argument isn't a literal or an interpolation",
 				"13: raw keeps its call because its argument isn't safe with a string literal",
 				"14: whitespace keeps its call because it has arguments",
 				"15: comment keeps its call because its block is forwarded or it has parameters or contains a return, break, next or local assignment",

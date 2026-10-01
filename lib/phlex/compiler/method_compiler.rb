@@ -549,7 +549,8 @@ module Phlex::Compiler
 
 		# Whether evaluating the node can't have side effects or raise, so it's
 		# safe to evaluate it inside an append that may be skipped. Constants are
-		# excluded: reading one can autoload or raise NameError. Conditionals
+		# excluded: reading one can autoload or raise NameError. So are
+		# interpolations and splats, which call to_s and to_hash. Conditionals
 		# over pure operands are pure, since they only choose between them.
 		private def pure?(node)
 			case node
@@ -560,9 +561,7 @@ module Phlex::Compiler
 				true
 			in Refract::ArrayNode | Refract::HashNode | Refract::KeywordHashNode then node.elements.all? { |element| pure?(element) }
 			in Refract::AssocNode then pure?(node.key) && pure?(node.value)
-			in Refract::AssocSplatNode then pure?(node.value)
-			in Refract::InterpolatedStringNode then node.parts.all? { |part| pure?(part) }
-			in Refract::EmbeddedStatementsNode then pure?(node.statements)
+			in Refract::InterpolatedStringNode then node.parts.all? { |part| Refract::StringNode === part }
 			in Refract::ParenthesesNode then pure?(node.body)
 			in Refract::StatementsNode then node.body.all? { |statement| pure?(statement) }
 			in Refract::IfNode then pure?(node.predicate) && pure?(node.statements) && pure?(node.subsequent)
@@ -573,12 +572,16 @@ module Phlex::Compiler
 			end
 		end
 
+		# An interpolation is built, calling to_s on its parts, before the runtime
+		# checks whether it's rendering, so it's evaluated into a local first.
 		private def compile_plain(node)
 			case node.arguments&.arguments
 			in [Refract::StringNode | Refract::SymbolNode => text] then plain(text.unescaped)
-			in [Refract::InterpolatedStringNode => interpolated] if pure?(interpolated) then append(expression(escaped(interpolated)))
+			in [Refract::InterpolatedStringNode => interpolated]
+				text = @locals.fresh(:text)
+				statements([write(text, visit(interpolated)), append(expression(escaped(read(text))))])
 			in [Refract::NilNode] then Refract::NilNode.new
-			else keep_call(node, "its argument isn't a literal or an interpolation of literals and variables")
+			else keep_call(node, "its argument isn't a literal or an interpolation")
 			end
 		end
 
