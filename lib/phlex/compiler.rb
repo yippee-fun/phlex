@@ -56,6 +56,8 @@ module Phlex::Compiler
 	MAP = Phlex::COMPILED_SOURCE_MAPS
 
 	MODULE_INCLUDE = Module.instance_method(:include?)
+	MODULE_ANCESTORS = Module.instance_method(:ancestors)
+	KERNEL_FROZEN = Kernel.instance_method(:frozen?)
 	MODULE_INSTANCE_METHODS = Module.instance_method(:instance_methods)
 	MODULE_PRIVATE_INSTANCE_METHODS = Module.instance_method(:private_instance_methods)
 	MUTEX = Mutex.new
@@ -175,18 +177,22 @@ module Phlex::Compiler
 		source = File.read(path)
 		targets = targets(path, components, recompile:)
 
-		# Watched before calls are resolved, so a module changed meanwhile is reported.
-		targets.each_value.map(&:component).uniq.each { |component| watch_mixins(component) } if inline
-
+		# Watched before calls are resolved, so a module changed meanwhile is
+		# reported. A change between here and recording what was inlined is
+		# compiled again below.
 		changes = @changes
+		components = targets.each_value.map(&:component).uniq
+		components.each { |component| watch_mixins(component) } if inline
 
 		file_compiler = FileCompiler.new(path, targets:, recompile:, inline:)
 		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
 		# Subclasses inherit what was inlined, so their modules are watched too,
-		# before anything is replaced.
+		# before anything is replaced, along with any mixed in meanwhile.
 		if inline
+			components.each { |component| watch_mixins(component) }
+
 			results.reject { |result| result.inlined.empty? }.map(&:component).uniq.flat_map { |component| descendants_of(component) }.uniq.each do |descendant|
 				watch_mixins(descendant)
 			end
@@ -273,15 +279,15 @@ module Phlex::Compiler
 
 	# A compiled component inlines elements and helpers its modules define, so
 	# those modules, and any mixed in later, report their changes too.
-	def self.watch_mixins(component, modules = component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML })
+	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Phlex::SGML })
 		unwatched_mixins(component, modules).each { |mod| mod.singleton_class.prepend(MixinHooks) }
 	end
 
 	# The modules still to be watched. A module whose singleton class is frozen
 	# can't be, so it's refused.
 	def self.unwatched_mixins(component, modules)
-		modules.reject { |mod| Class === mod || mod.frozen? || mod.singleton_class < MixinHooks }.each do |mod|
-			if mod.singleton_class.frozen?
+		modules.reject { |mod| Class === mod || KERNEL_FROZEN.bind_call(mod) || mod.singleton_class < MixinHooks }.each do |mod|
+			if KERNEL_FROZEN.bind_call(mod.singleton_class)
 				raise Error, "#{mod} can't be watched for changes because its singleton class is frozen, so #{component} can't inline what it defines."
 			end
 		end
@@ -292,13 +298,20 @@ module Phlex::Compiler
 	# added is then watched, and what inlined one of its methods recompiled. A
 	# module added in place of those given that can't be watched is already
 	# mixed in, so what it could affect is decompiled before it's refused.
+	# Whatever was added is handled even when `include` or `prepend` raises,
+	# say from an `included` callback.
 	def self.mix_in(target, modules, watch: true)
-		unwatched_mixins(target, modules.grep(Module).flat_map(&:ancestors)) if watch
+		unwatched_mixins(target, modules.grep(Module).flat_map { |mod| MODULE_ANCESTORS.bind_call(mod) }) if watch
 
-		before = target.ancestors
-		result = yield
-		added = added_ancestors(before, target.ancestors)
+		before = MODULE_ANCESTORS.bind_call(target)
+		begin
+			yield
+		ensure
+			mixed_in(target, added_ancestors(before, MODULE_ANCESTORS.bind_call(target)), watch:)
+		end
+	end
 
+	def self.mixed_in(target, added, watch:)
 		if watch
 			begin
 				watch_mixins(target, added)
@@ -309,8 +322,6 @@ module Phlex::Compiler
 		end
 
 		inlining_changed(target, added.flat_map { |mod| method_names(mod) })
-
-		result
 	end
 
 	# The ancestors in `after` that aren't in `before`, counting each
@@ -500,11 +511,11 @@ module Phlex::Compiler
 	# Prepended to the singleton class of each module a compiled component
 	# mixes in, to report what Phlex::SGML's own hooks would for a class.
 	module MixinHooks
-		def include(*modules)
+		def include(*modules, **kwargs)
 			Phlex::Compiler.mix_in(self, modules) { super }
 		end
 
-		def prepend(*modules)
+		def prepend(*modules, **kwargs)
 			Phlex::Compiler.mix_in(self, modules) { super }
 		end
 

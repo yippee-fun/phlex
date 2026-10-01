@@ -458,12 +458,12 @@ class Phlex::SGML
 		super
 	end
 
-	def self.include(*modules)
+	def self.include(*modules, **kwargs)
 		__mix_in__(modules) { super }
 		self
 	end
 
-	def self.prepend(*modules)
+	def self.prepend(*modules, **kwargs)
 		__mix_in__(modules) { super }
 		self
 	end

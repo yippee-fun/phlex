@@ -562,6 +562,91 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a watched module's own include still receives keywords" do
+		with_component_files(
+			"keywords.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleKeywords
+					def self.include(*modules, validate: true)
+						super(*modules)
+						validate
+					end
+				end
+
+				class LifecycleKeywordsComponent < Phlex::HTML
+					include LifecycleKeywords
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleKeywordsComponent)
+
+			assert LifecycleKeywords.singleton_class < Phlex::Compiler::MixinHooks
+			assert_equal LifecycleKeywords.include(Module.new, validate: false), false
+		end
+	end
+
+	test "modules overriding frozen? and ancestors are still watched" do
+		with_component_files(
+			"overriding.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleClaimsFrozen
+					def self.frozen? = true
+				end
+
+				module LifecycleHidesAncestors
+					def self.ancestors = [self]
+				end
+
+				class LifecycleOverriding < Phlex::HTML
+					include LifecycleClaimsFrozen
+					include LifecycleHidesAncestors
+
+					def view_template
+						div { "x" }
+						span { "y" }
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleOverriding)
+
+			LifecycleClaimsFrozen.define_method(:div) { |**| plain("unfrozen div") }
+			assert_equal LifecycleOverriding.new.call, "unfrozen div<span>y</span>"
+
+			hidden = Module.new
+			LifecycleHidesAncestors.include(hidden)
+			hidden.define_method(:span) { |**| plain("hidden span") }
+			assert_equal LifecycleOverriding.new.call, "unfrozen divhidden span"
+		end
+	end
+
+	test "a module mixed in by an include that then raises is still watched" do
+		with_component_files(
+			"raising.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleRaisingHelpers
+				end
+
+				class LifecycleRaising < Phlex::HTML
+					include LifecycleRaisingHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleRaising)
+
+			refusing = Module.new { def self.included(*) = raise("refused") }
+			assert_raises(RuntimeError) { LifecycleRaisingHelpers.include(refusing) }
+			assert LifecycleRaisingHelpers.include?(refusing)
+
+			refusing.define_method(:div) { |**| plain("refusing div") }
+			assert_equal LifecycleRaising.new.call, "refusing div"
+		end
+	end
+
 	test "a module mixed into a class that isn't compiled isn't watched" do
 		with_component_files(
 			"unwatched.rb" => <<~RUBY
