@@ -459,14 +459,12 @@ class Phlex::SGML
 	end
 
 	def self.include(*modules)
-		super
-		__mixins_changed__(modules)
+		__mix_in__(modules) { super }
 		self
 	end
 
 	def self.prepend(*modules)
-		super
-		__mixins_changed__(modules)
+		__mix_in__(modules) { super }
 		self
 	end
 
@@ -485,15 +483,13 @@ class Phlex::SGML
 		Phlex::Compiler.inlining_changed(target, names) unless Phlex::COMPILED_SOURCE_MAPS.empty?
 	end
 
-	# Modules mixed into a compiled class are watched for later changes.
-	private_class_method def self.__mixins_changed__(modules)
-		return if Phlex::COMPILED_SOURCE_MAPS.empty?
+	# Modules mixed into a class that runs compiled methods are watched for
+	# later changes.
+	private_class_method def self.__mix_in__(modules, &)
+		return yield if Phlex::COMPILED_SOURCE_MAPS.empty?
 
-		Phlex::Compiler.inlining_changed(self, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
-
-		if [*ancestors, *Phlex::Compiler.descendants_of(self)].any? { |klass| Phlex::Compiler.inlines?(klass) }
-			modules.each { |mod| Phlex::Compiler.watch_mixins(mod) }
-		end
+		watch = [*ancestors, *Phlex::Compiler.descendants_of(self)].any? { |klass| Phlex::Compiler.inlines?(klass) }
+		Phlex::Compiler.mix_in(self, modules, watch:, &)
 	end
 
 	private def singleton_method_added(method_name)

@@ -346,6 +346,89 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a module with a frozen singleton class mixed in later is refused before it's mixed in" do
+		with_component_files(
+			"frozen_later.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleFrozenLaterHelpers
+				end
+
+				class LifecycleFrozenLater < Phlex::HTML
+					include LifecycleFrozenLaterHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenLater)
+
+			frozen = Module.new
+			frozen.singleton_class.freeze
+
+			assert_raises(Phlex::Compiler::Error) { LifecycleFrozenLater.include(frozen) }
+			assert_raises(Phlex::Compiler::Error) { LifecycleFrozenLaterHelpers.include(frozen) }
+			refute LifecycleFrozenLater.include?(frozen)
+		end
+	end
+
+	test "the modules an overridden include actually adds are watched" do
+		with_component_files(
+			"substituting.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSubstitute
+				end
+
+				module LifecycleSubstituting
+					def self.include(*) = super(LifecycleSubstitute)
+				end
+
+				class LifecycleSubstitutingComponent < Phlex::HTML
+					include LifecycleSubstituting
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleSubstitutingComponent)
+
+			LifecycleSubstituting.include(Module.new)
+			LifecycleSubstitute.define_method(:div) { |**| plain("substitute div") }
+			assert_equal LifecycleSubstitutingComponent.new.call, "substitute div"
+		end
+	end
+
+	test "an element registered again with a new tag takes effect" do
+		with_component_files(
+			"reregistered.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleRegisteredElements
+					extend Phlex::SGML::Elements
+
+					register_element :lifecycle_widget
+				end
+
+				class LifecycleReregistered < Phlex::HTML
+					include LifecycleRegisteredElements
+
+					register_element :lifecycle_gadget
+
+					def view_template
+						lifecycle_widget { "x" }
+						lifecycle_gadget { "y" }
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleReregistered)
+			assert_equal LifecycleReregistered.new.call, "<lifecycle-widget>x</lifecycle-widget><lifecycle-gadget>y</lifecycle-gadget>"
+
+			LifecycleRegisteredElements.register_element :lifecycle_widget, tag: "new-widget"
+			LifecycleReregistered.register_element :lifecycle_gadget, tag: "new-gadget"
+			assert_equal LifecycleReregistered.new.call, "<new-widget>x</new-widget><new-gadget>y</new-gadget>"
+			assert compiled_method?(LifecycleReregistered, :view_template)
+		end
+	end
+
 	test "a module mixed into a class that isn't compiled isn't watched" do
 		with_component_files(
 			"unwatched.rb" => <<~RUBY

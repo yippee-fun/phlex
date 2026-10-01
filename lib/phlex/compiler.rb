@@ -244,18 +244,35 @@ module Phlex::Compiler
 	end
 
 	# A compiled component inlines elements and helpers its modules define, so
-	# those modules, and any mixed in later, report their changes too. A
-	# module whose singleton class is frozen can't be watched, so it's refused.
-	def self.watch_mixins(component)
-		component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.each do |mod|
-			next if Class === mod || mod.frozen? || mod.singleton_class < MixinHooks
+	# those modules, and any mixed in later, report their changes too.
+	def self.watch_mixins(component, modules = component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML })
+		unwatched_mixins(component, modules).each { |mod| mod.singleton_class.prepend(MixinHooks) }
+	end
 
+	# The modules still to be watched. A module whose singleton class is frozen
+	# can't be, so it's refused.
+	def self.unwatched_mixins(component, modules)
+		modules.reject { |mod| Class === mod || mod.frozen? || mod.singleton_class < MixinHooks }.each do |mod|
 			if mod.singleton_class.frozen?
 				raise Error, "#{mod} can't be watched for changes because its singleton class is frozen, so #{component} can't inline what it defines."
 			end
-
-			mod.singleton_class.prepend(MixinHooks)
 		end
+	end
+
+	# Mixes modules into a class or module, refusing any that couldn't be
+	# watched before anything changes. Whatever `include` or `prepend` actually
+	# added is then watched, and what inlined one of its methods recompiled.
+	def self.mix_in(target, modules, watch: true)
+		unwatched_mixins(target, modules.grep(Module).flat_map(&:ancestors)) if watch
+
+		before = target.ancestors
+		result = yield
+		added = target.ancestors - before
+
+		watch_mixins(target, added) if watch
+		inlining_changed(target, added.flat_map { |mod| method_names(mod) })
+
+		result
 	end
 
 	# The names a module defines, read without dispatching to the module.
@@ -437,15 +454,11 @@ module Phlex::Compiler
 	# mixes in, to report what Phlex::SGML's own hooks would for a class.
 	module MixinHooks
 		def include(*modules)
-			result = super
-			mixins_changed(modules)
-			result
+			Phlex::Compiler.mix_in(self, modules) { super }
 		end
 
 		def prepend(*modules)
-			result = super
-			mixins_changed(modules)
-			result
+			Phlex::Compiler.mix_in(self, modules) { super }
 		end
 
 		private def method_added(method_name)
@@ -461,11 +474,6 @@ module Phlex::Compiler
 		private def method_undefined(method_name)
 			Phlex::Compiler.inlining_changed(self, [method_name])
 			super
-		end
-
-		private def mixins_changed(modules)
-			modules.each { |mod| Phlex::Compiler.watch_mixins(mod) }
-			Phlex::Compiler.inlining_changed(self, modules.flat_map { |mod| Phlex::Compiler.method_names(mod) })
 		end
 	end
 
