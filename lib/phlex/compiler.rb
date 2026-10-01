@@ -29,7 +29,8 @@ require "refract"
 # line, a local named like one the compiler generates (`__phlex_…`), a file
 # edited since it was loaded, and redefining an inlined element or helper on
 # a single instance with `extend` or a singleton method. Redefining one on a
-# class or by including a module recompiles whatever inlined it.
+# class, by including a module, or on a module already included recompiles
+# whatever inlined it.
 #
 # Two differences remain, both deliberate:
 # - Attributes with literal keys are serialised without the attribute cache, so
@@ -85,6 +86,10 @@ module Phlex::Compiler
 
 	def self.disable!
 		@enabled = false
+	end
+
+	def self.inlines?(component)
+		component.instance_variable_defined?(:@__phlex_inlined__)
 	end
 
 	def self.compiled?(component)
@@ -192,13 +197,14 @@ module Phlex::Compiler
 
 			inlined = result.component.instance_variable_get(:@__phlex_inlined__) || Set.new
 			result.component.instance_variable_set(:@__phlex_inlined__, (inlined | result.inlined).freeze)
+			watch_mixins(result.component)
 		end
 
 		nil
 	end
 
-	# Called by Phlex::SGML when methods are defined on, removed from or mixed
-	# into a class or singleton class. A compiled class above or below it that
+	# Called by Phlex::SGML and MixinHooks when methods are defined on, removed
+	# from or mixed into a class, singleton class or module. A compiled class above or below it that
 	# inlined one of them is recompiled, and with the change now loaded it
 	# stops inlining that name, so the change takes effect just as it would
 	# have uncompiled. An override on a single instance can't be compiled for,
@@ -206,7 +212,13 @@ module Phlex::Compiler
 	def self.inlining_changed(target, names)
 		return if MUTEX.owned?
 
-		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
+		related = if target.singleton_class?
+			target.ancestors
+		elsif Class === target
+			target.ancestors + descendants_of(target)
+		else
+			descendants_of(Phlex::SGML).select { |klass| klass.include?(target) }
+		end
 		affected = related.select do |klass|
 			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end
@@ -221,6 +233,16 @@ module Phlex::Compiler
 		end
 
 		affected.each { |component| recompile(component) }
+	end
+
+	# A compiled component inlines elements and helpers its modules define, so
+	# those modules, and any mixed in later, report their changes too.
+	def self.watch_mixins(component)
+		component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.each do |mod|
+			next if Class === mod || mod.frozen? || mod.singleton_class < MixinHooks
+
+			mod.singleton_class.prepend(MixinHooks)
+		end
 	end
 
 	# Compiles the component's methods again, replacing the compiled ones.
@@ -390,6 +412,42 @@ module Phlex::Compiler
 			in Refract::ClassNode then scope.copy(body: wrapped, superclass: nil)
 			in Refract::ModuleNode then scope.copy(body: wrapped)
 			end
+		end
+	end
+
+	# Prepended to the singleton class of each module a compiled component
+	# mixes in, to report what Phlex::SGML's own hooks would for a class.
+	module MixinHooks
+		def include(*modules)
+			super
+			mixins_changed(modules)
+			self
+		end
+
+		def prepend(*modules)
+			super
+			mixins_changed(modules)
+			self
+		end
+
+		private def method_added(method_name)
+			Phlex::Compiler.inlining_changed(self, [method_name])
+			super
+		end
+
+		private def method_removed(method_name)
+			Phlex::Compiler.inlining_changed(self, [method_name])
+			super
+		end
+
+		private def method_undefined(method_name)
+			Phlex::Compiler.inlining_changed(self, [method_name])
+			super
+		end
+
+		private def mixins_changed(modules)
+			modules.each { |mod| Phlex::Compiler.watch_mixins(mod) }
+			Phlex::Compiler.inlining_changed(self, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
 		end
 	end
 

@@ -229,6 +229,71 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "an element defined later on an included module takes effect by recompiling what inlined it" do
+		with_component_files(
+			"module_helpers.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleHelpers
+				end
+
+				module LifecycleNestedHelpers
+				end
+
+				class LifecycleUsesHelpers < Phlex::HTML
+					include LifecycleHelpers
+
+					def view_template
+						div { "x" }
+						span { "y" }
+						p { "z" }
+					end
+				end
+
+				class LifecycleUsesHelpersChild < LifecycleUsesHelpers
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleUsesHelpersChild)
+			assert_equal LifecycleUsesHelpersChild.new.call, "<div>x</div><span>y</span><p>z</p>"
+
+			LifecycleHelpers.define_method(:div) { |**| plain("helper div") }
+			assert_equal LifecycleUsesHelpers.new.call, "helper div<span>y</span><p>z</p>"
+			assert_equal LifecycleUsesHelpersChild.new.call, "helper div<span>y</span><p>z</p>"
+			assert compiled_method?(LifecycleUsesHelpers, :view_template)
+
+			# A module mixed into a watched module is watched too.
+			LifecycleHelpers.include(LifecycleNestedHelpers)
+			LifecycleNestedHelpers.define_method(:span) { |**| plain("nested span") }
+			assert_equal LifecycleUsesHelpersChild.new.call, "helper divnested span<p>z</p>"
+
+			# And so is one mixed into the compiled class later.
+			later = Module.new
+			LifecycleUsesHelpers.include(later)
+			later.define_method(:p) { |**| plain("later p") }
+			assert_equal LifecycleUsesHelpersChild.new.call, "helper divnested spanlater p"
+
+			later.__send__(:remove_method, :p)
+			LifecycleHelpers.__send__(:undef_method, :div)
+			assert_raises(NoMethodError) { LifecycleUsesHelpers.new.call }
+		end
+	end
+
+	test "a module mixed into a class that isn't compiled isn't watched" do
+		with_component_files(
+			"unwatched.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleUnwatchedHelpers
+				end
+
+				class LifecycleUnwatched < Phlex::HTML
+					include LifecycleUnwatchedHelpers
+				end
+			RUBY
+		) do
+			refute LifecycleUnwatchedHelpers.singleton_class < Phlex::Compiler::MixinHooks
+		end
+	end
+
 	test "a call kept as it was isn't recorded as inlined, so it can still be overridden on an instance" do
 		with_component_files(
 			"kept.rb" => <<~RUBY
