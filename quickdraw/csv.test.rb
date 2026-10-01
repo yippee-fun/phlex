@@ -332,6 +332,26 @@ CSV
 CSV
 	end
 
+	["]", "\\", "[", "-", "^"].each do |delimiter|
+		test "quotes headers and values containing the #{delimiter.inspect} delimiter" do
+			[true, false].each do |trim|
+				[true, false].each do |protect|
+					example = Class.new(Phlex::CSV) do
+						define_method(:escape_csv_injection?) { protect }
+						define_method(:trim_whitespace?) { trim }
+						define_method(:row_template) do |value|
+							column "head#{delimiter}er", value
+							column "other", "plain"
+						end
+					end
+
+					assert_equal example.new(["a#{delimiter}b"]).call(delimiter:),
+						"\"head#{delimiter}er\"#{delimiter}other\n\"a#{delimiter}b\"#{delimiter}plain\n"
+				end
+			end
+		end
+	end
+
 	test "with an invalid custom delimiter" do
 		example = Class.new(Base) do
 			define_method(:escape_csv_injection?) { true }

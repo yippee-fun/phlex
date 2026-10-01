@@ -51,7 +51,7 @@ class Phlex::SGML::State
 		end
 	end
 
-	def end_fragment(id)
+	def end_fragment(id, halt: true)
 		if caching?
 			byte_length = nil
 			@cache_stack.reverse_each do |(cache_buffer, fragment_map)|   # We'll iterate deepest to shallowest
@@ -65,7 +65,8 @@ class Phlex::SGML::State
 		@fragments.delete(id)
 		@fragment_depth -= 1
 		@should_render = @fragment_depth > 0
-		throw @halt_signal if @fragments.length == 0
+		# Don't replace an exception or nonlocal exit with the render halt signal.
+		throw @halt_signal if halt && @fragments.length == 0
 	end
 
 	def record_fragment(id, offset, length, nested_fragments)

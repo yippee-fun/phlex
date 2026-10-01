@@ -35,9 +35,9 @@ class Phlex::CSV
 		end
 
 		if strip_whitespace
-			escape_regex = /[\r\n"#{delimiter}]/
+			escape_regex = /[\r\n"#{Regexp.escape(delimiter)}]/
 		else
-			escape_regex = /^\s|\s$|[\r\n"#{delimiter}]/
+			escape_regex = /^\s|\s$|[\r\n"#{Regexp.escape(delimiter)}]/
 		end
 
 		if has_yielder
