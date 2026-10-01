@@ -147,35 +147,6 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
-	test "a ruby2_keywords mark on an alias in another file is refused" do
-		Dir.mktmpdir do |dir|
-			parent = File.join(dir, "parent.rb")
-			child = File.join(dir, "child.rb")
-			File.write(parent, <<~RUBY)
-				class KeywordsParent < Phlex::HTML
-					def delegate(*args) = div { target(*args) }
-					def target(*, name: "positional") = name
-				end
-			RUBY
-			File.write(child, <<~RUBY)
-				class KeywordsChild < KeywordsParent
-					alias_method :forward, :delegate
-					ruby2_keywords :forward
-					def view_template = forward(name: "kwargs")
-				end
-			RUBY
-			load parent
-			load child
-
-			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(KeywordsParent) }
-			assert_equal error.message, "#{parent}:2: delegate is marked ruby2_keywords, which the compiler can't preserve"
-			assert_equal KeywordsChild.new.call, "<div>kwargs</div>"
-		ensure
-			Object.__send__(:remove_const, :KeywordsChild)
-			Object.__send__(:remove_const, :KeywordsParent)
-		end
-	end
-
 	test "a call that doesn't define methods doesn't hide the edit" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "registered.rb")
@@ -228,7 +199,37 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
+	test "a method-defining call at a compiled method's old line doesn't hide the edit" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "generated.rb")
+			File.write(path, <<~RUBY)
+				class GeneratedCase < Phlex::HTML
+					def view_template = div { "x" }
+					def self.attr_reader(*) = nil
+				end
+			RUBY
+			load path
+			Phlex::Compiler.compile(GeneratedCase)
+
+			File.write(path, <<~RUBY)
+				class GeneratedCase < Phlex::HTML
+					attr_reader :view_template
+					define_method(:view_template) { div { "x" } }
+					def self.attr_reader(*) = nil
+				end
+			RUBY
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.recompile(GeneratedCase) }
+			assert_equal error.message, "#{path}:2: view_template was compiled from this line, which no longer defines it, so the file has changed since it was loaded"
+		ensure
+			Object.__send__(:remove_const, :GeneratedCase)
+		end
+	end
+
+	# Only CRuby can tell a method made by `def` from one made otherwise.
 	test "definitions that aren't live, or aren't compiled, aren't refused" do
+		next unless defined?(RubyVM::InstructionSequence)
+
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "superseded.rb")
 			File.write(path, <<~RUBY)

@@ -20,6 +20,7 @@ module EquivalenceCases
 				h3 { rank }
 				h4 { level }
 				p { subtitle }
+				small { caption }
 				span { label }
 			end
 
@@ -50,6 +51,9 @@ module EquivalenceCases
 
 			def subtitle = "default"
 			define_method(:subtitle) { "from define_method" }
+
+			def caption = "default"
+			define_method(:caption, -> { "from a lambda" })
 
 			def heading = "from alias_method"
 			def label = "default"

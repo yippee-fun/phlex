@@ -9,9 +9,6 @@
 class Phlex::Compiler::FileCompiler < Refract::Visitor
 	Result = Data.define(:namespace, :component, :compiled_snippets, :visibilities, :inlined)
 
-	# The calls that define methods named by their arguments.
-	GENERATORS = Set[:attr, :attr_reader, :attr_writer, :attr_accessor, :define_method].freeze
-
 	# A statement in the file and the class and module statements around it.
 	Scoped = Data.define(:namespace, :node)
 
@@ -26,7 +23,6 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		@definitions = []
 		@usings = []
 		@keyword_flagged = []
-		@generated = []
 		@compiled_lines = []
 	end
 
@@ -39,13 +35,6 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		return [].freeze unless refinements_reproducible?
 
 		results.freeze
-	end
-
-	# The names the file marks with `ruby2_keywords`, wherever in it they are.
-	def ruby2_keywords_marks(node)
-		@top_level = node.statements
-		visit(node)
-		@keyword_flagged.map(&:node).compact
 	end
 
 	# The `using` statements to put before the compiled definitions.
@@ -80,8 +69,6 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	# refused if it's compiled.
 	visit Refract::CallNode do |node|
 		if node.receiver.nil?
-			record_generated(node)
-
 			case node.name
 			in :using
 				# A refused `using` isn't copied, since its constant or local may
@@ -100,57 +87,6 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		super(node)
 	end
 
-	# A call such as `attr_reader :title` or `define_method(:title) { … }`
-	# may be what defines a live method, whose source location is then the
-	# call's line, or for `define_method` its block's. The methods such a call
-	# names with a literal are recorded, so a `def` it replaced isn't mistaken
-	# for a sign the file has changed. Names are kept as strings, since one
-	# that isn't a valid symbol could still be given.
-	private def record_generated(node)
-		return unless GENERATORS.include?(node.name)
-
-		arguments = node.arguments&.arguments || []
-		lines = [node.start_line, node.block&.start_line].compact.uniq
-		writers = node.name == :attr_writer || node.name == :attr_accessor || (node.name == :attr && attr_writable?(arguments))
-
-		arguments.each do |argument|
-			next unless Refract::SymbolNode === argument || Refract::StringNode === argument
-
-			names = [argument.unescaped]
-			names << "#{argument.unescaped}=" if writers
-
-			names.product(lines) do |name, line|
-				@generated << Scoped.new(namespace: @current_namespace.dup.freeze, node: [name, line])
-			end
-		end
-	end
-
-	# `attr :name, writable` defines a writer too when `writable` is truthy,
-	# which only a literal `false` or `nil` rules out.
-	private def attr_writable?(arguments)
-		arguments.length == 2 && !(Refract::FalseNode === arguments[1] || Refract::NilNode === arguments[1])
-	end
-
-	# Whether a call recorded by record_generated accounts for the live
-	# method, which it does only from within the method's own class, and only
-	# if no later `def` in that class would have replaced it.
-	private def generated?(target)
-		@generated.any? do |generated|
-			name, line = generated.node
-			next false unless name == target.name.name && line == target.line && reaches?(generated.namespace, target.component)
-
-			@definitions.none? do |definition|
-				definition.node.name == target.name && definition.node.start_line > line && reaches?(definition.namespace, target.component)
-			end
-		end
-	end
-
-	private def reaches?(namespace, component)
-		Phlex::Compiler.probe(namespace).component.equal?(component)
-	rescue Phlex::Compiler::Error
-		false
-	end
-
 	private def ruby2_keywords_names(node)
 		(node.arguments&.arguments || []).map do |argument|
 			case argument
@@ -166,7 +102,9 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	# are replaced. Definitions above it that are left alone don't matter.
 	private def refinements_reproducible?
 		first_definition = @compiled_lines.min
-		partial = @usings.find { |using| !using.namespace.empty? || (first_definition && using.node.start_line > first_definition) }
+		# A `using` on the same line as the first replaced definition may follow
+		# it, so it's refused too.
+		partial = @usings.find { |using| !using.namespace.empty? || (first_definition && using.node.start_line >= first_definition) }
 		return true unless partial
 
 		@diagnostics.refuse(partial.node, "this `using` applies to only part of the file, which the compiler can't reproduce")
@@ -174,14 +112,22 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# A definition with no live method at its line is usually just one that a
-	# later definition, `attr_reader` or `define_method` replaced. It means the
+	# later definition replaced: a live method not made by `def`, such as one
+	# from `attr_reader` or `define_method`, is never a target. It means the
 	# file has changed since it was loaded when a live method of the same name
-	# has nothing defining it at its own line, in which case compiling from
-	# this file would install the wrong code.
+	# has no definition at its own line, in which case compiling from this
+	# file would install the wrong code. A compiled method was always made by
+	# `def`, so its line having no definition of it means the same, and
+	# recompiling would leave the compiled method in place.
 	private def definitions_by_namespace
 		orphaned = @targets.values.reject do |target|
-			@definitions.any? { |definition| definition.node.start_line == target.line && definition.node.name == target.name } ||
-				generated?(target)
+			@definitions.any? { |definition| definition.node.start_line == target.line && definition.node.name == target.name }
+		end
+
+		orphaned.each do |target|
+			next unless target.replaced
+
+			@diagnostics.refuse(target.line, "#{target.name} was compiled from this line, which no longer defines it, so the file has changed since it was loaded")
 		end
 
 		unique_definitions.group_by(&:namespace).filter_map do |namespace, definitions|
@@ -222,7 +168,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 			elsif keyword_flagged?(target)
 				# Matched by name alone, since the mark can sit in a later reopening
 				# of the class, whose statements are different nodes.
-				@diagnostics.refuse(definition.node, "#{definition.node.name} is marked ruby2_keywords, which the compiler can't preserve")
+				@diagnostics.refuse(definition.node, "#{definition.node.name} is marked ruby2_keywords in this file, which the compiler can't preserve")
 			else
 				targeted << definition
 			end
@@ -230,20 +176,10 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# Marking an alias marks the body it shares with the method, so the
-	# method's aliases are checked too. The mark can be in any file that
-	# defines the class or an alias's owner, not only this one.
+	# method's aliases are checked too.
 	private def keyword_flagged?(target)
-		aliases = Phlex::Compiler.aliases_sharing(target.component, [target.name])
-		names = [target.name, *aliases.map { |_owner, name| name }]
-		paths = [target.component, *aliases.map(&:first)].uniq.flat_map { |owner| Phlex::Compiler.defining_files(owner) }.uniq - [@path]
-
-		@keyword_flagged.any? { |flagged| names.include?(flagged.node) } ||
-			paths.any? { |path| (ruby2_keywords_marks_in(path) & names).any? }
-	end
-
-	private def ruby2_keywords_marks_in(path)
-		(@marks ||= {})[path] ||= self.class.new(path, targets: {}, diagnostics: Phlex::Compiler::Diagnostics.new(path, strict: false))
-			.ruby2_keywords_marks(Phlex::Compiler.parse(File.read(path), path))
+		names = [target.name, *Phlex::Compiler.aliases_sharing(target.component, target.name)]
+		@keyword_flagged.any? { |flagged| names.include?(flagged.node) }
 	end
 
 	private def compile_namespace(namespace, definitions)

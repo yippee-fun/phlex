@@ -169,8 +169,6 @@ module Phlex::Compiler
 		formatting_result = Refract::Formatter.new(starting_line: 2).format_node(program)
 
 		compiled_path = "#{path} (compiled #{@generations += 1})"
-		aliases = results.flat_map { |result| aliases_sharing(result.component, result.visibilities.keys) }
-		aliases = refreshable(aliases)
 
 		without_redefinition_warnings do
 			eval(
@@ -179,11 +177,6 @@ module Phlex::Compiler
 				compiled_path,
 				1
 			)
-
-			aliases.each do |owner, name, component, original, visibility|
-				owner.define_method(name, component.instance_method(original))
-				owner.__send__(visibility, name)
-			end
 		end
 
 		lines = {}
@@ -303,14 +296,16 @@ module Phlex::Compiler
 	# The lines in the file that define the components' live methods. A method
 	# that's already compiled is traced back through its generation's map, and
 	# is a target again only when recompiling. An alias has the source location
-	# of the method it copied, so it's never a target itself.
+	# of the method it copied, and a method made by `attr_reader` or
+	# `define_method` has none of a `def`'s source to compile, so neither is a
+	# target.
 	def self.targets(path, components, recompile: false)
 		components.each_with_object({}) do |component, targets|
 			next if component.frozen? || !live?(component)
 
 			own_methods(component).each do |name|
 				method = component.instance_method(name)
-				next unless method.original_name == name && (location = method.source_location)
+				next unless method.original_name == name && defined_by_def?(method) && (location = method.source_location)
 
 				source_path, line = location
 
@@ -325,47 +320,24 @@ module Phlex::Compiler
 		end
 	end
 
-	# The aliases, in the component or a descendant, that still share a body
-	# with one of the component's named methods, so they can be pointed at its
-	# replacement. An alias of an earlier definition of the method is left
-	# alone. They're matched by source location rather than with `==`, which
-	# doesn't hold for an alias reinstalled with define_method.
-	def self.aliases_sharing(component, names)
-		[component, *descendants_of(component)].flat_map do |owner|
-			own_methods(owner).filter_map do |name|
-				method = owner.instance_method(name)
-				original = method.original_name
-				next if original == name || !names.include?(original)
+	# Whether the method was made by `def`. Only CRuby can tell, so elsewhere
+	# every method is assumed to be, and a `def` that an `attr_reader` or
+	# `define_method` replaced is refused as if the file had been edited.
+	def self.defined_by_def?(method)
+		return true unless defined?(RubyVM::InstructionSequence)
 
-				source = component.instance_method(original)
-				next unless method.source_location == source.source_location && method.owner == owner
-
-				visibility = if owner.private_method_defined?(name, false)
-					:private
-				elsif owner.protected_method_defined?(name, false)
-					:protected
-				else
-					:public
-				end
-
-				[owner, name, component, original, visibility]
-			end
-		end
+		RubyVM::InstructionSequence.of(method)&.label == method.original_name.name
 	end
 
-	# A frozen class's alias can't be refreshed. One sharing an uncompiled body
-	# still behaves the same once the method is compiled, so it's left alone,
-	# but one sharing a compiled body would keep running it after it's been
-	# replaced, so that's refused.
-	def self.refreshable(aliases)
-		aliases.reject do |owner, name, component, original, _visibility|
-			next false unless owner.frozen?
+	# The names of the aliases, in the component or a descendant, that share a
+	# body with the component's method.
+	def self.aliases_sharing(component, name)
+		method = component.instance_method(name)
 
-			if MAP.key?(component.instance_method(original).source_location&.first)
-				raise Error, "#{owner}##{name} is an alias of the compiled #{component}##{original}, which can't be recompiled because #{owner} is frozen."
+		[component, *descendants_of(component)].flat_map do |owner|
+			own_methods(owner).select do |alias_name|
+				alias_name != name && owner.instance_method(alias_name).original_name == name && owner.instance_method(alias_name) == method
 			end
-
-			true
 		end
 	end
 

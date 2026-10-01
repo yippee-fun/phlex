@@ -26,13 +26,18 @@ class Phlex::Compiler::Diagnostics
 		@diagnostics.each_with_index.sort_by { |diagnostic, index| [diagnostic.line || 0, index] }.map(&:first).each(&)
 	end
 
+	# The node, or the line, the diagnostic is about.
 	def report(node, message)
-		@diagnostics << Diagnostic.new(path: @path, line: node&.start_line, message:)
+		@diagnostics << Diagnostic.new(path: @path, line: line_of(node), message:)
 	end
 
 	def refuse(node, message)
-		raise Phlex::Compiler::Error, Diagnostic.new(path: @path, line: node&.start_line, message:).to_s if @strict
+		raise Phlex::Compiler::Error, Diagnostic.new(path: @path, line: line_of(node), message:).to_s if @strict
 
 		report(node, message)
+	end
+
+	private def line_of(node)
+		Integer === node ? node : node&.start_line
 	end
 end
