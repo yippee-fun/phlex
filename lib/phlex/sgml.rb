@@ -436,7 +436,46 @@ class Phlex::SGML
 			end
 		end
 
+		__inlining_changed__(self, [method_name])
 		super
+	end
+
+	private_class_method def self.method_removed(method_name)
+		__inlining_changed__(self, [method_name])
+		super
+	end
+
+	private_class_method def self.method_undefined(method_name)
+		__inlining_changed__(self, [method_name])
+		super
+	end
+
+	def self.include(*modules)
+		super
+		__inlining_changed__(self, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
+	end
+
+	def self.prepend(*modules)
+		super
+		__inlining_changed__(self, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
+	end
+
+	# Compiled methods inline elements and helpers as they were at compile
+	# time, so a change to one has to be seen. Nothing to do until something
+	# has been compiled.
+	private_class_method def self.__inlining_changed__(target, names)
+		Phlex::Compiler.inlining_changed(target, names) unless Phlex::COMPILED_SOURCE_MAPS.empty?
+	end
+
+	private def singleton_method_added(method_name)
+		self.class.__send__(:__inlining_changed__, singleton_class, [method_name])
+		super
+	end
+
+	def extend(*modules)
+		super
+		self.class.__send__(:__inlining_changed__, singleton_class, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
+		self
 	end
 
 	def __map_exception__(exception)

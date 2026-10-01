@@ -17,6 +17,14 @@ class CompilationEquivalenceTest < Quickdraw::Test
 	# Cases whose every method is expected to be left alone by the compiler.
 	NOTHING_TO_COMPILE = %w[positional_arguments].freeze
 
+	# Cases the compiler is expected to refuse, with the reason it must give.
+	REFUSED = {
+		"same_line_definitions" => /defined more than once on this line/,
+		"reserved_locals" => /__phlex_done_1__ is a local the compiler reserves/,
+		"refinement_mid_file" => /`using` applies to only part of the file/,
+		"ruby2_keywords" => /ruby2_keywords can't be preserved/,
+	}.freeze
+
 	DEFAULT_SCENARIOS = {
 		"call" => -> (klass) { klass.new.call },
 		"call again" => -> (klass) { klass.new.call },
@@ -32,9 +40,9 @@ class CompilationEquivalenceTest < Quickdraw::Test
 			components = components_defined_in(file)
 			assert(components.any?) { "#{name} defines no Phlex::SGML subclasses" }
 
-			problems = compile_and_compare(components, file)
+			problems = REFUSED.key?(name) ? expect_refusal(file, REFUSED[name]) : compile_and_compare(components, file)
 
-			if !NOTHING_TO_COMPILE.include?(name) && Phlex::Compiler::MAP.values.none? { |generation| generation.path == file }
+			if !NOTHING_TO_COMPILE.include?(name) && !REFUSED.key?(name) && Phlex::Compiler::MAP.values.none? { |generation| generation.path == file }
 				problems << "nothing in #{name} was compiled, so the case doesn't exercise the compiler"
 			end
 
@@ -65,6 +73,13 @@ class CompilationEquivalenceTest < Quickdraw::Test
 		after = Example::Page.new.call
 
 		assert_equal after, before
+	end
+
+	private def expect_refusal(file, reason)
+		Phlex::Compiler.compile_file(file)
+		["compilation was expected to be refused with #{reason.inspect} but succeeded"]
+	rescue Phlex::Compiler::Error => e
+		e.message.match?(reason) ? [] : ["compilation was refused for a different reason: #{e.message}"]
 	end
 
 	# Returns a description of every observation that changed, or of the compile error.

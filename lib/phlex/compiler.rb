@@ -9,47 +9,73 @@ require "refract"
 #
 # Use `Phlex::Compiler.compile(component)` to compile a class, or
 # `Phlex::Compiler.enable!` to compile each class on its first render.
+# `Phlex::Compiler.explain(component)` lists what's left to the runtime and why.
 #
-# Known differences from uncompiled rendering, all limited to unusual code:
-# - Refinements active in a compiled file don't apply to compiled methods.
-# - A local variable first assigned inside an inlined element block is visible
-#   for the rest of the method.
-# - A `to_s` or `to_hash` with side effects on an interpolated variable or
-#   splatted attributes isn't called for elements skipped by fragment selection,
-#   and if it raises, text before it in the same append has already been written.
+# A component's live methods say which files and lines define them. Each file
+# is parsed with Prism and converted to a Refract tree, and FileCompiler
+# compiles the definitions at those lines, after reopening the class and
+# module statements around them with a probe so Ruby confirms which class they
+# name. MethodCompiler decides what each call means, using an Environment built
+# once per class body, and leaves Output nodes in the tree where text is
+# appended. The Emitter then lowers those to guarded buffer appends. The
+# compiled definitions are evaluated inside the original nesting under a path
+# of their own, and exceptions are mapped back to the real file.
+#
+# The compiler is meant to be invisible: a compiled component renders exactly
+# what it would have uncompiled, and code that can't be compiled faithfully is
+# refused with a Phlex::Compiler::Error naming the file and line rather than
+# compiled approximately. Refused: a method marked `ruby2_keywords`, a `using`
+# that applies to only part of its file, two definitions of a method on one
+# line, a local named like one the compiler generates (`__phlex_…`), a file
+# edited since it was loaded, and redefining an inlined element or helper on
+# a single instance with `extend` or a singleton method. Redefining one on a
+# class or by including a module recompiles whatever inlined it.
+#
+# Two differences remain, both deliberate:
 # - Attributes with literal keys are serialised without the attribute cache, so
-#   a value's `to_s`, `to_h` or `iso8601` runs on every render.
-# - Element methods a compiled method inlines can't be overridden by a subclass
-#   loaded after compilation, by a module included afterwards, or by singleton
-#   methods on an instance. Subclasses loaded before compilation are detected.
-# - Methods a component gains from mixins aren't compiled.
-# - `break` out of a `head` block skips the automatic flush at runtime but not
-#   when compiled.
-# - A method marked with `ruby2_keywords` loses that flag when compiled, since
-#   Ruby offers no way to read it back.
+#   a value's `to_s`, `to_h` or `iso8601` runs on every render rather than once
+#   per distinct set of attributes.
+# - Method#source_location of a compiled method names the generated source;
+#   exceptions are mapped back to the real file.
+#
+# Methods a component gains from mixins aren't compiled, which only costs speed.
 module Phlex::Compiler
 	# Compiled code is evaluated under a path of its own so its line numbers
 	# never collide with the file's, and each compilation of a file gets a new
 	# one so exceptions from an old generation still map correctly.
 	Generation = Data.define(:path, :lines)
 
+	# A live method and the line in the file being compiled that defines it.
+	Target = Data.define(:component, :name, :line, :compiled)
+
+	# What reopening a definition's class and module statements reached.
+	Probe = Data.define(:component, :set)
+
 	# compiled path => Generation
 	MAP = Phlex::COMPILED_SOURCE_MAPS
 	MUTEX = Mutex.new
 
-	Concat = Data.define(:node) do
-		def start_line = nil
-		def accept(visitor) = self
+	# component => the exception that stopped it compiling on first render
+	FAILURES = {}.compare_by_identity
+
+	DEFAULT_FAILURE_HANDLER = lambda do |component, error|
+		warn "Phlex::Compiler couldn't compile #{component}, so it renders uncompiled: #{error.class}: #{error.message}\n\t#{error.backtrace&.first(5)&.join("\n\t")}"
 	end
+
+	PROBE_PATH = "(phlex compiler probe)"
 
 	@enabled = false
 	@generations = 0
+	@on_failure = DEFAULT_FAILURE_HANDLER
 
 	def self.enabled? = @enabled
 
-	# Compile each component on its first render.
-	def self.enable!
+	# Compile each component on its first render. A component that fails to
+	# compile is reported to `on_failure` once and keeps rendering uncompiled,
+	# so a compiler bug costs speed, never a page.
+	def self.enable!(on_failure: DEFAULT_FAILURE_HANDLER)
 		Phlex::SGML.prepend(LazyCompilation) unless Phlex::SGML < LazyCompilation
+		@on_failure = on_failure
 		@enabled = true
 	end
 
@@ -61,59 +87,72 @@ module Phlex::Compiler
 		component.instance_variable_get(:@__phlex_compiled__) == true
 	end
 
-	# Compiles every file that defines methods on the component or on its
-	# Phlex ancestors. The files must already be loaded.
+	def self.compile_on_first_render(component)
+		return if compiled?(component) || FAILURES.key?(component)
+
+		compile(component)
+	rescue StandardError, ScriptError => error
+		FAILURES[component] = error
+		@on_failure.call(component, error)
+	end
+
+	# Compiles the methods of the component and its Phlex ancestors wherever
+	# they're defined. The files must already be loaded.
 	def self.compile(component)
-		unless Class === component && Phlex::SGML > component
-			raise ArgumentError, "Expected a Phlex::SGML subclass, got #{component.inspect}."
-		end
+		component!(component)
 
 		return if component.frozen?
 
 		MUTEX.synchronize do
 			return if compiled?(component)
 
-			ancestors = component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }
-			ancestors.select! { |ancestor| Class === ancestor && !ancestor.frozen? && !compiled?(ancestor) }
+			ancestors = phlex_ancestors(component).reject { |ancestor| ancestor.frozen? || compiled?(ancestor) }
+			components = ancestors.select { |ancestor| live?(ancestor) }
 
-			ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.each do |path|
-				compile_file(path)
+			components.flat_map { |ancestor| defining_files(ancestor) }.uniq.each do |path|
+				compile_file(path, components:)
 			end
 
 			ancestors.each { |ancestor| ancestor.instance_variable_set(:@__phlex_compiled__, true) }
 		end
 	end
 
-	def self.defining_files(component)
-		methods = component.instance_methods(false) + component.private_instance_methods(false) + component.protected_instance_methods(false)
-		paths = methods.filter_map { |name| component.instance_method(name).source_location&.first }
-		paths << constant_source_path(component)
-		paths.compact.uniq.select { |path| File.exist?(path) }
+	# Why parts of the files defining the component and its Phlex ancestors are
+	# left to the runtime, as Diagnostics::Diagnostic records in file order.
+	# Nothing is compiled; an already compiled method is reported as such.
+	def self.explain(component)
+		component!(component)
+
+		ancestors = phlex_ancestors(component)
+
+		failures = ancestors.filter_map do |ancestor|
+			next unless (error = FAILURES[ancestor])
+
+			Diagnostics::Diagnostic.new(path: constant_source_path(ancestor), line: nil, message: "compiling #{ancestor} raised #{error.class}: #{error.message}")
+		end
+
+		failures + ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.flat_map do |path|
+			diagnostics = Diagnostics.new(path, strict: false)
+			FileCompiler.new(path, targets: targets(path, ancestors), diagnostics:).compile(parse(File.read(path), path))
+			diagnostics.to_a
+		end
 	end
 
-	# The file the class was first defined in, unless its name no longer
-	# resolves to it, as after a code reload.
-	def self.constant_source_path(component)
-		return unless (name = component.name)
-		return unless Object.const_get(name).equal?(component)
-
-		Object.const_source_location(name)&.first
-	rescue NameError
-		nil
-	end
-
-	# Compiles the Phlex components defined in an already-loaded file.
-	def self.compile_file(path)
+	# Compiles the methods that the given components, by default every loaded
+	# one, define in an already-loaded file.
+	def self.compile_file(path, components: loaded_components, recompile: false)
 		unless File.exist?(path)
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
 		source = File.read(path)
-		tree = Refract::Converter.new.visit(Prism.parse(source).value)
-		results = FileCompiler.new(path).compile(tree).reject { |result| result.compiled_snippets.empty? }
+		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:)
+		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
-		program = Refract::StatementsNode.new(body: results.map { |result| wrap_in_namespace(result) })
+		program = Refract::StatementsNode.new(
+			body: [*file_compiler.usings, *results.map { |result| wrap_in_namespace(result.namespace, result.compiled_snippets) }]
+		)
 		formatting_result = Refract::Formatter.new(starting_line: 2).format_node(program)
 
 		compiled_path = "#{path} (compiled #{@generations += 1})"
@@ -137,9 +176,135 @@ module Phlex::Compiler
 			result.visibilities.each do |name, visibility|
 				result.component.__send__(visibility, name) unless visibility == :public
 			end
+
+			inlined = result.component.instance_variable_get(:@__phlex_inlined__) || Set.new
+			result.component.instance_variable_set(:@__phlex_inlined__, (inlined | result.inlined).freeze)
 		end
 
 		nil
+	end
+
+	# Called by Phlex::SGML when methods are defined on, removed from or mixed
+	# into a class or singleton class. A compiled ancestor that inlined one of
+	# them is recompiled, and with the override now loaded it stops inlining
+	# that name, so the change takes effect just as it would have uncompiled.
+	# An override on a single instance can't be compiled for, so it's refused.
+	def self.inlining_changed(target, names)
+		return if MUTEX.owned?
+
+		affected = target.ancestors.select do |ancestor|
+			(inlined = ancestor.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
+		end
+		return if affected.empty?
+
+		if target.singleton_class?
+			raise Error, "#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling."
+		end
+
+		affected.each { |component| recompile(component) }
+	end
+
+	# Compiles the component's methods again, replacing the compiled ones.
+	def self.recompile(component)
+		MUTEX.synchronize do
+			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
+
+			defining_files(component).each do |path|
+				compile_file(path, components: [component], recompile: true)
+			end
+		end
+	end
+
+	# Reopens the class and module statements around a definition with nothing
+	# inside but a call reporting the class reached and what `Set` names there,
+	# so Ruby resolves them exactly as it did when the file was loaded. The
+	# statements are copied without their superclasses, so they only reopen.
+	def self.probe(namespace)
+		report = parse("::Phlex::Compiler.__probe__(self, defined?(Set) && Set)", PROBE_PATH).statements.body.first
+		source = Refract::Formatter.new.format_node(wrap_in_namespace(namespace, [report])).source
+
+		Thread.current[:__phlex_compiler_probe__] = nil
+		eval(source, TOPLEVEL_BINDING, PROBE_PATH, 1)
+		Thread.current[:__phlex_compiler_probe__] or raise Error, "Reopening the class and module statements didn't reach a class body:\n#{source}"
+	end
+
+	def self.__probe__(component, set)
+		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, set:)
+	end
+
+	# Whether the class is still the one its name refers to. After a reload the
+	# old class object lingers, and reopening its name would reach the new one.
+	def self.live?(component)
+		(name = component.name) && Object.const_get(name).equal?(component)
+	rescue NameError
+		false
+	end
+
+	def self.phlex_ancestors(component)
+		component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }
+	end
+
+	def self.loaded_components
+		descendants_of(Phlex::SGML).select { |component| live?(component) }
+	end
+
+	def self.descendants_of(component)
+		component.subclasses.flat_map { |subclass| [subclass, *descendants_of(subclass)] }
+	end
+
+	# The lines in the file that define the components' live methods. A method
+	# that's already compiled is traced back through its generation's map, and
+	# is a target again only when recompiling.
+	def self.targets(path, components, recompile: false)
+		components.each_with_object({}) do |component, targets|
+			next if component.frozen? || !live?(component)
+
+			own_methods(component).each do |name|
+				next unless (location = component.instance_method(name).source_location)
+
+				source_path, line = location
+
+				if (generation = MAP[source_path])
+					next unless generation.path == path && (line = generation.lines[line])
+
+					targets[line] = Target.new(component:, name:, line:, compiled: !recompile)
+				elsif source_path == path
+					targets[line] = Target.new(component:, name:, line:, compiled: false)
+				end
+			end
+		end
+	end
+
+	# `initialize` runs before the component has any state to render into.
+	def self.own_methods(component)
+		component.instance_methods(false) + component.private_instance_methods(false) + component.protected_instance_methods(false) - [:initialize]
+	end
+
+	def self.defining_files(component)
+		paths = own_methods(component).filter_map do |name|
+			source_path = component.instance_method(name).source_location&.first
+			MAP[source_path]&.path || source_path
+		end
+		paths << constant_source_path(component)
+		paths.compact.uniq.select { |path| File.exist?(path) }
+	end
+
+	# The file the class was first defined in, unless its name no longer
+	# resolves to it, as after a code reload.
+	def self.constant_source_path(component)
+		return unless live?(component)
+
+		Object.const_source_location(component.name)&.first
+	end
+
+	def self.component!(component)
+		unless Class === component && Phlex::SGML > component
+			raise ArgumentError, "Expected a Phlex::SGML subclass, got #{component.inspect}."
+		end
+	end
+
+	def self.parse(source, path)
+		Refract::Converter.new.visit(Prism.parse(source, filepath: path).value)
 	end
 
 	# Replacing a method is the whole point, so the warning for it is noise.
@@ -161,11 +326,9 @@ module Phlex::Compiler
 		end
 	end
 
-	def self.wrap_in_namespace(result)
-		result.namespace.reverse_each.reduce(
-			Refract::StatementsNode.new(body: result.compiled_snippets)
-		) do |body, scope|
-			wrapped = Refract::StatementsNode.new(body: [body])
+	def self.wrap_in_namespace(namespace, body)
+		namespace.reverse_each.reduce(Refract::StatementsNode.new(body:)) do |inner, scope|
+			wrapped = Refract::StatementsNode.new(body: [inner])
 
 			case scope
 			in Refract::ClassNode then scope.copy(body: wrapped, superclass: nil)
@@ -176,9 +339,7 @@ module Phlex::Compiler
 
 	module LazyCompilation
 		def internal_call(...)
-			if Phlex::Compiler.enabled? && !Phlex::Compiler.compiled?(self.class)
-				Phlex::Compiler.compile(self.class)
-			end
+			Phlex::Compiler.compile_on_first_render(self.class) if Phlex::Compiler.enabled?
 
 			super
 		end

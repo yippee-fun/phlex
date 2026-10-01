@@ -103,6 +103,105 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	# Makes the compiler raise on demand, standing in for a compiler bug.
+	module Sabotage
+		def self.active = @active
+
+		def self.active=(active)
+			@active = active
+		end
+
+		def compile(node, **)
+			raise "sabotaged" if Sabotage.active
+
+			super
+		end
+	end
+
+	Phlex::Compiler::MethodCompiler.prepend(Sabotage)
+
+	test "a component that fails to compile on first render is reported once and renders uncompiled" do
+		with_component_files(
+			"failing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFailing < Phlex::HTML
+					def view_template = div { "still works" }
+				end
+			RUBY
+		) do
+			failures = []
+			Sabotage.active = true
+			Phlex::Compiler.enable!(on_failure: -> (component, error) { failures << [component, error.message] })
+
+			begin
+				assert_equal LifecycleFailing.new.call, "<div>still works</div>"
+				assert_equal LifecycleFailing.new.call, "<div>still works</div>"
+			ensure
+				Phlex::Compiler.disable!
+				Sabotage.active = false
+			end
+
+			refute compiled_method?(LifecycleFailing, :view_template)
+			assert_equal failures, [[LifecycleFailing, "sabotaged"]]
+			assert_equal Phlex::Compiler.explain(LifecycleFailing).first.message, "compiling LifecycleFailing raised RuntimeError: sabotaged"
+
+			assert_raises(RuntimeError) do
+				Sabotage.active = true
+				Phlex::Compiler.compile(LifecycleFailing)
+			ensure
+				Sabotage.active = false
+			end
+		end
+	end
+
+	test "an element redefined after compilation takes effect by recompiling what inlined it" do
+		with_component_files(
+			"late.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleLate < Phlex::HTML
+					def view_template
+						div { "parent" }
+						span { "kept" }
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleLate)
+			first = LifecycleLate.instance_method(:view_template).source_location
+			assert compiled_method?(LifecycleLate, :view_template)
+			assert_equal LifecycleLate.new.call, "<div>parent</div><span>kept</span>"
+
+			subclass = Class.new(LifecycleLate) { def div(**, &) = plain("subclass div") }
+			assert_equal subclass.new.call, "subclass div<span>kept</span>"
+			assert_equal LifecycleLate.new.call, "<div>parent</div><span>kept</span>"
+
+			# Recompiled, with span still inlined but div no longer.
+			refute_equal LifecycleLate.instance_method(:view_template).source_location, first
+			assert compiled_method?(LifecycleLate, :view_template)
+			source = File.read(first[0].sub(/ \(compiled \d+\)\z/, ""))
+			assert source.include?("div {")
+
+			unrelated = LifecycleLate.new
+			unrelated.define_singleton_method(:other) { nil }
+			assert_equal unrelated.call, "<div>parent</div><span>kept</span>"
+
+			# An override on one instance can't be compiled for, so it's refused.
+			error = assert_raises(Phlex::Compiler::Error) do
+				LifecycleLate.new.define_singleton_method(:span) { |**, &| plain("singleton span") }
+			end
+			assert_equal error.message, "span can't be redefined on a single instance: LifecycleLate compiled it inline. Redefine it on the class, before compiling."
+
+			assert_raises(Phlex::Compiler::Error) do
+				LifecycleLate.new.extend(Module.new { def span(**, &) = plain("extended span") })
+			end
+
+			# With nothing left to inline, the original definition is reinstalled.
+			LifecycleLate.include(Module.new { def span(**, &) = plain("included span") })
+			assert_equal LifecycleLate.new.call, "<div>parent</div>included span"
+			assert_equal LifecycleLate.new.extend(Module.new { def span(**, &) = plain("extended span") }).call, "<div>parent</div>extended span" # rubocop:disable Lint/DuplicateMethods
+		end
+	end
+
 	test "exceptions map to the right line after the file is reloaded with more lines" do
 		with_component_files(
 			"reloaded.rb" => <<~RUBY

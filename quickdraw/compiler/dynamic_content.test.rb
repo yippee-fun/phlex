@@ -224,15 +224,17 @@ class DynamicContentCompilerTest < Quickdraw::Test
 		assert source.include?("__yield_content__")
 	end
 
-	test "block arguments retain the runtime fallback" do
-		source = compile_equivalent(<<~RUBY, "<h2>title</h2>")
+	test "a forwarded block keeps the element call" do
+		source = compile_equivalent(<<~RUBY, "<p>before</p><h2>title</h2>")
 			def view_template
+				p { "before" }
 				content = ->(component) { "title" }
 				h2(&content)
 			end
 		RUBY
 
-		assert source.include?("__yield_content__")
+		assert source.include?("h2(&content)")
+		refute source.include?("__yield_content__")
 	end
 
 	private def compile_equivalent(source, expected = nil, **)
@@ -242,7 +244,7 @@ class DynamicContentCompilerTest < Quickdraw::Test
 		assert_equal before, expected if expected
 
 		node = Refract::Converter.new.visit(Prism.parse(source).value.statements.body.first)
-		compiled = Phlex::Compiler::MethodCompiler.new(component, "/components/test.rb").compile(node)
+		compiled = Phlex::Compiler::MethodCompiler.new(Phlex::Compiler::Environment.new(component), "/components/test.rb").compile(node)
 		formatted = Refract::Formatter.new.format_node(compiled).source
 		component.class_eval(formatted)
 		assert_equal component.new.call(**), before
