@@ -25,10 +25,31 @@ module EquivalenceCases
 			end
 
 			def view_template
-				plain "<text>", &build_block
-				plain :symbol, &build_block
-				plain nil, &build_block
-				plain "interpolated #{interpolation}", &build_block
+				begin
+					plain "<text>", &build_block
+				rescue Phlex::ArgumentError => error
+					@events << error.message
+				end
+				begin
+					plain :symbol, &build_block
+				rescue Phlex::ArgumentError => error
+					@events << error.message
+				end
+				begin
+					plain nil, &build_block
+				rescue Phlex::ArgumentError => error
+					@events << error.message
+				end
+				begin
+					plain "interpolated #{interpolation}", &build_block
+				rescue Phlex::ArgumentError => error
+					@events << error.message
+				end
+				begin
+					plain("literal block") { raise "plain must not yield" }
+				rescue Phlex::ArgumentError => error
+					@events << error.message
+				end
 				span { "after" }
 			end
 

@@ -599,8 +599,8 @@ module Phlex::Compiler
 		# An interpolation is built, calling to_s on its parts, before the runtime
 		# checks whether it's rendering, so it's evaluated into a local first.
 		private def compile_plain(node)
-			# Even though plain doesn't yield, Ruby evaluates and converts a forwarded block.
-			return keep_call(node, "its block is forwarded") if Refract::BlockArgumentNode === node.block
+			# Keep runtime block rejection and evaluation of forwarded block expressions.
+			return keep_call(node, "it has a block") if node.block
 
 			case node.arguments&.arguments
 			in [Refract::StringNode | Refract::SymbolNode => text] then plain(text.unescaped)

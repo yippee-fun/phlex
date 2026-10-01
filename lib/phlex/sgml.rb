@@ -106,6 +106,8 @@ class Phlex::SGML
 
 	# Output plain text.
 	def plain(content)
+		raise Phlex::ArgumentError.new("plain does not accept a block.") if block_given?
+
 		unless __text__(content)
 			raise Phlex::ArgumentError.new("You've passed an object to plain that is not handled by format_object. See https://rubydoc.info/gems/phlex/Phlex/SGML#format_object-instance_method for more information")
 		end
