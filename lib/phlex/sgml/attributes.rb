@@ -103,10 +103,8 @@ module Phlex::SGML::Attributes
 			n.include?('"') ? n.gsub('"', "&quot;") : n
 		when Integer, Float
 			v.to_s
-		when Date
-			v.iso8601
-		when Time
-			v.respond_to?(:iso8601) ? v.iso8601 : v.strftime("%Y-%m-%dT%H:%M:%S%:z")
+		when Date, Time
+			date_time_value(v)
 		when Hash
 			case k
 			when :style
@@ -136,6 +134,16 @@ module Phlex::SGML::Attributes
 			else
 				raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
 			end
+		end
+	end
+
+	# Dates serialise as `YYYY-MM-DD` and Times as ISO 8601, which is what the
+	# `datetime` attribute and most `data-` consumers expect.
+	private def date_time_value(v)
+		if Time === v && !v.respond_to?(:iso8601)
+			v.strftime("%Y-%m-%dT%H:%M:%S%:z")
+		else
+			v.iso8601
 		end
 	end
 
@@ -214,6 +222,8 @@ module Phlex::SGML::Attributes
 				buffer << " " << base_name << name << '="' << (n.include?('"') ? n.gsub('"', "&quot;") : n) << '"'
 			when Integer, Float
 				buffer << " " << base_name << name << '="' << v.to_s << '"'
+			when Date, Time
+				buffer << " " << base_name << name << '="' << date_time_value(v) << '"'
 			when Hash
 				generate_nested_attributes(v, "#{base_name}#{name}-", buffer)
 			when Array
@@ -227,7 +237,13 @@ module Phlex::SGML::Attributes
 			when Phlex::SGML::SafeObject
 				buffer << " " << base_name << name << '="' << v.to_s.gsub('"', "&quot;") << '"'
 			else
-				raise Phlex::ArgumentError.new("Invalid attribute value #{v.inspect}.")
+				# Like a nested Hash, an object that converts to one expands into
+				# further nested attributes, matching the top-level behaviour.
+				if v.respond_to?(:to_h)
+					generate_nested_attributes(v.to_h, "#{base_name}#{name}-", buffer)
+				else
+					raise Phlex::ArgumentError.new("Invalid attribute value #{v.inspect}.")
+				end
 			end
 
 			if root_key
