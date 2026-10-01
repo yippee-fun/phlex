@@ -348,6 +348,21 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 	end
 
+	test "calls in blocks nested more than four deep are left alone, and every copy of a block sees the real __FILE__" do
+		source = compile(<<~RUBY)
+			def a
+				div { "top" }
+				one { two { three { four { span { "four" }; five { p { __FILE__ } } } } } }
+			end
+		RUBY
+
+		assert source.include?("<div>top</div>")
+		assert source.include?("<span>four</span>")
+		refute source.include?("<p>")
+		refute source.include?("__FILE__")
+		assert_equal source.scan('"/components/test.rb"').size, 5
+	end
+
 	test "methods with nothing to compile are left alone" do
 		assert_equal compile(<<~RUBY), nil
 			def a

@@ -14,6 +14,7 @@ module Phlex::Compiler
 		Piece = Data.define(:parts, :raises)
 
 		UNINLINABLE_BLOCK = "it has parameters or contains a return, break, next or local assignment"
+		GUARDED_BLOCK_DEPTH_LIMIT = 4
 
 		def initialize(environment, path, diagnostics: Diagnostics.new(path))
 			super()
@@ -23,6 +24,7 @@ module Phlex::Compiler
 			@locals = Locals.new
 			@preamble = []
 			@appends = 0
+			@guarded_blocks = 0
 			@compiling_calls = true
 		end
 
@@ -78,9 +80,7 @@ module Phlex::Compiler
 				return node
 			end
 
-			@compiling_calls = false
-			parameters = visit(node.parameters)
-			@compiling_calls = true
+			parameters = without_compiling_calls { visit(node.parameters) }
 			body = visit(node.body)
 
 			node.copy(
@@ -105,23 +105,44 @@ module Phlex::Compiler
 		end
 
 		# A block passed to a method we don't know about might be evaluated against a
-		# different receiver, so the compiled body is only used when self is unchanged.
+		# different receiver, so the compiled body is only used when self is
+		# unchanged, and the original is kept for when it isn't. Each level of
+		# nesting repeats the original bodies inside it, so past a few levels the
+		# calls are left alone.
 		visit Refract::BlockNode do |node|
-			return node unless node.body
+			return super(node) unless @compiling_calls && node.body
+
+			if @guarded_blocks == GUARDED_BLOCK_DEPTH_LIMIT
+				@diagnostics.report(node, "calls in this block are left to the runtime because it's nested #{GUARDED_BLOCK_DEPTH_LIMIT} blocks deep")
+				return without_compiling_calls { super(node) }
+			end
 
 			appends = @appends
+			@guarded_blocks += 1
 			compiled = visit(node.body)
+			@guarded_blocks -= 1
 			return node if appends == @appends
+
+			original = without_compiling_calls { visit(node.body) }
 
 			node.copy(
 				body: statements([
-					if_node(call(Refract::SelfNode.new, :equal?, read(self_local)), [compiled], else_body: [node.body]),
+					if_node(call(Refract::SelfNode.new, :equal?, read(self_local)), [compiled], else_body: [original]),
 				])
 			)
 		end
 
 		private def statement?(node)
 			Refract::StatementsNode === @stack[-2]
+		end
+
+		# Visits code whose calls must stay as they are, so only `__FILE__` is rewritten.
+		private def without_compiling_calls
+			compiling_calls = @compiling_calls
+			@compiling_calls = false
+			yield
+		ensure
+			@compiling_calls = compiling_calls
 		end
 
 		private def compile_call(node)
