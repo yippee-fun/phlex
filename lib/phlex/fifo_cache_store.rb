@@ -11,7 +11,8 @@ class Phlex::FIFOCacheStore
 		)
 	end
 
-	def fetch(key)
+	# Options such as `expires_in:` are accepted for compatibility with `Rails.cache` but ignored.
+	def fetch(key, **)
 		fifo = @fifo
 		key = map_key(key)
 
