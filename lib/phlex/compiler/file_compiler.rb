@@ -49,17 +49,24 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# Tracks both the lexical scope nodes, for reopening the class in the
-	# compiled source, and the modules they name, resolved as Ruby would.
+	# compiled source, and the modules they name, resolved as Ruby would. A
+	# scope that can't be resolved is skipped whole, since nothing inside it
+	# could be compiled with its lexical scope known.
 	private def enter(node)
-		scope = resolve(node.constant_path)
-		@diagnostics.report(node, "#{Refract::Formatter.new.format_node(node.constant_path).source} couldn't be resolved, so nothing in it is compiled") unless scope
+		unless (scope = resolve(node.constant_path))
+			@diagnostics.report(node, "#{Refract::Formatter.new.format_node(node.constant_path).source} couldn't be resolved, so nothing in it is compiled")
+			return
+		end
 
 		@current_namespace.push(node)
 		@nesting.push(scope)
-		yield
-	ensure
-		@nesting.pop
-		@current_namespace.pop
+
+		begin
+			yield
+		ensure
+			@nesting.pop
+			@current_namespace.pop
+		end
 	end
 
 	private def current_component

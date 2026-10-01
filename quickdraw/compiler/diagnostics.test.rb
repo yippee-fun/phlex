@@ -36,6 +36,10 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 					__phlex_x__ = 1
 					div { __phlex_x__.to_s }
 				end
+
+				def defaulted(text = (hr; "default"))
+					div { text }
+				end
 			end
 
 			class self::Dynamic < Phlex::HTML
@@ -68,7 +72,8 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				"17: fragment keeps its call because its block has parameters or is forwarded",
 				"25: twice isn't compiled because it's defined more than once on this line",
 				"27: reserved isn't compiled because it uses a local that starts with __phlex_",
-				"33: self::Dynamic couldn't be resolved, so nothing in it is compiled",
+				"32: hr keeps its call because it's in a parameter default",
+				"37: self::Dynamic couldn't be resolved, so nothing in it is compiled",
 			]
 
 			assert diagnostics.all? { |diagnostic| diagnostic.path == path }

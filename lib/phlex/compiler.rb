@@ -88,9 +88,14 @@ module Phlex::Compiler
 		end
 	end
 
+	# A compiled method's source location names the generated source, which
+	# its generation traces back to the file it came from.
 	def self.defining_files(component)
 		methods = component.instance_methods(false) + component.private_instance_methods(false) + component.protected_instance_methods(false)
-		paths = methods.filter_map { |name| component.instance_method(name).source_location&.first }
+		paths = methods.filter_map do |name|
+			source_path = component.instance_method(name).source_location&.first
+			MAP[source_path]&.path || source_path
+		end
 		paths << constant_source_path(component)
 		paths.compact.uniq.select { |path| File.exist?(path) }
 	end

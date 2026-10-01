@@ -80,7 +80,7 @@ module Phlex::Compiler
 				return node
 			end
 
-			parameters = without_compiling_calls { visit(node.parameters) }
+			parameters = without_compiling_calls(because: "it's in a parameter default") { visit(node.parameters) }
 			body = visit(node.body)
 
 			node.copy(
@@ -97,8 +97,12 @@ module Phlex::Compiler
 		end
 
 		visit Refract::CallNode do |node|
-			if @compiling_calls && statement?(node) && node.receiver.nil? && (compiled = compile_call(node))
-				return compiled
+			if @compiling_calls
+				if statement?(node) && node.receiver.nil? && (compiled = compile_call(node))
+					return compiled
+				end
+			elsif @uncompiled_because && node.receiver.nil? && (@environment.element(node.name) || @environment.helper?(node.name))
+				keep_call(node, @uncompiled_because)
 			end
 
 			super(node)
@@ -136,13 +140,16 @@ module Phlex::Compiler
 			Refract::StatementsNode === @stack[-2]
 		end
 
-		# Visits code whose calls must stay as they are, so only `__FILE__` is rewritten.
-		private def without_compiling_calls
-			compiling_calls = @compiling_calls
+		# Visits code whose calls must stay as they are, so only `__FILE__` is
+		# rewritten. Element and helper calls found there are reported with the
+		# reason, unless the code is a copy of something compiled elsewhere.
+		private def without_compiling_calls(because: nil)
+			compiling_calls, uncompiled_because = @compiling_calls, @uncompiled_because
 			@compiling_calls = false
+			@uncompiled_because = because
 			yield
 		ensure
-			@compiling_calls = compiling_calls
+			@compiling_calls, @uncompiled_because = compiling_calls, uncompiled_because
 		end
 
 		private def compile_call(node)
