@@ -100,9 +100,9 @@ module Phlex::SGML::Elements
 						end
 
 						begin
-							original_length = buffer.bytesize
+							original_length = state.output_bytesize
 							content = yield(self)
-							if original_length == buffer.bytesize
+							if original_length == state.output_bytesize
 								case content
 								when ::Phlex::SGML::SafeObject
 									buffer << content.to_s
@@ -135,9 +135,9 @@ module Phlex::SGML::Elements
 						buffer << "<#{tag}>"
 
 						begin
-							original_length = buffer.bytesize
+							original_length = state.output_bytesize
 							content = yield(self)
-							if original_length == buffer.bytesize
+							if original_length == state.output_bytesize
 								case content
 								when ::Phlex::SGML::SafeObject
 									buffer << content.to_s

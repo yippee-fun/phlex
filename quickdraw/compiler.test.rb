@@ -224,7 +224,7 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 	end
 
-	test "dynamic content inlines the buffer check and closes the tag on any exit" do
+	test "dynamic content inlines the output size check and closes the tag on any exit" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a
 				div { helper }
@@ -237,15 +237,14 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<div>")
 					end
 					nil)
-					__phlex_done_4__ = false
+					__phlex_done_3__ = false
 					begin
-						__phlex_content_buffer_1__ = __phlex_state__.buffer
-						__phlex_content_length_2__ = __phlex_content_buffer_1__.bytesize
-						__phlex_content_3__ = (helper)
-						__implicit_output__(__phlex_content_3__) if __phlex_content_length_2__.==(__phlex_content_buffer_1__.bytesize)
-						__phlex_done_4__ = true
+						__phlex_content_length_1__ = __phlex_state__.output_bytesize
+						__phlex_content_2__ = (helper)
+						__implicit_output__(__phlex_content_2__) if __phlex_content_length_1__.==(__phlex_state__.output_bytesize)
+						__phlex_done_3__ = true
 					ensure
-						unless __phlex_done_4__
+						unless __phlex_done_3__
 							(if __phlex_state__.should_render?
 								__phlex_state__.buffer.<<("</div>")
 							end

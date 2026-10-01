@@ -343,11 +343,11 @@ class Phlex::SGML
 	private def __yield_content__
 		return unless block_given?
 
-		buffer = @_state.buffer
+		state = @_state
 
-		original_length = buffer.bytesize
+		original_length = state.output_bytesize
 		content = yield(self)
-		__implicit_output__(content) if original_length == buffer.bytesize
+		__implicit_output__(content) if original_length == state.output_bytesize
 
 		nil
 	end
@@ -355,11 +355,11 @@ class Phlex::SGML
 	private def __yield_content_with_no_yield_args__
 		return unless block_given?
 
-		buffer = @_state.buffer
+		state = @_state
 
-		original_length = buffer.bytesize
+		original_length = state.output_bytesize
 		content = yield # <-- doesn’t yield self 😉
-		__implicit_output__(content) if original_length == buffer.bytesize
+		__implicit_output__(content) if original_length == state.output_bytesize
 
 		nil
 	end
@@ -367,11 +367,11 @@ class Phlex::SGML
 	private def __yield_content_with_args__(*a)
 		return unless block_given?
 
-		buffer = @_state.buffer
+		state = @_state
 
-		original_length = buffer.bytesize
+		original_length = state.output_bytesize
 		content = yield(*a)
-		__implicit_output__(content) if original_length == buffer.bytesize
+		__implicit_output__(content) if original_length == state.output_bytesize
 
 		nil
 	end
