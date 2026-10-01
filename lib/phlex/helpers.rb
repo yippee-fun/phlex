@@ -36,7 +36,7 @@ module Phlex::Helpers
 			end
 
 			result.transform_keys! do |key|
-				key.end_with?("!") ? key.name.chop.to_sym : key
+				(Symbol === key && key.end_with?("!")) ? key.name.chop.to_sym : key
 			end
 		end
 	end

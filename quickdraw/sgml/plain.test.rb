@@ -35,4 +35,29 @@ class PlainTest < Quickdraw::Test
 			phlex { plain [] }
 		end
 	end
+
+	test "rejects a block without yielding or outputting the content" do
+		output = phlex do
+			plain "before"
+			begin
+				plain("text") { raise "must not yield" }
+			rescue Phlex::ArgumentError => error
+				plain error.message
+			end
+		end
+
+		assert_equal output, "beforeplain does not accept a block."
+	end
+
+	test "rejects a forwarded block" do
+		error = assert_raises(Phlex::ArgumentError) do
+			phlex { plain "text", &proc {} }
+		end
+
+		assert_equal error.message, "plain does not accept a block."
+	end
+
+	test "accepts a nil block because no block is given" do
+		assert_equal phlex { plain "text", &nil }, "text"
+	end
 end

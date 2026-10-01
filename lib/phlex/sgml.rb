@@ -39,7 +39,7 @@ class Phlex::SGML
 		state = Phlex::SGML::State.new(
 			user_context: context,
 			output_buffer: buffer,
-			fragments: fragments&.to_set,
+			fragments: fragments&.to_set(&:to_s),
 		)
 
 		internal_call(parent: nil, state:, &)
@@ -106,6 +106,8 @@ class Phlex::SGML
 
 	# Output plain text.
 	def plain(content)
+		raise Phlex::ArgumentError.new("plain does not accept a block.") if block_given?
+
 		unless __text__(content)
 			raise Phlex::ArgumentError.new("You've passed an object to plain that is not handled by format_object. See https://rubydoc.info/gems/phlex/Phlex/SGML#format_object-instance_method for more information")
 		end
@@ -153,7 +155,7 @@ class Phlex::SGML
 			state = @_state
 			return unless state.should_render?
 
-			state.buffer << content.to_s
+			state.append(content.to_s)
 		when nil, "" # do nothing
 		else
 			raise Phlex::ArgumentError.new("You passed an unsafe object to `raw`.")
@@ -175,6 +177,7 @@ class Phlex::SGML
 
 	# Define a named fragment that can be selectively rendered.
 	def fragment(name)
+		name = name.to_s
 		state = @_state
 		state.begin_fragment(name)
 		completed = false
@@ -348,11 +351,11 @@ class Phlex::SGML
 	private def __yield_content__
 		return unless block_given?
 
-		buffer = @_state.buffer
+		state = @_state
 
-		original_length = buffer.bytesize
+		original_length = state.output_bytesize
 		content = yield(self)
-		__implicit_output__(content) if original_length == buffer.bytesize
+		__implicit_output__(content) if original_length == state.output_bytesize
 
 		nil
 	end
@@ -360,11 +363,11 @@ class Phlex::SGML
 	private def __yield_content_with_no_yield_args__
 		return unless block_given?
 
-		buffer = @_state.buffer
+		state = @_state
 
-		original_length = buffer.bytesize
+		original_length = state.output_bytesize
 		content = yield # <-- doesn’t yield self 😉
-		__implicit_output__(content) if original_length == buffer.bytesize
+		__implicit_output__(content) if original_length == state.output_bytesize
 
 		nil
 	end
@@ -372,11 +375,11 @@ class Phlex::SGML
 	private def __yield_content_with_args__(*a)
 		return unless block_given?
 
-		buffer = @_state.buffer
+		state = @_state
 
-		original_length = buffer.bytesize
+		original_length = state.output_bytesize
 		content = yield(*a)
-		__implicit_output__(content) if original_length == buffer.bytesize
+		__implicit_output__(content) if original_length == state.output_bytesize
 
 		nil
 	end
@@ -387,7 +390,7 @@ class Phlex::SGML
 
 		case content
 		when Phlex::SGML::SafeObject
-			state.buffer << content.to_s
+			state.append(content.to_s)
 		when String
 			state.buffer << Phlex::Escape.html_escape(content)
 		when Symbol

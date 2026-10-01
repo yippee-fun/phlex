@@ -262,15 +262,13 @@ module Phlex::Compiler
 
 		# The runtime outputs a block's value only if the block wrote nothing.
 		private def inline_dynamic_content(body)
-			buffer = @locals.fresh(:content_buffer)
 			length = @locals.fresh(:content_length)
 			content = @locals.fresh(:content)
 
 			[
-				write(buffer, call(read(state_local), :buffer)),
-				write(length, call(read(buffer), :bytesize)),
+				write(length, call(read(state_local), :output_bytesize)),
 				write(content, Refract::ParenthesesNode.new(body: visit(body))),
-				if_node(call(read(length), :==, call(read(buffer), :bytesize)), [implicit_output(read(content))], inline: true),
+				if_node(call(read(length), :==, call(read(state_local), :output_bytesize)), [implicit_output(read(content))], inline: true),
 			]
 		end
 
@@ -599,6 +597,9 @@ module Phlex::Compiler
 		# An interpolation is built, calling to_s on its parts, before the runtime
 		# checks whether it's rendering, so it's evaluated into a local first.
 		private def compile_plain(node)
+			# Keep runtime block rejection and evaluation of forwarded block expressions.
+			return keep_call(node, "it has a block") if node.block
+
 			case node.arguments&.arguments
 			in [Refract::StringNode | Refract::SymbolNode => text] then plain(text.unescaped)
 			in [Refract::InterpolatedStringNode => interpolated]

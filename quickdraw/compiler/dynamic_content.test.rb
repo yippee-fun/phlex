@@ -16,7 +16,7 @@ class DynamicContentCompilerTest < Quickdraw::Test
 		RUBY
 
 		refute source.include?("__yield_content__")
-		assert source.include?("bytesize")
+		assert source.include?("output_bytesize")
 		assert source.include?("__implicit_output__")
 	end
 
@@ -131,10 +131,57 @@ class DynamicContentCompilerTest < Quickdraw::Test
 		RUBY
 	end
 
-	test "flushing in the content counts as writing to the buffer" do
+	test "writes before flushing suppress implicit output" do
 		compile_equivalent(<<~RUBY, "<div>before</div>")
 			def view_template
 				div { plain "before"; flush; "duplicate" }
+			end
+		RUBY
+	end
+
+	test "flushing without writing preserves implicit output" do
+		compile_equivalent(<<~RUBY, "<div>hello</div><div id=\"greeting\">&lt;hello&gt;</div>")
+			def view_template
+				div { flush; "hello" }
+				div(id: "greeting") { flush; flush; "<hello>" }
+			end
+		RUBY
+	end
+
+	test "refilling the buffer to its original size suppresses implicit output" do
+		compile_equivalent(<<~RUBY, "<div>12345</div>")
+			def view_template
+				div { flush; plain "12345"; "duplicate" }
+			end
+		RUBY
+	end
+
+	test "flushing inside nested content suppresses only the outer implicit output" do
+		compile_equivalent(<<~RUBY, "<div><span>hello</span></div>")
+			def view_template
+				div do
+					span { flush; "hello" }
+					"duplicate"
+				end
+			end
+		RUBY
+	end
+
+	test "flushing preserves implicit output in blocks yielded at runtime" do
+		compile_equivalent(<<~RUBY, "<div>hello</div>")
+			def view_template
+				div { |component| component.flush; "hello" }
+			end
+		RUBY
+	end
+
+	test "capture after flushing remains independent of outer writes" do
+		compile_equivalent(<<~RUBY, "<div>&lt;span&gt;hello&lt;/span&gt;</div>")
+			def view_template
+				div do
+					flush
+					capture { span { flush; "hello" } }
+				end
 			end
 		RUBY
 	end

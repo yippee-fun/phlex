@@ -100,12 +100,12 @@ module Phlex::SGML::Elements
 						end
 
 						begin
-							original_length = buffer.bytesize
+							original_length = state.output_bytesize
 							content = yield(self)
-							if original_length == buffer.bytesize
+							if original_length == state.output_bytesize
 								case content
 								when ::Phlex::SGML::SafeObject
-									buffer << content.to_s
+									state.append(content.to_s)
 								when String
 									buffer << ::Phlex::Escape.html_escape(content)
 								when Symbol
@@ -135,12 +135,12 @@ module Phlex::SGML::Elements
 						buffer << "<#{tag}>"
 
 						begin
-							original_length = buffer.bytesize
+							original_length = state.output_bytesize
 							content = yield(self)
-							if original_length == buffer.bytesize
+							if original_length == state.output_bytesize
 								case content
 								when ::Phlex::SGML::SafeObject
-									buffer << content.to_s
+									state.append(content.to_s)
 								when String
 									buffer << ::Phlex::Escape.html_escape(content)
 								when Symbol
