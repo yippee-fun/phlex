@@ -9,6 +9,17 @@ require "refract"
 #
 # Use `Phlex::Compiler.compile(component)` to compile a class, or
 # `Phlex::Compiler.enable!` to compile each class on its first render.
+# `Phlex::Compiler.explain(component)` lists what's left to the runtime and why.
+#
+# A file is parsed with Prism and converted to a Refract tree. FileCompiler
+# walks the class and module nesting, resolving each constant as Ruby would,
+# and hands each component's body to a ClassCompiler, which matches each
+# definition to the live method before a MethodCompiler rewrites it. The
+# MethodCompiler decides what each call means, using an Environment built once
+# per class body, and leaves Output nodes in the tree where text is appended.
+# The Emitter then lowers those to guarded buffer appends. The compiled
+# definitions are evaluated inside the original nesting under a path of their
+# own, and exceptions are mapped back to the real file.
 #
 # Known differences from uncompiled rendering, all limited to unusual code:
 # - Refinements active in a compiled file don't apply to compiled methods.
