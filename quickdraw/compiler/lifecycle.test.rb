@@ -202,6 +202,68 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a refinement used by one compiled file doesn't reach another" do
+		with_component_files(
+			"refined.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				module LifecycleShout
+					refine(String) { def shout = upcase + "!" }
+				end
+
+				using LifecycleShout
+
+				class LifecycleRefined < Phlex::HTML
+					def view_template = div { "hi".shout }
+				end
+			RUBY
+			"unrefined.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleUnrefined < Phlex::HTML
+					def view_template = div { "hi".respond_to?(:shout).to_s }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleRefined)
+			Phlex::Compiler.compile(LifecycleUnrefined)
+
+			assert_equal LifecycleRefined.new.call, "<div>HI!</div>"
+			assert_equal LifecycleUnrefined.new.call, "<div>false</div>"
+		end
+	end
+
+	test "include and prepend still return the class, and only the component's own methods are compiled" do
+		with_component_files(
+			"mixed_in.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleMixin
+					def content = span { "mixin" }
+				end
+
+				class LifecycleMixedIn < Phlex::HTML
+					def view_template
+						div { content }
+						flush
+					end
+				end
+			RUBY
+		) do
+			assert LifecycleMixedIn.include(LifecycleMixin).equal?(LifecycleMixedIn)
+			assert LifecycleMixedIn.prepend(Module.new).equal?(LifecycleMixedIn)
+			LifecycleMixedIn.__send__(:private, :content)
+
+			Phlex::Compiler.compile(LifecycleMixedIn)
+
+			assert compiled_method?(LifecycleMixedIn, :view_template)
+			refute compiled_method?(LifecycleMixedIn, :content)
+			assert_equal LifecycleMixedIn.new.call, "<div><span>mixin</span></div>"
+
+			# flush was recognised but kept as a call, so overriding it is fine.
+			instance = LifecycleMixedIn.new
+			instance.define_singleton_method(:flush) { nil }
+			assert_equal instance.call, "<div><span>mixin</span></div>"
+		end
+	end
+
 	test "exceptions map to the right line after the file is reloaded with more lines" do
 		with_component_files(
 			"reloaded.rb" => <<~RUBY

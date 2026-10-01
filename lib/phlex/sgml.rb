@@ -453,11 +453,13 @@ class Phlex::SGML
 	def self.include(*modules)
 		super
 		__inlining_changed__(self, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
+		self
 	end
 
 	def self.prepend(*modules)
 		super
 		__inlining_changed__(self, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
+		self
 	end
 
 	# Compiled methods inline elements and helpers as they were at compile

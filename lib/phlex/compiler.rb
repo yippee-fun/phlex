@@ -63,6 +63,10 @@ module Phlex::Compiler
 	end
 
 	PROBE_PATH = "(phlex compiler probe)"
+	SCOPE_PATH = File.expand_path("compiler/scope.rb", __dir__)
+
+	# Bindings handed over by compiler/scope.rb as it's loaded.
+	SCOPES = []
 
 	@enabled = false
 	@generations = 0
@@ -160,7 +164,7 @@ module Phlex::Compiler
 		without_redefinition_warnings do
 			eval(
 				"#{magic_comments(source)}#{formatting_result.source}",
-				TOPLEVEL_BINDING,
+				scope,
 				compiled_path,
 				1
 			)
@@ -224,8 +228,16 @@ module Phlex::Compiler
 		source = Refract::Formatter.new.format_node(wrap_in_namespace(namespace, [report])).source
 
 		Thread.current[:__phlex_compiler_probe__] = nil
-		eval(source, TOPLEVEL_BINDING, PROBE_PATH, 1)
+		eval(source, scope, PROBE_PATH, 1)
 		Thread.current[:__phlex_compiler_probe__] or raise Error, "Reopening the class and module statements didn't reach a class body:\n#{source}"
+	end
+
+	# A fresh top-level binding, so refinements a compiled file activates stay
+	# in it, as they would in a real file. TOPLEVEL_BINDING is shared, and a
+	# `using` evaluated there applies to everything evaluated there after.
+	def self.scope
+		load SCOPE_PATH
+		SCOPES.pop
 	end
 
 	def self.__probe__(component, set)
@@ -275,9 +287,24 @@ module Phlex::Compiler
 		end
 	end
 
-	# `initialize` runs before the component has any state to render into.
+	# The methods the component defines itself. `initialize` runs before the
+	# component has any state to render into.
 	def self.own_methods(component)
-		component.instance_methods(false) + component.private_instance_methods(false) + component.protected_instance_methods(false) - [:initialize]
+		names = component.instance_methods(false) + component.private_instance_methods(false) + component.protected_instance_methods(false) - [:initialize]
+		names.reject { |name| revisibilised?(component, name) }
+	end
+
+	# Changing the visibility of an inherited method lists it on the component,
+	# with the component as its owner, but its source is still the ancestor's.
+	def self.revisibilised?(component, name)
+		location = component.instance_method(name).source_location
+
+		component.ancestors.any? do |ancestor|
+			next false if ancestor.equal?(component)
+
+			defined = ancestor.method_defined?(name, false) || ancestor.private_method_defined?(name, false) || ancestor.protected_method_defined?(name, false)
+			defined && ancestor.instance_method(name).source_location == location
+		end
 	end
 
 	def self.defining_files(component)

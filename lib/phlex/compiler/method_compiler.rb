@@ -157,8 +157,10 @@ module Phlex::Compiler
 			@compiling_calls, @uncompiled_because = compiling_calls, uncompiled_because
 		end
 
+		# Whatever a call compiles to, even a kept call with a compiled block,
+		# relies on the method meaning what it did at compile time.
 		private def compile_call(node)
-			if (element = @environment.element(node.name))
+			compiled = if (element = @environment.element(node.name))
 				element.void ? compile_void_element(node, element.tag) : compile_standard_element(node, element.tag)
 			elsif @environment.helper?(node.name)
 				case node.name
@@ -171,6 +173,9 @@ module Phlex::Compiler
 				else nil
 				end
 			end
+
+			@environment.inlined << node.name if compiled
+			compiled
 		end
 
 		# A forwarded block is evaluated before the element opens and may be nil,
@@ -285,7 +290,9 @@ module Phlex::Compiler
 			in nil | Refract::NilNode
 				true
 			in Refract::CallNode if node.receiver.nil?
-				@environment.element(node.name) || (@environment.helper?(node.name) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw)
+				known = @environment.element(node.name) || (@environment.helper?(node.name) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw)
+				@environment.inlined << node.name if known
+				known
 			in Refract::IfNode
 				returns_nil?(node.statements&.body&.last) && returns_nil?(node.subsequent)
 			in Refract::UnlessNode
@@ -594,6 +601,7 @@ module Phlex::Compiler
 		private def compile_raw(node)
 			case node.arguments&.arguments
 			in [Refract::CallNode[receiver: nil, name: :safe, block: nil, arguments: Refract::ArgumentsNode[arguments: [Refract::StringNode => text]]]] if @environment.helper?(:safe)
+				@environment.inlined << :safe
 				raw(text.unescaped)
 			else
 				keep_call(node, "its argument isn't safe with a string literal")
