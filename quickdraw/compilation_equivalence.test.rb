@@ -24,9 +24,15 @@ class CompilationEquivalenceTest < Quickdraw::Test
 		"refinement_mid_file" => /`using` applies to only part of the file/,
 		"ruby2_keywords" => /marked ruby2_keywords/,
 		"ruby2_keywords_reopened" => /marked ruby2_keywords/,
+		"ruby2_keywords_alias" => /delegate is marked ruby2_keywords/,
+		"ruby2_keywords_alias_elsewhere" => /delegate is marked ruby2_keywords/,
 		"conditional_using" => /isn.t a plain top-level statement naming a constant/,
 		"ruby2_keywords_splat" => /arguments the compiler can.t read/,
-	}.freeze
+		"refinement_same_line" => /`using` applies to only part of the file/,
+	}.merge(
+		# Only CRuby can tell a method made by `def` from one made otherwise.
+		defined?(RubyVM::InstructionSequence) ? {} : { "superseded_definitions" => /the file has changed since it was loaded/ }
+	).freeze
 
 	DEFAULT_SCENARIOS = {
 		"call" => -> (klass) { klass.new.call },

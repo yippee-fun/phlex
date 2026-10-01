@@ -23,16 +23,18 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		@definitions = []
 		@usings = []
 		@keyword_flagged = []
+		@compiled_lines = []
 	end
 
 	def compile(node)
 		@top_level = node.statements
 		visit(node)
+		results = definitions_by_namespace.flat_map do |namespace, definitions|
+			compile_namespace(namespace, definitions)
+		end
 		return [].freeze unless refinements_reproducible?
 
-		definitions_by_namespace.flat_map do |namespace, definitions|
-			compile_namespace(namespace, definitions)
-		end.freeze
+		results.freeze
 	end
 
 	# The `using` statements to put before the compiled definitions.
@@ -69,11 +71,13 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		if node.receiver.nil?
 			case node.name
 			in :using
-				unless @stack[-2].equal?(@top_level) && node.arguments&.arguments in [Refract::ConstantReadNode | Refract::ConstantPathNode]
+				# A refused `using` isn't copied, since its constant or local may
+				# not be reachable from the probe's fresh scope.
+				if @stack[-2].equal?(@top_level) && node.arguments&.arguments in [Refract::ConstantReadNode | Refract::ConstantPathNode]
+					@usings << Scoped.new(namespace: @current_namespace.dup.freeze, node:)
+				else
 					@diagnostics.refuse(node, "this `using` isn't a plain top-level statement naming a constant, which the compiler can't reproduce")
 				end
-
-				@usings << Scoped.new(namespace: @current_namespace.dup.freeze, node:)
 			in :ruby2_keywords
 				@keyword_flagged.concat(ruby2_keywords_names(node).map { |name| Scoped.new(namespace: @current_namespace.dup.freeze, node: name) })
 			else nil
@@ -94,10 +98,13 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# A refinement applies from its `using` to the end of the scope, so it can
-	# only be reproduced for the whole file when every `using` is at the top.
+	# only be reproduced when every `using` comes before the definitions that
+	# are replaced. Definitions above it that are left alone don't matter.
 	private def refinements_reproducible?
-		first_definition = @definitions.map { |definition| definition.node.start_line }.min
-		partial = @usings.find { |using| !using.namespace.empty? || (first_definition && using.node.start_line > first_definition) }
+		first_definition = @compiled_lines.min
+		# A `using` on the same line as the first replaced definition may follow
+		# it, so it's refused too.
+		partial = @usings.find { |using| !using.namespace.empty? || (first_definition && using.node.start_line >= first_definition) }
 		return true unless partial
 
 		@diagnostics.refuse(partial.node, "this `using` applies to only part of the file, which the compiler can't reproduce")
@@ -105,12 +112,22 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# A definition with no live method at its line is usually just one that a
-	# later definition replaced. It means the file has changed since it was
-	# loaded when a live method of the same name has no definition at its own
-	# line, in which case compiling from this file would install the wrong code.
+	# later definition replaced: a live method not made by `def`, such as one
+	# from `attr_reader` or `define_method`, is never a target. It means the
+	# file has changed since it was loaded when a live method of the same name
+	# has no definition at its own line, in which case compiling from this
+	# file would install the wrong code. A compiled method was always made by
+	# `def`, so its line having no definition of it means the same, and
+	# recompiling would leave the compiled method in place.
 	private def definitions_by_namespace
 		orphaned = @targets.values.reject do |target|
 			@definitions.any? { |definition| definition.node.start_line == target.line && definition.node.name == target.name }
+		end
+
+		orphaned.each do |target|
+			next unless target.replaced
+
+			@diagnostics.refuse(target.line, "#{target.name} was compiled from this line, which no longer defines it, so the file has changed since it was loaded")
 		end
 
 		unique_definitions.group_by(&:namespace).filter_map do |namespace, definitions|
@@ -129,13 +146,14 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# Two definitions on one line share a source location, so a live method
-	# there can't be matched to either, whatever their names or classes.
+	# there can't be matched to either, whatever their names or classes. Lines
+	# with no live method on them aren't compiled, so they're left unmatched.
 	private def unique_definitions
-		@definitions.group_by { |definition| definition.node.start_line }.filter_map do |_line, definitions|
-			next definitions.first if definitions.one?
+		@definitions.group_by { |definition| definition.node.start_line }.flat_map do |line, definitions|
+			next definitions if definitions.one? || !@targets.key?(line)
 
 			@diagnostics.refuse(definitions.first.node, "more than one method is defined on this line, so the compiler can't tell which definition is live")
-			nil
+			[]
 		end
 	end
 
@@ -147,7 +165,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 				unmatched << definition
 			elsif target.compiled
 				compiled << definition
-			elsif @keyword_flagged.any? { |flagged| flagged.node == definition.node.name }
+			elsif keyword_flagged?(target)
 				# Matched by name alone, since the mark can sit in a later reopening
 				# of the class, whose statements are different nodes.
 				@diagnostics.refuse(definition.node, "#{definition.node.name} is marked ruby2_keywords in this file, which the compiler can't preserve")
@@ -157,13 +175,28 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		end
 	end
 
+	# Marking an alias marks the body it shares with the method, so the
+	# method's aliases are checked too. Like the method's own name, an alias's
+	# is matched wherever in the file it's marked: telling which class a mark
+	# is in would mean evaluating that class's statements.
+	private def keyword_flagged?(target)
+		return false if @keyword_flagged.empty?
+
+		names = [target.name, *Phlex::Compiler.aliases_sharing(target.component, target.name).map { |_owner, name| name }]
+		@keyword_flagged.any? { |flagged| names.include?(flagged.node) }
+	end
+
 	private def compile_namespace(namespace, definitions)
 		probe = Phlex::Compiler.probe(namespace, usings:)
 		environments = {}.compare_by_identity
 
-		definitions.group_by { |definition| @targets[definition.node.start_line].component }.map do |component, component_definitions|
+		definitions.group_by { |definition| @targets[definition.node.start_line].component }.filter_map do |component, component_definitions|
 			unless probe.component.equal?(component)
-				first = component_definitions.first.node
+				copied, others = component_definitions.partition { |definition| copied?(component, probe.component, definition.node.name) }
+				copied.each { |definition| @diagnostics.report(definition.node, "#{component}##{definition.node.name} is copied from #{probe.component}'s definition, so it's left alone") }
+				next if others.empty?
+
+				first = others.first.node
 				raise Phlex::Compiler::Error, "#{@path}:#{first.start_line} defines #{component}##{first.name}, but reopening its class and module statements reaches #{probe.component.inspect}"
 			end
 
@@ -172,15 +205,33 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 			visibilities = {}
 
 			component_definitions.each do |definition|
-				compiled = Phlex::Compiler::MethodCompiler.new(environment, @path, diagnostics: @diagnostics).compile(definition.node, keep_uncompiled: @recompile)
+				# The original is reinstalled only over a compiled method. One that
+				# was never replaced is already live, and copying it could put it
+				# below a `using` it was above.
+				keep_uncompiled = @recompile && @targets[definition.node.start_line].replaced
+				compiled = Phlex::Compiler::MethodCompiler.new(environment, @path, diagnostics: @diagnostics).compile(definition.node, keep_uncompiled:)
 				next unless compiled
 
 				snippets << compiled
+				@compiled_lines << definition.node.start_line
 				visibilities[definition.node.name] = visibility_of(component, definition.node.name)
 			end
 
 			Result.new(namespace:, component:, compiled_snippets: snippets.freeze, visibilities: visibilities.freeze, inlined: environment.inlined)
 		end
+	end
+
+	# A method given to `define_method` from another module keeps that
+	# module's source location, so its definition is reached by reopening
+	# that module rather than the component.
+	private def copied?(component, owner, name)
+		return false unless Module === owner
+
+		defining = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(owner, name)
+		live = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
+		defining.source_location == live.source_location && defining.original_name == live.original_name
+	rescue NameError
+		false
 	end
 
 	private def visibility_of(component, name)
