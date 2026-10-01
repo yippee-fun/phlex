@@ -6,8 +6,11 @@
 # Built once per class body and shared by the methods in it.
 class Phlex::Compiler::Environment
 	ELEMENTS_SOURCE_PATH = Phlex::SGML::Elements.instance_method(:register_element).source_location[0]
-	HELPERS_SOURCE_PATH = Phlex::SGML.instance_method(:plain).source_location[0]
 	HELPER_OWNERS = Set[Phlex::SGML, Phlex::HTML, Phlex::SVG].freeze
+	HELPER_SOURCE_PATHS = Set[
+		Phlex::SGML.instance_method(:plain).source_location[0],
+		Phlex::HTML.instance_method(:doctype).source_location[0],
+	].freeze
 
 	Element = Data.define(:tag, :void)
 
@@ -66,7 +69,7 @@ class Phlex::Compiler::Environment
 		return false unless (method = instance_method(name))
 
 		HELPER_OWNERS.include?(method.owner) &&
-			method.source_location&.first == HELPERS_SOURCE_PATH &&
+			HELPER_SOURCE_PATHS.include?(method.source_location&.first) &&
 			!overridden_by_descendant?(name, method.owner)
 	end
 

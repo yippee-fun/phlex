@@ -13,10 +13,13 @@ module Phlex::Compiler
 		# evaluating it runs the serialiser, which can raise.
 		Piece = Data.define(:parts, :raises)
 
-		def initialize(environment, path)
+		UNINLINABLE_BLOCK = "it has parameters or contains a return, break, next or local assignment"
+
+		def initialize(environment, path, diagnostics: Diagnostics.new(path))
 			super()
 			@environment = environment
 			@path = path
+			@diagnostics = diagnostics
 			@locals = Locals.new
 			@preamble = []
 			@appends = 0
@@ -69,7 +72,11 @@ module Phlex::Compiler
 		# element calls in them stay as calls.
 		visit Refract::DefNode do |node|
 			return node unless @stack.size == 1
-			return node if LocalsScanner.names(node).any? { |name| name.start_with?("__phlex_") }
+
+			if LocalsScanner.names(node).any? { |name| name.start_with?("__phlex_") }
+				@diagnostics.report(node, "#{node.name} isn't compiled because it uses a local that starts with __phlex_")
+				return node
+			end
 
 			@compiling_calls = false
 			parameters = visit(node.parameters)
@@ -137,25 +144,25 @@ module Phlex::Compiler
 		# so it keeps the runtime call. The runtime closes the element however
 		# its content exits, which the enclosure reproduces.
 		private def compile_standard_element(node, tag)
-			return compile_call_with_content(node) if Refract::BlockArgumentNode === node.block
+			return compile_call_with_content(node, because: "its block is forwarded") if Refract::BlockArgumentNode === node.block
 
 			attributes = compile_attributes(node, node.block ? ">" : "></#{tag}>")
-			return compile_call_with_content(node) unless attributes
+			return compile_call_with_content(node, because: "it has positional arguments") unless attributes
 
 			statements([
 				*attributes.hoisted,
 				append(literal("<#{tag}"), *attributes.parts, literal(">")),
-				Output::Enclosed.new(body: compile_content(node.block), closing: "</#{tag}>"),
+				Output::Enclosed.new(body: compile_content(node), closing: "</#{tag}>"),
 				raw("</#{tag}>"),
 				*(flush_after_head if tag == "head"),
 			])
 		end
 
 		private def compile_void_element(node, tag)
-			return compile_call_with_content(node) if node.block
+			return compile_call_with_content(node, because: "it's a void element given a block") if node.block
 
 			attributes = compile_attributes(node, ">")
-			return compile_call_with_content(node) unless attributes
+			return compile_call_with_content(node, because: "it has positional arguments") unless attributes
 
 			statements([
 				*attributes.hoisted,
@@ -173,7 +180,9 @@ module Phlex::Compiler
 
 		# Keeps the runtime call, but still compiles inside its block. Only for
 		# methods that yield without changing self.
-		private def compile_call_with_content(node)
+		private def compile_call_with_content(node, because: nil)
+			keep_call(node, because) if because
+
 			node.copy(
 				arguments: visit(node.arguments),
 				block: compile_block_unguarded(node.block)
@@ -187,13 +196,13 @@ module Phlex::Compiler
 			end
 		end
 
-		private def compile_content(block)
-			case block
+		private def compile_content(node)
+			case node.block
 			in nil
 				[]
-			in Refract::BlockNode if block.body.nil?
+			in Refract::BlockNode => block if block.body.nil?
 				[]
-			in Refract::BlockNode if inlinable?(block)
+			in Refract::BlockNode => block if inlinable?(block)
 				case block.body
 				in Refract::StatementsNode[body:] if returns_nil?(body.last)
 					[visit(block.body)]
@@ -204,7 +213,8 @@ module Phlex::Compiler
 				else
 					inline_dynamic_content(block.body)
 				end
-			in Refract::BlockNode
+			in Refract::BlockNode => block
+				@diagnostics.report(node, "#{node.name}'s block is yielded at runtime because #{UNINLINABLE_BLOCK}")
 				[yield_content(compile_block_unguarded(block))]
 			end
 		end
@@ -290,12 +300,14 @@ module Phlex::Compiler
 				begin
 					normalize_attributes(node.name, static)
 					return Attributes.new(hoisted: [], parts: [literal(Phlex::SGML::Attributes.generate_attributes(static))])
-				rescue
-					# Leave it to the runtime to raise, in case this code is never reached.
+				rescue => e
+					# Left to the runtime to raise, in case this code is never reached.
+					@diagnostics.report(node, "#{node.name}'s attributes are serialised at runtime because serialising them now raised #{e.class}: #{e.message}")
+					return compile_attribute_hash(node.name, keyword_hash, closing)
 				end
 			end
 
-			compile_attribute_pieces(node.name, keyword_hash, closing) || compile_attribute_hash(node.name, keyword_hash, closing)
+			compile_attribute_pieces(node, keyword_hash, closing) || compile_attribute_hash(node.name, keyword_hash, closing)
 		end
 
 		# Serialises each attribute on its own when every key is a literal. Static
@@ -304,28 +316,35 @@ module Phlex::Compiler
 		# value before serialising any, so every value up to the last impure one
 		# is hoisted, and so is every dynamic value when there's more than one,
 		# since serialising one could change what another reads.
-		private def compile_attribute_pieces(element, keyword_hash, closing)
-			normalized_keys = Phlex::SGML::Elements::NORMALIZED_ATTRIBUTES[element]
+		private def compile_attribute_pieces(node, keyword_hash, closing)
+			normalized_keys = Phlex::SGML::Elements::NORMALIZED_ATTRIBUTES[node.name]
 			elements = keyword_hash.elements
 			last_impure = elements.rindex { |assoc| !(Refract::AssocNode === assoc) || !pure?(assoc.value) }
 			several_dynamic = elements.count { |assoc| !(Refract::AssocNode === assoc) || !static_attribute_value(assoc.value) } > 1
 			keys = Set.new
 			hoisted = []
 
-			pieces = catch(:dynamic) do
+			pieces = catch(:together) do
 				elements.each_with_index.map do |assoc, index|
-					throw :dynamic unless assoc in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode => key, value:]
+					throw :together, "a key is splatted or isn't a literal" unless assoc in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode => key, value:]
 
 					key_value = static_value(key)
-					throw :dynamic if normalized_keys&.include?(key_value) || !keys.add?(key_value)
+					throw :together, "#{key_value} is rewritten by the element's attribute normaliser" if normalized_keys&.include?(key_value)
+					throw :together, "#{key_value} is repeated" unless keys.add?(key_value)
 
 					attribute_piece(key, key_value, value, hoisted, hoist: several_dynamic || (last_impure && index <= last_impure))
+				rescue Phlex::ArgumentError => e
+					throw :together, "#{key_value} raised #{e.class}: #{e.message}"
 				end
 			end
 
-			pieces && Attributes.new(hoisted:, parts: attribute_parts(pieces, closing))
-		rescue Phlex::ArgumentError
-			nil
+			case pieces
+			in String => reason
+				@diagnostics.report(node, "#{node.name}'s attributes are serialised together because #{reason}")
+				nil
+			in Array
+				Attributes.new(hoisted:, parts: attribute_parts(pieces, closing))
+			end
 		end
 
 		private def attribute_piece(key, key_value, value, hoisted, hoist:)
@@ -531,7 +550,7 @@ module Phlex::Compiler
 			in [Refract::StringNode | Refract::SymbolNode => text] then plain(text.unescaped)
 			in [Refract::InterpolatedStringNode => interpolated] if pure?(interpolated) then append(expression(escaped(interpolated)))
 			in [Refract::NilNode] then Refract::NilNode.new
-			else nil
+			else keep_call(node, "its argument isn't a literal or an interpolation of literals and variables")
 			end
 		end
 
@@ -541,19 +560,19 @@ module Phlex::Compiler
 			in [Refract::CallNode[receiver: nil, name: :safe, block: nil, arguments: Refract::ArgumentsNode[arguments: [Refract::StringNode => text]]]] if @environment.helper?(:safe)
 				raw(text.unescaped)
 			else
-				nil
+				keep_call(node, "its argument isn't safe with a string literal")
 			end
 		end
 
 		private def compile_whitespace(node)
-			return unless node.arguments.nil?
+			return keep_call(node, "it has arguments") if node.arguments
 			return raw(" ") if node.block.nil?
 
 			compile_wrapped_content(node, " ", " ")
 		end
 
 		private def compile_comment(node)
-			return unless node.arguments.nil?
+			return keep_call(node, "it has arguments") if node.arguments
 
 			compile_wrapped_content(node, "<!-- ", " -->")
 		end
@@ -564,10 +583,9 @@ module Phlex::Compiler
 		# only a block that can be inlined is compiled. A forwarded block, which
 		# may be nil, keeps the runtime call too.
 		private def compile_wrapped_content(node, opening, closing)
-			block = node.block
-			return compile_call_with_content(node) unless inlinable_content?(block)
+			return compile_call_with_content(node, because: "its block is forwarded or #{UNINLINABLE_BLOCK}") unless inlinable_content?(node.block)
 
-			content = compile_content(block)
+			content = compile_content(node)
 			body = [raw(opening), *content, raw(closing)]
 			return statements(body) if Output.static?(content)
 
@@ -583,15 +601,22 @@ module Phlex::Compiler
 		end
 
 		private def compile_doctype(node)
-			return unless node.arguments.nil? && node.block.nil?
+			return keep_call(node, "it has arguments or a block") if node.arguments || node.block
 
 			raw("<!doctype html>")
 		end
 
+		# A fragment always keeps its call, since it drives the render check, but
+		# the content is still compiled.
 		private def compile_fragment(node)
-			return unless node.block in Refract::BlockNode[parameters: nil]
+			return keep_call(node, "its block has parameters or is forwarded") unless node.block in Refract::BlockNode[parameters: nil]
 
 			compile_call_with_content(node)
+		end
+
+		private def keep_call(node, because)
+			@diagnostics.report(node, "#{node.name} keeps its call because #{because}")
+			nil
 		end
 
 		private def escaped(node)

@@ -59,9 +59,7 @@ module Phlex::Compiler
 	# Compiles every file that defines methods on the component or on its
 	# Phlex ancestors. The files must already be loaded.
 	def self.compile(component)
-		unless Class === component && Phlex::SGML > component
-			raise ArgumentError, "Expected a Phlex::SGML subclass, got #{component.inspect}."
-		end
+		component!(component)
 
 		return if component.frozen?
 
@@ -97,6 +95,21 @@ module Phlex::Compiler
 		nil
 	end
 
+	# Why parts of the files defining the component and its Phlex ancestors are
+	# left to the runtime, as Diagnostics::Diagnostic records in file order.
+	# Nothing is compiled; an already compiled method is reported as such.
+	def self.explain(component)
+		component!(component)
+
+		ancestors = component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }
+
+		ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.flat_map do |path|
+			diagnostics = Diagnostics.new(path)
+			FileCompiler.new(path, diagnostics:).compile(parse(File.read(path), path))
+			diagnostics.to_a
+		end
+	end
+
 	# Compiles the Phlex components defined in an already-loaded file.
 	def self.compile_file(path)
 		unless File.exist?(path)
@@ -104,8 +117,7 @@ module Phlex::Compiler
 		end
 
 		source = File.read(path)
-		tree = Refract::Converter.new.visit(Prism.parse(source).value)
-		results = FileCompiler.new(path).compile(tree).reject { |result| result.compiled_snippets.empty? }
+		results = FileCompiler.new(path).compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
 		program = Refract::StatementsNode.new(body: results.map { |result| wrap_in_namespace(result) })
@@ -135,6 +147,16 @@ module Phlex::Compiler
 		end
 
 		nil
+	end
+
+	def self.component!(component)
+		unless Class === component && Phlex::SGML > component
+			raise ArgumentError, "Expected a Phlex::SGML subclass, got #{component.inspect}."
+		end
+	end
+
+	def self.parse(source, path)
+		Refract::Converter.new.visit(Prism.parse(source, filepath: path).value)
 	end
 
 	# Replacing a method is the whole point, so the warning for it is noise.

@@ -3,9 +3,10 @@
 class Phlex::Compiler::FileCompiler < Refract::Visitor
 	Result = Data.define(:namespace, :component, :compiled_snippets, :visibilities)
 
-	def initialize(path)
+	def initialize(path, diagnostics: Phlex::Compiler::Diagnostics.new(path))
 		super()
 		@path = path
+		@diagnostics = diagnostics
 		@current_namespace = []
 		@nesting = []
 		@results = []
@@ -24,7 +25,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		enter(node) do
 			if (component = current_component)
 				environment = Phlex::Compiler::Environment.new(component, nesting: @nesting.dup.freeze)
-				class_compiler = Phlex::Compiler::ClassCompiler.new(environment, @path)
+				class_compiler = Phlex::Compiler::ClassCompiler.new(environment, @path, diagnostics: @diagnostics)
 
 				@results << Result.new(
 					namespace: @current_namespace.dup.freeze,
@@ -50,8 +51,11 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	# Tracks both the lexical scope nodes, for reopening the class in the
 	# compiled source, and the modules they name, resolved as Ruby would.
 	private def enter(node)
+		scope = resolve(node.constant_path)
+		@diagnostics.report(node, "#{Refract::Formatter.new.format_node(node.constant_path).source} couldn't be resolved, so nothing in it is compiled") unless scope
+
 		@current_namespace.push(node)
-		@nesting.push(resolve(node.constant_path))
+		@nesting.push(scope)
 		yield
 	ensure
 		@nesting.pop
@@ -68,6 +72,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		in Refract::ConstantReadNode[name:] then lexical_lookup(name)
 		in Refract::ConstantPathNode[parent: nil, name:] then Object.const_get(name, false)
 		in Refract::ConstantPathNode[parent:, name:] then (scope = resolve(parent)) && scoped_lookup(scope, name)
+		else nil
 		end
 	rescue NameError
 		nil

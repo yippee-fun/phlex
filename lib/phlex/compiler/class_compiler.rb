@@ -3,11 +3,12 @@
 class Phlex::Compiler::ClassCompiler < Refract::Visitor
 	attr_reader :visibilities
 
-	def initialize(environment, path)
+	def initialize(environment, path, diagnostics: Phlex::Compiler::Diagnostics.new(path))
 		super()
 		@environment = environment
 		@component = environment.component
 		@path = path
+		@diagnostics = diagnostics
 		@definitions = []
 		@compiled_snippets = []
 		@visibilities = {}
@@ -19,7 +20,11 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 		# Two definitions of a method on one line share a source location, so
 		# neither can be told apart from the live method.
 		@definitions.group_by { |definition| [definition.name, definition.start_line] }.each_value do |definitions|
-			compile_definition(definitions.first) if definitions.one?
+			if definitions.one?
+				compile_definition(definitions.first)
+			else
+				@diagnostics.report(definitions.first, "#{definitions.first.name} isn't compiled because it's defined more than once on this line")
+			end
 		end
 
 		@compiled_snippets.freeze
@@ -51,12 +56,24 @@ class Phlex::Compiler::ClassCompiler < Refract::Visitor
 			nil
 		end
 
-		return unless method
-		path, lineno = method.source_location
-		return unless @path == path
-		return unless node.start_line == lineno
+		unless method
+			@diagnostics.report(node, "#{node.name} isn't compiled because #{@component} has no such method")
+			return
+		end
 
-		compiled = Phlex::Compiler::MethodCompiler.new(@environment, @path).compile(node)
+		path, lineno = method.source_location
+
+		if Phlex::Compiler::MAP.key?(path)
+			@diagnostics.report(node, "#{node.name} is already compiled")
+			return
+		end
+
+		unless @path == path && node.start_line == lineno
+			@diagnostics.report(node, "#{node.name} isn't compiled because the live method is defined at #{path}:#{lineno}")
+			return
+		end
+
+		compiled = Phlex::Compiler::MethodCompiler.new(@environment, @path, diagnostics: @diagnostics).compile(node)
 		return unless compiled
 
 		@compiled_snippets << compiled
