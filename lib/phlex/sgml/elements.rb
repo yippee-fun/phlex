@@ -169,6 +169,7 @@ module Phlex::SGML::Elements
 
 		__registered_elements__[method_name] = tag
 		__registered_void_elements__.delete(method_name)
+		__registration_changed__(method_name)
 
 		method_name
 	end
@@ -205,7 +206,14 @@ module Phlex::SGML::Elements
 
 		__registered_elements__[method_name] = tag
 		__registered_void_elements__[method_name] = tag
+		__registration_changed__(method_name)
 
 		method_name
+	end
+
+	# Defining the method already reported it, but before the registry named
+	# its new tag, so what inlined it is recompiled again.
+	private def __registration_changed__(method_name)
+		Phlex::Compiler.inlining_changed(self, [method_name]) unless Phlex::COMPILED_SOURCE_MAPS.empty?
 	end
 end

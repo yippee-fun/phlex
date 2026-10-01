@@ -460,15 +460,13 @@ class Phlex::SGML
 		super
 	end
 
-	def self.include(*modules)
-		super
-		__inlining_changed__(self, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
+	def self.include(*modules, **kwargs)
+		__mix_in__(modules) { super }
 		self
 	end
 
-	def self.prepend(*modules)
-		super
-		__inlining_changed__(self, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
+	def self.prepend(*modules, **kwargs)
+		__mix_in__(modules) { super }
 		self
 	end
 
@@ -485,6 +483,15 @@ class Phlex::SGML
 	# has been compiled.
 	private_class_method def self.__inlining_changed__(target, names)
 		Phlex::Compiler.inlining_changed(target, names) unless Phlex::COMPILED_SOURCE_MAPS.empty?
+	end
+
+	# Modules mixed into a class that runs compiled methods are watched for
+	# later changes.
+	private_class_method def self.__mix_in__(modules, &)
+		return yield if Phlex::COMPILED_SOURCE_MAPS.empty?
+
+		watch = [*Phlex::Compiler::MODULE_ANCESTORS.bind_call(self), *Phlex::Compiler.descendants_of(self)].any? { |klass| Phlex::Compiler.inlines?(klass) }
+		Phlex::Compiler.mix_in(self, modules, watch:, &)
 	end
 
 	private def singleton_method_added(method_name)

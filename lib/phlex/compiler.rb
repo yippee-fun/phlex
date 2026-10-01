@@ -29,7 +29,8 @@ require "refract"
 # line, a local named like one the compiler generates (`__phlex_…`), a file
 # edited since it was loaded, and redefining an inlined element or helper on
 # a single instance with `extend` or a singleton method. Redefining one on a
-# class or by including a module recompiles whatever inlined it.
+# class, by including a module, or on a module already included recompiles
+# whatever inlined it.
 #
 # Two differences remain, both deliberate:
 # - Attributes with literal keys are serialised without the attribute cache, so
@@ -53,6 +54,13 @@ module Phlex::Compiler
 
 	# compiled path => Generation
 	MAP = Phlex::COMPILED_SOURCE_MAPS
+
+	MODULE_ANCESTORS = Module.instance_method(:ancestors)
+	MODULE_SINGLETON_CLASS = Module.instance_method(:singleton_class?)
+	KERNEL_SINGLETON_CLASS = Kernel.instance_method(:singleton_class)
+	KERNEL_FROZEN = Kernel.instance_method(:frozen?)
+	MODULE_INSTANCE_METHODS = Module.instance_method(:instance_methods)
+	MODULE_PRIVATE_INSTANCE_METHODS = Module.instance_method(:private_instance_methods)
 	MUTEX = Mutex.new
 
 	# component => the exception that stopped it compiling on first render
@@ -63,6 +71,11 @@ module Phlex::Compiler
 	end
 
 	PROBE_PATH = "(phlex compiler probe)"
+
+	# Entered in MAP as the first compilation starts, so Phlex::SGML's hooks,
+	# which do nothing while it's empty, report changes made meanwhile. No
+	# method is ever defined at this path.
+	STARTED_PATH = "(phlex compiler started)"
 	SCOPE_PATH = File.expand_path("compiler/scope.rb", __dir__)
 
 	# Bindings handed over by compiler/scope.rb as it's loaded.
@@ -70,6 +83,7 @@ module Phlex::Compiler
 
 	@enabled = false
 	@generations = 0
+	@changes = 0
 	@on_failure = DEFAULT_FAILURE_HANDLER
 
 	def self.enabled? = @enabled
@@ -85,6 +99,10 @@ module Phlex::Compiler
 
 	def self.disable!
 		@enabled = false
+	end
+
+	def self.inlines?(component)
+		(inlined = component.instance_variable_get(:@__phlex_inlined__)) && !inlined.empty?
 	end
 
 	def self.compiled?(component)
@@ -154,14 +172,46 @@ module Phlex::Compiler
 	# Compiles the methods that the given components, by default every loaded
 	# one, define in an already-loaded file.
 	def self.compile_file(path, components: loaded_components, recompile: false, inline: true)
+		unless MUTEX.owned?
+			return MUTEX.synchronize { compile_file(path, components:, recompile:, inline:) }
+		end
+
 		unless File.exist?(path)
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
+		MAP[STARTED_PATH] ||= Generation.new(path: STARTED_PATH, lines: {}.freeze)
+
 		source = File.read(path)
-		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
+		targets = targets(path, components, recompile:)
+
+		# Watched before calls are resolved, so a module changed meanwhile is
+		# reported. A change between here and recording what was inlined is
+		# compiled again below.
+		changes = @changes
+		components = targets.each_value.map(&:component).uniq
+
+		# Subclasses inherit what's inlined, so their modules are watched too. A
+		# module that can't be watched only matters if something is inlined.
+		if inline
+			components.flat_map { |component| [component, *descendants_of(component)] }.uniq.each do |component|
+				watch_mixins(component, strict: false)
+			end
+		end
+
+		file_compiler = FileCompiler.new(path, targets:, recompile:, inline:)
 		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
+
+		# Before anything is replaced, modules mixed in meanwhile are watched,
+		# and those of anything running inlined code must be.
+		if inline
+			components.each { |component| watch_mixins(component, strict: false) }
+
+			results.reject { |result| result.inlined.empty? }.map(&:component).uniq.flat_map { |component| [component, *descendants_of(component)] }.uniq.each do |component|
+				watch_mixins(component)
+			end
+		end
 
 		program = Refract::StatementsNode.new(
 			body: [*file_compiler.usings, *results.map { |result| wrap_in_namespace(result.namespace, result.compiled_snippets) }]
@@ -194,25 +244,33 @@ module Phlex::Compiler
 			result.component.instance_variable_set(:@__phlex_inlined__, (inlined | result.inlined).freeze)
 		end
 
+		# A change reported from another thread before what was inlined was
+		# recorded above may not have been seen, so it's compiled again.
+		if inline && @changes != changes
+			results.map(&:component).uniq.each { |component| recompile_unlocked(component) }
+		end
+
 		nil
 	end
 
-	# Called by Phlex::SGML when methods are defined on, removed from or mixed
-	# into a class or singleton class. A compiled class above or below it that
-	# inlined one of them is recompiled, and with the change now loaded it
+	# Called by Phlex::SGML and MixinHooks when methods are defined on, removed
+	# from or mixed into a class, singleton class or module. A compiled class
+	# above or below it, or including it, that inlined one of them is
+	# recompiled, and with the change now loaded it
 	# stops inlining that name, so the change takes effect just as it would
 	# have uncompiled. An override on a single instance can't be compiled for,
 	# so it's refused.
 	def self.inlining_changed(target, names)
 		return if MUTEX.owned?
 
-		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
-		affected = related.select do |klass|
+		@changes += 1
+
+		affected = related(target).select do |klass|
 			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end
 		return if affected.empty?
 
-		if target.singleton_class?
+		if MODULE_SINGLETON_CLASS.bind_call(target)
 			raise Error, "#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling."
 		end
 
@@ -223,14 +281,108 @@ module Phlex::Compiler
 		affected.each { |component| recompile(component) }
 	end
 
+	# The classes whose compiled methods a change to the target can affect.
+	def self.related(target)
+		if MODULE_SINGLETON_CLASS.bind_call(target)
+			MODULE_ANCESTORS.bind_call(target)
+		elsif Class === target
+			MODULE_ANCESTORS.bind_call(target) + descendants_of(target)
+		else
+			descendants_of(Phlex::SGML).map { |klass| MODULE_ANCESTORS.bind_call(klass) }.select { |ancestors| ancestors.include?(target) }.flatten.uniq
+		end
+	end
+
+	# A compiled component inlines elements and helpers its modules define, so
+	# those modules, and any mixed in later, report their changes too. That
+	# includes modules mixed into Phlex::SGML, but not Object's.
+	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Object }, strict: true)
+		unwatched_mixins(component, modules, strict:).each { |mod| KERNEL_SINGLETON_CLASS.bind_call(mod).prepend(mixin_hooks_for(mod)) }
+	end
+
+	# MixinHooks, or a copy keeping `include` and `prepend` as private or
+	# protected as the module has them.
+	def self.mixin_hooks_for(mod)
+		singleton = KERNEL_SINGLETON_CLASS.bind_call(mod)
+		restricted = %i[include prepend].reject { |name| singleton.public_method_defined?(name) }
+		return MixinHooks if restricted.empty?
+
+		Module.new do
+			include MixinHooks
+
+			restricted.each do |name|
+				__send__(singleton.private_method_defined?(name) ? :private : :protected, name)
+			end
+		end
+	end
+
+	# The modules still to be watched. A module whose singleton class is frozen
+	# can't be, so it's refused, or when not `strict`, skipped.
+	def self.unwatched_mixins(component, modules, strict: true)
+		unwatched = modules.reject do |mod|
+			Class === mod || KERNEL_FROZEN.bind_call(mod) || KERNEL_SINGLETON_CLASS.bind_call(mod) < MixinHooks
+		end
+
+		unwatched.reject do |mod|
+			next false unless KERNEL_FROZEN.bind_call(KERNEL_SINGLETON_CLASS.bind_call(mod))
+			next true unless strict
+
+			raise Error, "#{mod} can't be watched for changes because its singleton class is frozen, so #{component} can't inline what it defines."
+		end
+	end
+
+	# Mixes modules into a class or module, refusing any that couldn't be
+	# watched before anything changes. Whatever `include` or `prepend` actually
+	# added is then watched, and what inlined one of its methods recompiled. A
+	# module added in place of those given that can't be watched is already
+	# mixed in, so what it could affect is decompiled before it's refused.
+	# Whatever was added is handled even when `include` or `prepend` raises,
+	# say from an `included` callback.
+	def self.mix_in(target, modules, watch: true)
+		unwatched_mixins(target, modules.grep(Module).flat_map { |mod| MODULE_ANCESTORS.bind_call(mod) }) if watch
+
+		before = MODULE_ANCESTORS.bind_call(target)
+		begin
+			yield
+		ensure
+			mixed_in(target, added_ancestors(before, MODULE_ANCESTORS.bind_call(target)), watch:)
+		end
+	end
+
+	def self.mixed_in(target, added, watch:)
+		if watch
+			begin
+				watch_mixins(target, added)
+			rescue Error
+				related(target).select { |klass| inlines?(klass) }.each { |klass| decompile(klass) }
+				raise
+			end
+		end
+
+		inlining_changed(target, added.flat_map { |mod| method_names(mod) })
+	end
+
+	# The ancestors in `after` that aren't in `before`, counting each
+	# occurrence, since `prepend` can add a module already further up.
+	def self.added_ancestors(before, after)
+		remaining = before.tally
+		after.reject { |mod| remaining[mod].to_i > 0 && (remaining[mod] -= 1) }
+	end
+
+	# The names a module defines, read without dispatching to the module.
+	def self.method_names(mod)
+		MODULE_INSTANCE_METHODS.bind_call(mod) + MODULE_PRIVATE_INSTANCE_METHODS.bind_call(mod)
+	end
+
 	# Compiles the component's methods again, replacing the compiled ones.
 	def self.recompile(component, inline: true)
-		MUTEX.synchronize do
-			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
+		MUTEX.synchronize { recompile_unlocked(component, inline:) }
+	end
 
-			defining_files(component).each do |path|
-				compile_file(path, components: [component], recompile: true, inline:)
-			end
+	def self.recompile_unlocked(component, inline: true)
+		component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
+
+		defining_files(component).each do |path|
+			compile_file(path, components: [component], recompile: true, inline:)
 		end
 	end
 
@@ -390,6 +542,33 @@ module Phlex::Compiler
 			in Refract::ClassNode then scope.copy(body: wrapped, superclass: nil)
 			in Refract::ModuleNode then scope.copy(body: wrapped)
 			end
+		end
+	end
+
+	# Prepended to the singleton class of each module a compiled component
+	# mixes in, to report what Phlex::SGML's own hooks would for a class.
+	module MixinHooks
+		def include(*modules, **kwargs)
+			Phlex::Compiler.mix_in(self, modules) { super }
+		end
+
+		def prepend(*modules, **kwargs)
+			Phlex::Compiler.mix_in(self, modules) { super }
+		end
+
+		private def method_added(method_name)
+			Phlex::Compiler.inlining_changed(self, [method_name])
+			super
+		end
+
+		private def method_removed(method_name)
+			Phlex::Compiler.inlining_changed(self, [method_name])
+			super
+		end
+
+		private def method_undefined(method_name)
+			Phlex::Compiler.inlining_changed(self, [method_name])
+			super
 		end
 	end
 
