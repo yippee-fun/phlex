@@ -228,6 +228,32 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a call kept as it was isn't recorded as inlined, so it can still be overridden on an instance" do
+		with_component_files(
+			"kept.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleKept < Phlex::HTML
+					def view_template
+						div("positional")
+						span { "compiled" }
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleKept)
+			assert compiled_method?(LifecycleKept, :view_template)
+			assert_equal LifecycleKept.instance_variable_get(:@__phlex_inlined__), Set[:span]
+
+			instance = LifecycleKept.new
+			instance.define_singleton_method(:div) { |*, **, &| plain("singleton div") }
+			assert_equal instance.call, "singleton div<span>compiled</span>"
+
+			assert_raises(Phlex::Compiler::Error) do
+				LifecycleKept.new.define_singleton_method(:span) { |**, &| nil }
+			end
+		end
+	end
+
 	test "a refinement used by one compiled file doesn't reach another" do
 		with_component_files(
 			"refined.rb" => <<~RUBY,

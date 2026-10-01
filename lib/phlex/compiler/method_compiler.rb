@@ -157,9 +157,12 @@ module Phlex::Compiler
 			@compiling_calls, @uncompiled_because = compiling_calls, uncompiled_because
 		end
 
-		# Whatever a call compiles to, even a kept call with a compiled block,
-		# relies on the method meaning what it did at compile time.
+		# A call lowered to output, or kept with output compiled inside its block,
+		# relies on the method meaning what it did at compile time. A call kept
+		# as it was, with nothing compiled inside, doesn't.
 		private def compile_call(node)
+			appends = @appends
+
 			compiled = if (element = @environment.element(node.name))
 				element.void ? compile_void_element(node, element.tag) : compile_standard_element(node, element.tag)
 			elsif @environment.helper?(node.name)
@@ -174,7 +177,7 @@ module Phlex::Compiler
 				end
 			end
 
-			@environment.inlined << node.name if compiled
+			@environment.inlined << node.name if compiled && (@appends > appends || !(Refract::CallNode === compiled))
 			compiled
 		end
 
