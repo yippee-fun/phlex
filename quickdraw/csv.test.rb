@@ -143,6 +143,51 @@ CSV
 CSV
 	end
 
+	test "rejects rows with a different number of columns before writing them" do
+		[true, false].each do |render_headers|
+			[true, false].each do |named_headers|
+				example = Class.new(Phlex::CSV) do
+					def escape_csv_injection? = false
+					define_method(:render_headers?) { render_headers }
+
+					define_method(:row_template) do |row|
+						row.each_with_index do |value, index|
+							column(named_headers ? "H#{index}" : nil, value)
+						end
+					end
+				end
+
+				[[], ["c"], ["c", "d", "e"]].each do |row|
+					buffer = +""
+					error = assert_raises(Phlex::RuntimeError) do
+						example.new([["a", "b"], row]).call(buffer)
+					end
+
+					assert_equal error.message, "Column count mismatch: expected 2, got #{row.length}."
+					assert_equal buffer, example.new([["a", "b"]]).call
+				end
+			end
+		end
+	end
+
+	test "checks column counts when the first row is empty" do
+		example = Class.new(Phlex::CSV) do
+			def escape_csv_injection? = false
+
+			def row_template(row)
+				row.each { |value| column(value) }
+			end
+		end
+
+		assert_equal example.new([[], []]).call, "\n\n\n"
+
+		error = assert_raises(Phlex::RuntimeError) do
+			example.new([[], ["a"]]).call
+		end
+
+		assert_equal error.message, "Column count mismatch: expected 0, got 1."
+	end
+
 	test "with a custom around_row" do
 		example = Class.new(Phlex::CSV) do
 			def escape_csv_injection? = true

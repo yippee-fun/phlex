@@ -27,6 +27,7 @@ class Phlex::CSV
 		headers = @_headers
 		has_yielder = respond_to?(:yielder, true)
 		first_row = true
+		expected_number_of_columns = nil
 		render_headers = render_headers?
 
 		if delimiter.length != 1
@@ -52,12 +53,13 @@ class Phlex::CSV
 
 		row_appender = -> {
 			row = row_buffer
+			number_of_columns = row.length
 
 			if first_row
 				first_row = false
+				expected_number_of_columns = number_of_columns
 
 				i = 0
-				number_of_columns = row.length
 				first_col = true
 
 				while i < number_of_columns
@@ -77,10 +79,11 @@ class Phlex::CSV
 				end
 
 				buffer << "\n" if render_headers
+			elsif number_of_columns != expected_number_of_columns
+				raise Phlex::RuntimeError.new("Column count mismatch: expected #{expected_number_of_columns}, got #{number_of_columns}.")
 			end
 
 			i = 0
-			number_of_columns = row.length
 			first_col = true
 
 			while i < number_of_columns
