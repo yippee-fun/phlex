@@ -37,11 +37,6 @@ module Phlex::Compiler
 	MAP = Phlex::COMPILED_SOURCE_MAPS
 	MUTEX = Mutex.new
 
-	Concat = Data.define(:node) do
-		def start_line = nil
-		def accept(visitor) = self
-	end
-
 	@enabled = false
 	@generations = 0
 

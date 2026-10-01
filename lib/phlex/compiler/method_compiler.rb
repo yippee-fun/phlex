@@ -1,30 +1,31 @@
 # frozen_string_literal: true
 
 module Phlex::Compiler
+	# Rewrites one method so that the element and helper calls it makes become
+	# output nodes in its tree, which the Emitter then lowers to buffer appends.
 	class MethodCompiler < Refract::MutationVisitor
-		STATE_LOCAL = :__phlex_state__
-		SELF_LOCAL = :__phlex_self__
+		include Builder
 
-		Attributes = Data.define(:hoisted, :nodes)
-		NO_ATTRIBUTES = Attributes.new(hoisted: [], nodes: [])
+		Attributes = Data.define(:hoisted, :parts)
+		NO_ATTRIBUTES = Attributes.new(hoisted: [], parts: [])
 
-		# One attribute's contribution to the opening tag: nodes that evaluate to
-		# the text to append, and whether evaluating them can raise.
-		Piece = Data.define(:nodes, :raises)
+		# One attribute's contribution to the opening tag, and whether
+		# evaluating it runs the serialiser, which can raise.
+		Piece = Data.define(:parts, :raises)
 
 		def initialize(environment, path)
 			super()
 			@environment = environment
 			@path = path
+			@locals = Locals.new
 			@preamble = []
 			@appends = 0
-			@locals = 0
 			@compiling_calls = true
 		end
 
 		def compile(node)
 			tree = visit(node)
-			(@appends > 0) ? Compactor.new.visit(tree) : nil
+			(@appends > 0) ? Emitter.new(@locals).visit(tree) : nil
 		end
 
 		visit Refract::ClassNode do |node|
@@ -59,7 +60,7 @@ module Phlex::Compiler
 		# Compiled code is evaluated under a path of its own, so `__FILE__` must
 		# keep naming the real file.
 		visit Refract::SourceFileNode do |node|
-			Refract::StringNode.new(unescaped: @path)
+			string(@path)
 		end
 
 		# Generated locals all start with `__phlex_`, so a method that already uses
@@ -77,33 +78,13 @@ module Phlex::Compiler
 
 			node.copy(
 				parameters:,
-				body: Refract::BeginNode.new(
-					statements: Refract::StatementsNode.new(body: [*@preamble, body]),
-					rescue_clause: Refract::RescueNode.new(
-						exceptions: [Refract::ConstantPathNode.new(name: "Exception")],
-						reference: Refract::LocalVariableTargetNode.new(name: :__phlex_exception__),
-						statements: Refract::StatementsNode.new(
-							body: [
-								Refract::CallNode.new(
-									receiver: Refract::ConstantPathNode.new(name: "Kernel"),
-									name: :raise,
-									arguments: Refract::ArgumentsNode.new(
-										arguments: [
-											Refract::CallNode.new(
-												name: :__map_exception__,
-												arguments: Refract::ArgumentsNode.new(
-													arguments: [Refract::LocalVariableReadNode.new(name: :__phlex_exception__)]
-												)
-											),
-										]
-									)
-								),
-							]
-						),
-						subsequent: nil
-					),
-					else_clause: nil,
-					ensure_clause: nil
+				body: begin_node(
+					[*@preamble, body],
+					rescue_clause: rescue_node(
+						[constant("Exception")],
+						Refract::LocalVariableTargetNode.new(name: Locals::EXCEPTION),
+						[call(constant("Kernel"), :raise, call(nil, :__map_exception__, read(Locals::EXCEPTION)))]
+					)
 				)
 			)
 		end
@@ -126,24 +107,9 @@ module Phlex::Compiler
 			return node if appends == @appends
 
 			node.copy(
-				body: Refract::StatementsNode.new(
-					body: [
-						Refract::IfNode.new(
-							inline: false,
-							predicate: Refract::CallNode.new(
-								receiver: Refract::SelfNode.new,
-								name: :equal?,
-								arguments: Refract::ArgumentsNode.new(
-									arguments: [Refract::LocalVariableReadNode.new(name: self_local)]
-								)
-							),
-							statements: Refract::StatementsNode.new(body: [compiled]),
-							subsequent: Refract::ElseNode.new(
-								statements: Refract::StatementsNode.new(body: [node.body])
-							)
-						),
-					]
-				)
+				body: statements([
+					if_node(call(Refract::SelfNode.new, :equal?, read(self_local)), [compiled], else_body: [node.body]),
+				])
 			)
 		end
 
@@ -168,24 +134,21 @@ module Phlex::Compiler
 		end
 
 		# A forwarded block is evaluated before the element opens and may be nil,
-		# so it keeps the runtime call.
+		# so it keeps the runtime call. The runtime closes the element however
+		# its content exits, which the enclosure reproduces.
 		private def compile_standard_element(node, tag)
 			return compile_call_with_content(node) if Refract::BlockArgumentNode === node.block
 
 			attributes = compile_attributes(node, node.block ? ">" : "></#{tag}>")
 			return compile_call_with_content(node) unless attributes
 
-			Refract::StatementsNode.new(
-				body: [
-					*attributes.hoisted,
-					raw("<#{tag}"),
-					*attributes.nodes,
-					raw(">"),
-					*close_on_exit(compile_content(node.block), "</#{tag}>"),
-					raw("</#{tag}>"),
-					*(flush_after_head if tag == "head"),
-				]
-			)
+			statements([
+				*attributes.hoisted,
+				append(literal("<#{tag}"), *attributes.parts, literal(">")),
+				Output::Enclosed.new(body: compile_content(node.block), closing: "</#{tag}>"),
+				raw("</#{tag}>"),
+				*(flush_after_head if tag == "head"),
+			])
 		end
 
 		private def compile_void_element(node, tag)
@@ -194,73 +157,18 @@ module Phlex::Compiler
 			attributes = compile_attributes(node, ">")
 			return compile_call_with_content(node) unless attributes
 
-			Refract::StatementsNode.new(
-				body: [
-					*attributes.hoisted,
-					raw("<#{tag}"),
-					*attributes.nodes,
-					raw(">"),
-				]
-			)
-		end
-
-		# The runtime closes an element's tag however its content exits: an
-		# exception, a `return`, a `throw`. Only content that can exit that way
-		# needs the guard, and it sits between the opening and closing literals
-		# so they still fuse with their neighbours on the normal path.
-		private def close_on_exit(content, closing)
-			return content if content.all? { |node| static?(node) }
-
-			done = local(:done)
-
-			[
-				Refract::LocalVariableWriteNode.new(name: done, value: Refract::FalseNode.new),
-				Refract::BeginNode.new(
-					statements: Refract::StatementsNode.new(
-						body: [*content, Refract::LocalVariableWriteNode.new(name: done, value: Refract::TrueNode.new)]
-					),
-					rescue_clause: nil,
-					else_clause: nil,
-					ensure_clause: Refract::EnsureNode.new(
-						statements: Refract::StatementsNode.new(
-							body: [
-								Refract::UnlessNode.new(
-									inline: false,
-									predicate: Refract::LocalVariableReadNode.new(name: done),
-									statements: Refract::StatementsNode.new(body: [raw(closing)]),
-									else_clause: nil
-								),
-							]
-						)
-					)
-				),
-			]
-		end
-
-		# Folded conditionals only ever choose between literals, so they can't exit.
-		private def static?(node)
-			case node
-			in Concat then node.node in Refract::StringNode | Refract::IfNode | Refract::UnlessNode
-			in Refract::StatementsNode then node.body.all? { |child| static?(child) }
-			else false
-			end
+			statements([
+				*attributes.hoisted,
+				append(literal("<#{tag}"), *attributes.parts, literal(">")),
+			])
 		end
 
 		private def flush_after_head
-			[
-				Refract::IfNode.new(
-					inline: true,
-					predicate: should_render,
-					statements: Refract::StatementsNode.new(body: [Refract::CallNode.new(name: :flush)])
-				),
-			]
+			[if_node(should_render, [call(nil, :flush)], inline: true)]
 		end
 
 		private def should_render
-			Refract::CallNode.new(
-				receiver: Refract::LocalVariableReadNode.new(name: state_local),
-				name: :should_render?
-			)
+			call(read(state_local), :should_render?)
 		end
 
 		# Keeps the runtime call, but still compiles inside its block. Only for
@@ -301,43 +209,26 @@ module Phlex::Compiler
 			end
 		end
 
+		# The runtime outputs a block's value only if the block wrote nothing.
 		private def inline_dynamic_content(body)
-			buffer = local(:content_buffer)
-			length = local(:content_length)
-			content = local(:content)
-			buffer_size = Refract::CallNode.new(
-				receiver: Refract::LocalVariableReadNode.new(name: buffer),
-				name: :bytesize
-			)
+			buffer = @locals.fresh(:content_buffer)
+			length = @locals.fresh(:content_length)
+			content = @locals.fresh(:content)
 
 			[
-				Refract::LocalVariableWriteNode.new(
-					name: buffer,
-					value: Refract::CallNode.new(receiver: Refract::LocalVariableReadNode.new(name: state_local), name: :buffer)
-				),
-				Refract::LocalVariableWriteNode.new(name: length, value: buffer_size),
-				Refract::LocalVariableWriteNode.new(name: content, value: Refract::ParenthesesNode.new(body: visit(body))),
-				Refract::IfNode.new(
-					inline: true,
-					predicate: Refract::CallNode.new(
-						receiver: Refract::LocalVariableReadNode.new(name: length),
-						name: :==,
-						arguments: Refract::ArgumentsNode.new(arguments: [buffer_size])
-					),
-					statements: Refract::StatementsNode.new(body: [implicit_output(Refract::LocalVariableReadNode.new(name: content))])
-				),
+				write(buffer, call(read(state_local), :buffer)),
+				write(length, call(read(buffer), :bytesize)),
+				write(content, Refract::ParenthesesNode.new(body: visit(body))),
+				if_node(call(read(length), :==, call(read(buffer), :bytesize)), [implicit_output(read(content))], inline: true),
 			]
 		end
 
 		private def implicit_output(node)
-			Refract::CallNode.new(
-				name: :__implicit_output__,
-				arguments: Refract::ArgumentsNode.new(arguments: [node])
-			)
+			call(nil, :__implicit_output__, node)
 		end
 
 		private def yield_content(block)
-			Refract::CallNode.new(name: :__yield_content__, block:)
+			call(nil, :__yield_content__, block:)
 		end
 
 		private def inlinable?(block)
@@ -373,19 +264,19 @@ module Phlex::Compiler
 		private def compile_literal_content(node)
 			case node
 			in Refract::StringNode | Refract::SymbolNode then plain(node.unescaped)
-			in Refract::InterpolatedStringNode if pure?(node) then append(escaped(node))
-			in Refract::NilNode then Refract::StatementsNode.new(body: [])
+			in Refract::InterpolatedStringNode if pure?(node) then append(expression(escaped(node)))
+			in Refract::NilNode then statements([])
 			in Refract::IfNode | Refract::UnlessNode
 				folded = fold_conditional(node) { |leaf| literal_content(leaf) }
-				append(folded) if folded && pure?(folded.predicate)
+				append(Output::Conditional.new(folded)) if folded && pure?(folded.predicate)
 			else nil
 			end
 		end
 
 		private def literal_content(node)
 			case node
-			in Refract::StringNode | Refract::SymbolNode then Refract::StringNode.new(unescaped: Phlex::Escape.html_escape(node.unescaped))
-			in Refract::NilNode then Refract::StringNode.new(unescaped: "")
+			in Refract::StringNode | Refract::SymbolNode then string(Phlex::Escape.html_escape(node.unescaped))
+			in Refract::NilNode then string("")
 			else nil
 			end
 		end
@@ -398,7 +289,7 @@ module Phlex::Compiler
 			if (static = static_attributes(keyword_hash))
 				begin
 					normalize_attributes(node.name, static)
-					return Attributes.new(hoisted: [], nodes: [raw(Phlex::SGML::Attributes.generate_attributes(static))])
+					return Attributes.new(hoisted: [], parts: [literal(Phlex::SGML::Attributes.generate_attributes(static))])
 				rescue
 					# Leave it to the runtime to raise, in case this code is never reached.
 				end
@@ -432,174 +323,89 @@ module Phlex::Compiler
 				end
 			end
 
-			pieces && Attributes.new(hoisted:, nodes: attribute_chain(pieces, closing))
+			pieces && Attributes.new(hoisted:, parts: attribute_parts(pieces, closing))
 		rescue Phlex::ArgumentError
 			nil
 		end
 
 		private def attribute_piece(key, key_value, value, hoisted, hoist:)
 			if (static = static_attribute_value(value))
-				return Piece.new(nodes: [serialized_attribute(key_value, static[0])], raises: false)
+				return Piece.new(parts: [literal(serialized_attribute(key_value, static[0]))], raises: false)
 			end
 
 			name = Phlex::SGML::Attributes.attribute_name(key_value)
 			Phlex::SGML::Attributes.validate_attribute_name(key_value, name)
 
-			if (folded = fold_conditional(value) { |leaf| (static = static_attribute_value(leaf)) && serialized_attribute(key_value, static[0]) })
-				folded = hoisted_local(folded, hoisted) if hoist
-				return Piece.new(nodes: [folded], raises: false)
+			if (folded = fold_conditional(value) { |leaf| (static = static_attribute_value(leaf)) && string(serialized_attribute(key_value, static[0])) })
+				part = hoist ? expression(hoisted_local(folded, hoisted)) : Output::Conditional.new(folded)
+				return Piece.new(parts: [part], raises: false)
 			end
 
-			string = Refract::InterpolatedStringNode === value
+			interpolated = Refract::InterpolatedStringNode === value
 			reference = Phlex::SGML::Attributes.reference_attribute?(name)
 			value = hoisted_local(value, hoisted) if hoist
 
-			if string && !reference
-				return Piece.new(nodes: [Refract::StringNode.new(unescaped: " #{name}=\""), quoted(value), Refract::StringNode.new(unescaped: '"')], raises: false)
+			if interpolated && !reference
+				return Piece.new(parts: [literal(" #{name}=\""), expression(quoted(value)), literal('"')], raises: false)
 			end
 
-			Piece.new(
-				nodes: [
-					Refract::CallNode.new(
-						receiver: attributes_module,
-						name: reference ? :reference_attribute : :attribute,
-						arguments: Refract::ArgumentsNode.new(arguments: [key, Refract::StringNode.new(unescaped: name), value])
-					),
-				],
-				raises: true
-			)
+			serializer = reference ? :reference_attribute : :attribute
+			Piece.new(parts: [expression(call(constant("Phlex::SGML::Attributes"), serializer, key, string(name), value))], raises: true)
 		end
 
 		# An interpolation is always a String, so it only needs its quotes escaped.
 		private def quoted(node)
-			Refract::CallNode.new(
-				receiver: node,
-				name: :gsub,
-				arguments: Refract::ArgumentsNode.new(
-					arguments: [Refract::StringNode.new(unescaped: '"'), Refract::StringNode.new(unescaped: "&quot;")]
-				)
-			)
+			call(node, :gsub, string('"'), string("&quot;"))
 		end
 
 		private def hoisted_local(node, hoisted)
-			local = local(:value)
-			hoisted << Refract::LocalVariableWriteNode.new(name: local, value: visit(node))
-			Refract::LocalVariableReadNode.new(name: local)
+			local = @locals.fresh(:value)
+			hoisted << write(local, visit(node))
+			read(local)
 		end
 
 		private def serialized_attribute(key, value)
-			Refract::StringNode.new(unescaped: Phlex::SGML::Attributes.generate_attributes({ key => value }))
+			Phlex::SGML::Attributes.generate_attributes({ key => value })
 		end
 
 		# The runtime builds the whole attribute string before appending any of
 		# it, so if a value is invalid the tag closes empty. Pieces that can raise
-		# are all evaluated into locals in the first slot, and appended after.
-		private def attribute_chain(pieces, closing)
+		# are all evaluated into locals in the first part, and appended after.
+		private def attribute_parts(pieces, closing)
 			raising = pieces.select(&:raises)
-			return pieces.flat_map { |piece| piece.nodes.map { |node| append(node) } } if raising.empty?
+			return pieces.flat_map(&:parts) if raising.empty?
 
-			locals = raising.to_h { |piece| [piece, local(:attribute)] }
-			writes = raising.map { |piece| Refract::LocalVariableWriteNode.new(name: locals[piece], value: piece.nodes.first) }
-			slots = pieces.flat_map { |piece| locals.key?(piece) ? [Refract::LocalVariableReadNode.new(name: locals[piece])] : piece.nodes }
-			slots[0] = close_tag_on_exit(writes, slots[0], closing)
-
-			slots.map { |slot| append(slot) }
+			locals = raising.to_h { |piece| [piece, @locals.fresh(:attribute)] }
+			writes = raising.map { |piece| write(locals[piece], piece.parts.first.node) }
+			parts = pieces.flat_map { |piece| locals.key?(piece) ? [expression(read(locals[piece]))] : piece.parts }
+			parts[0] = Output::Guarded.new(statements: writes, result: parts[0], closing:)
+			parts
 		end
 
 		private def compile_attribute_hash(element, keyword_hash, closing)
 			hash = Refract::HashNode.new(elements: keyword_hash.elements)
 			hoisted = []
 			hash = hoisted_local(hash, hoisted) unless pure?(hash)
-			attributes = local(:attributes)
+			attributes = @locals.fresh(:attributes)
 
 			Attributes.new(
 				hoisted:,
-				nodes: [
-					append(
-						close_tag_on_exit(
-							[Refract::LocalVariableWriteNode.new(name: attributes, value: attributes_call(element, hash))],
-							Refract::LocalVariableReadNode.new(name: attributes),
-							closing
-						)
+				parts: [
+					Output::Guarded.new(
+						statements: [write(attributes, attributes_call(element, hash))],
+						result: expression(read(attributes)),
+						closing:
 					),
 				]
 			)
 		end
 
-		# Evaluates the statements and then the result, appending the closing text
-		# if the statements exit early. The runtime closes the opening tag in an
-		# `ensure`, so a `throw` out of serialising a value closes it too, not
-		# only an exception. The result must not be able to raise. Wrapping the
-		# expression itself keeps it inside the append chain.
-		private def close_tag_on_exit(statements, result, closing)
-			done = local(:done)
-
-			Refract::BeginNode.new(
-				statements: Refract::StatementsNode.new(
-					body: [
-						Refract::LocalVariableWriteNode.new(name: done, value: Refract::FalseNode.new),
-						*statements,
-						Refract::LocalVariableWriteNode.new(name: done, value: Refract::TrueNode.new),
-						result,
-					]
-				),
-				rescue_clause: nil,
-				else_clause: nil,
-				ensure_clause: Refract::EnsureNode.new(
-					statements: Refract::StatementsNode.new(
-						body: [
-							Refract::UnlessNode.new(
-								inline: true,
-								predicate: Refract::LocalVariableReadNode.new(name: done),
-								statements: Refract::StatementsNode.new(
-									body: [
-										Refract::CallNode.new(
-											receiver: Refract::CallNode.new(
-												receiver: Refract::LocalVariableReadNode.new(name: state_local),
-												name: :buffer
-											),
-											name: :<<,
-											arguments: Refract::ArgumentsNode.new(arguments: [Refract::StringNode.new(unescaped: closing)])
-										),
-									]
-								),
-								else_clause: nil
-							),
-						]
-					)
-				)
-			)
-		end
-
 		private def attributes_call(element, hash)
 			if (normalizer = Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS[element])
-				hash = Refract::CallNode.new(
-					receiver: Refract::ConstantPathNode.new(
-						parent: Refract::ConstantPathNode.new(
-							parent: Refract::ConstantPathNode.new(name: "Phlex"),
-							name: "SGML"
-						),
-						name: "Elements"
-					),
-					name: normalizer,
-					arguments: Refract::ArgumentsNode.new(arguments: [hash])
-				)
+				hash = call(constant("Phlex::SGML::Elements"), normalizer, hash)
 			end
 
-			Refract::CallNode.new(
-				name: :__attributes__,
-				arguments: Refract::ArgumentsNode.new(arguments: [hash])
-			)
-		end
-
-		private def attributes_module
-			Refract::ConstantPathNode.new(
-				parent: Refract::ConstantPathNode.new(
-					parent: Refract::ConstantPathNode.new(name: "Phlex"),
-					name: "SGML"
-				),
-				name: "Attributes"
-			)
+			call(nil, :__attributes__, hash)
 		end
 
 		private def normalize_attributes(element, attributes)
@@ -670,7 +476,7 @@ module Phlex::Compiler
 			in Refract::ElseNode
 				node.copy(statements: fold_branch(node.statements, &leaf))
 			in Refract::ParenthesesNode[body: Refract::StatementsNode[body: [inner]]]
-				node.copy(body: Refract::StatementsNode.new(body: [fold_nested(inner, &leaf)]))
+				node.copy(body: statements([fold_nested(inner, &leaf)]))
 			else
 				leaf.call(node) || throw(:dynamic)
 			end
@@ -682,10 +488,10 @@ module Phlex::Compiler
 			fold(node, &leaf)
 		end
 
-		private def fold_branch(statements, &leaf)
-			case statements
-			in nil then Refract::StatementsNode.new(body: [fold(Refract::NilNode.new, &leaf)])
-			in Refract::StatementsNode[body: [statement]] then Refract::StatementsNode.new(body: [fold_nested(statement, &leaf)])
+		private def fold_branch(branch, &leaf)
+			case branch
+			in nil then statements([fold(Refract::NilNode.new, &leaf)])
+			in Refract::StatementsNode[body: [statement]] then statements([fold_nested(statement, &leaf)])
 			else throw :dynamic
 			end
 		end
@@ -722,8 +528,8 @@ module Phlex::Compiler
 
 		private def compile_plain(node)
 			case node.arguments&.arguments
-			in [Refract::StringNode | Refract::SymbolNode => literal] then plain(literal.unescaped)
-			in [Refract::InterpolatedStringNode => string] if pure?(string) then append(escaped(string))
+			in [Refract::StringNode | Refract::SymbolNode => text] then plain(text.unescaped)
+			in [Refract::InterpolatedStringNode => interpolated] if pure?(interpolated) then append(expression(escaped(interpolated)))
 			in [Refract::NilNode] then Refract::NilNode.new
 			else nil
 			end
@@ -732,8 +538,8 @@ module Phlex::Compiler
 		# `raw safe("…")` is a literal that skips escaping.
 		private def compile_raw(node)
 			case node.arguments&.arguments
-			in [Refract::CallNode[receiver: nil, name: :safe, block: nil, arguments: Refract::ArgumentsNode[arguments: [Refract::StringNode => literal]]]] if @environment.helper?(:safe)
-				raw(literal.unescaped)
+			in [Refract::CallNode[receiver: nil, name: :safe, block: nil, arguments: Refract::ArgumentsNode[arguments: [Refract::StringNode => text]]]] if @environment.helper?(:safe)
+				raw(text.unescaped)
 			else
 				nil
 			end
@@ -763,13 +569,9 @@ module Phlex::Compiler
 
 			content = compile_content(block)
 			body = [raw(opening), *content, raw(closing)]
-			return Refract::StatementsNode.new(body:) if content.all? { |node| static?(node) }
+			return statements(body) if Output.static?(content)
 
-			Refract::IfNode.new(
-				inline: false,
-				predicate: should_render,
-				statements: Refract::StatementsNode.new(body:)
-			)
+			if_node(should_render, body)
 		end
 
 		private def inlinable_content?(block)
@@ -792,61 +594,51 @@ module Phlex::Compiler
 			compile_call_with_content(node)
 		end
 
-		private def plain(value)
-			raw(Phlex::Escape.html_escape(value))
-		end
-
-		private def raw(value)
-			value => String
-
-			append(Refract::StringNode.new(unescaped: value))
-		end
-
 		private def escaped(node)
-			Refract::CallNode.new(
-				receiver: Refract::ConstantPathNode.new(
-					parent: Refract::ConstantPathNode.new(name: "Phlex"),
-					name: "Escape"
-				),
-				name: :html_escape,
-				arguments: Refract::ArgumentsNode.new(arguments: [node])
-			)
+			call(constant("Phlex::Escape"), :html_escape, node)
 		end
 
-		# Appends a literal, or an expression that evaluates to a String.
-		private def append(node)
+		private def plain(text)
+			raw(Phlex::Escape.html_escape(text))
+		end
+
+		private def raw(text)
+			append(literal(text))
+		end
+
+		private def literal(text)
+			text => String
+
+			Output::Literal.new(text)
+		end
+
+		private def expression(node)
+			Output::Expression.new(node)
+		end
+
+		private def append(*parts)
 			@appends += 1
 			state_local
 
-			Refract::StatementsNode.new(body: [Concat.new(node)])
-		end
-
-		private def local(purpose)
-			:"__phlex_#{purpose}_#{@locals += 1}__"
+			Output::Append.new(parts:)
 		end
 
 		private def state_local
 			unless @state_local_set
-				@preamble << Refract::LocalVariableWriteNode.new(
-					name: STATE_LOCAL,
-					value: Refract::InstanceVariableReadNode.new(name: :@_state)
-				)
+				@preamble << write(Locals::STATE, Refract::InstanceVariableReadNode.new(name: :@_state))
 				@state_local_set = true
 			end
 
-			STATE_LOCAL
+			Locals::STATE
 		end
 
 		private def self_local
 			unless @self_local_set
-				@preamble << Refract::LocalVariableWriteNode.new(
-					name: SELF_LOCAL,
-					value: Refract::SelfNode.new
-				)
+				@preamble << write(Locals::SELF, Refract::SelfNode.new)
 				@self_local_set = true
 			end
 
-			SELF_LOCAL
+			Locals::SELF
 		end
 	end
 end
