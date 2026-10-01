@@ -61,4 +61,18 @@ module Phlex::Compiler::Builder
 	private def ensure_node(body)
 		Refract::EnsureNode.new(statements: statements(body))
 	end
+
+	private def buffer
+		call(read(state_local), :buffer)
+	end
+
+	private def should_render
+		call(read(state_local), :should_render?)
+	end
+
+	# The local holding `@_state`. Overridden where reading it must also
+	# declare it.
+	private def state_local
+		Phlex::Compiler::Locals::STATE
+	end
 end

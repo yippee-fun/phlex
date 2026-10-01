@@ -51,4 +51,18 @@ class SVGTest < Quickdraw::Test
 
 		assert_equal component.call, %(<![CDATA[<path d="123"></path>]]>)
 	end
+
+	test "cdata returns nil" do
+		returned = []
+
+		component = Class.new(Phlex::SVG) do
+			define_method(:view_template) do
+				returned << cdata("a")
+				returned << cdata { plain "b" }
+			end
+		end
+
+		component.call
+		assert_equal returned, [nil, nil]
+	end
 end
