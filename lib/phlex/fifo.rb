@@ -2,6 +2,7 @@
 
 # @api private
 class Phlex::FIFO
+	# The byte limits account for cached values, excluding keys and object overhead.
 	def initialize(max_bytesize: 2_000, max_value_bytesize: 2_000)
 		@store = {}
 		@max_bytesize = max_bytesize
@@ -42,14 +43,16 @@ class Phlex::FIFO
 	end
 
 	private def store(digest, key, value)
-		return if value.bytesize > @max_value_bytesize
+		bytesize = value.bytesize
+		# Empty values would retain keys without consuming the eviction budget.
+		return if bytesize.zero? || bytesize > @max_value_bytesize
 
 		@mutex.synchronize do
 			# Check the key definitely doesn't exist now we have the lock
 			return if @store[digest]
 
 			@store[digest] = [key, value].freeze
-			@bytesize += value.bytesize
+			@bytesize += bytesize
 
 			while @bytesize > @max_bytesize
 				_k, v = @store.shift
