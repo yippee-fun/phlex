@@ -3,6 +3,7 @@
 class Phlex::SGML::State
 	def initialize(user_context: {}, output_buffer:, fragments:)
 		@buffer = +""
+		@flushed_bytesize = 0
 		@capturing = false
 		@user_context = user_context
 		@fragments = fragments
@@ -139,6 +140,11 @@ class Phlex::SGML::State
 		new_buffer
 	end
 
+	# Flushing moves bytes out of the buffer without changing how much was written.
+	def output_bytesize
+		@flushed_bytesize + @buffer.bytesize
+	end
+
 	def append(content)
 		# Changed strings no longer have reliable fragment offsets.
 		if caching? && (captured = content.instance_variable_get(:@__phlex_fragments)) && captured[0] == content
@@ -156,6 +162,7 @@ class Phlex::SGML::State
 		buffer = @buffer
 		@output_buffer << buffer.dup
 
+		@flushed_bytesize += buffer.bytesize
 		buffer.clear
 		nil
 	end
