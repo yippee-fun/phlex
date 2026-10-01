@@ -417,12 +417,15 @@ module Phlex::Compiler
 
 		# Serialises each attribute on its own when every key is a literal. Static
 		# values are serialised now, and each dynamic value goes to the helper for
-		# its key with the name checks already done. The values are evaluated in
-		# order, as at runtime, so every value up to the last impure one is hoisted.
+		# its key with the name checks already done. The runtime evaluates every
+		# value before serialising any, so every value up to the last impure one
+		# is hoisted, and so is every dynamic value when there's more than one,
+		# since serialising one could change what another reads.
 		private def compile_attribute_pieces(element, keyword_hash, closing)
 			normalized_keys = Phlex::SGML::Elements::NORMALIZED_ATTRIBUTES[element]
 			elements = keyword_hash.elements
 			last_impure = elements.rindex { |assoc| !(Refract::AssocNode === assoc) || !pure?(assoc.value) }
+			several_dynamic = elements.count { |assoc| !(Refract::AssocNode === assoc) || !static_attribute_value(assoc.value) } > 1
 			keys = Set.new
 			hoisted = []
 
@@ -433,7 +436,7 @@ module Phlex::Compiler
 					key_value = static_value(key)
 					throw :dynamic if normalized_keys&.include?(key_value) || !keys.add?(key_value)
 
-					attribute_piece(key, key_value, value, hoisted, hoist: last_impure && index <= last_impure)
+					attribute_piece(key, key_value, value, hoisted, hoist: several_dynamic || (last_impure && index <= last_impure))
 				end
 			end
 

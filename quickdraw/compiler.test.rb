@@ -135,7 +135,7 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 	end
 
-	test "a conditional over literal attribute values is serialised per branch, and hoisted whole when impure" do
+	test "a conditional over literal attribute values is serialised per branch, and every value is read before any is serialised" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a
 				div(class: active? ? "on" : nil, id: @id)
@@ -149,14 +149,15 @@ class CompilerTest < Quickdraw::Test
 					else
 						""
 					end
+					__phlex_value_2__ = @id
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
-							__phlex_attribute_2__ = ::Phlex::SGML::Attributes.attribute(:id, "id", @id)
+							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
 							__phlex_value_1__
 						rescue ::Exception
 							__phlex_state__.buffer.<<("></div>")
 							raise()
-						end).<<(__phlex_attribute_2__).<<("></div>")
+						end).<<(__phlex_attribute_3__).<<("></div>")
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
