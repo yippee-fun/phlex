@@ -20,6 +20,7 @@ module EquivalenceCases
 				@hash = { x: 1, "y" => "z", _: "root", nested: { deep: true } }
 				@styles = { color: "red", "font-size" => "1px", top: nil }
 				@style_list = ["color: red", "top: 0;", { left: 1 }]
+				@style_set = Set["color: red", "top: 0"]
 				@to_hash = ToHash.new(1, "two")
 				@date = Date.new(2020, 1, 2)
 			end
@@ -33,6 +34,11 @@ module EquivalenceCases
 				div(style: @styles)
 				div(style: @style_list)
 				div(style: @string)
+				div("style" => @styles) # rubocop:disable Style/HashSyntax
+				div("style" => @style_list) # rubocop:disable Style/HashSyntax
+				div("style" => @style_set) # rubocop:disable Style/HashSyntax
+				div("style" => { color: "red" }) # rubocop:disable Style/HashSyntax
+				div("style" => ["color: red", "top: 0"]) # rubocop:disable Style/HashSyntax
 				div(class: safe("<b>"), onclick: safe("alert(1)"))
 				div(data: @to_hash, title: @date)
 				div(class: @string, "class" => "string key") # rubocop:disable Style/HashSyntax

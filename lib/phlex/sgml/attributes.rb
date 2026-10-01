@@ -108,22 +108,19 @@ module Phlex::SGML::Attributes
 		when Time
 			v.respond_to?(:iso8601) ? v.iso8601 : v.strftime("%Y-%m-%dT%H:%M:%S%:z")
 		when Hash
-			case k
-			when :style
+			if name == "style"
 				generate_styles(v).gsub('"', "&quot;")
 			else
 				generate_nested_attributes(v, "#{name}-", buffer)
 			end
 		when Array
-			case k
-			when :style
+			if name == "style"
 				generate_styles(v).gsub('"', "&quot;")
 			else
 				generate_nested_tokens(v)
 			end
 		when Set
-			case k
-			when :style
+			if name == "style"
 				generate_styles(v).gsub('"', "&quot;")
 			else
 				generate_nested_tokens(v.to_a)

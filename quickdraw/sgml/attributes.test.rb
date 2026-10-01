@@ -666,6 +666,21 @@ class AttributesTest < Quickdraw::Test
 		assert_equal output, %(<div style="color: blue;"></div>)
 	end
 
+	test "\"style\", Hash(Symbol, String)" do
+		output = phlex { div("style" => { color: "blue", font_weight: "bold" }) }
+		assert_equal output, %(<div style="color: blue; font-weight: bold;"></div>)
+	end
+
+	test "\"style\", Array(String)" do
+		output = phlex { div("style" => ["color: blue", "font-weight: bold;"]) }
+		assert_equal output, %(<div style="color: blue; font-weight: bold;"></div>)
+	end
+
+	test "\"style\", Set(String)" do
+		output = phlex { div("style" => Set["color: blue"]) }
+		assert_equal output, %(<div style="color: blue;"></div>)
+	end
+
 	test ":style, Hash(*invalid*, String)" do
 		assert_raises(Phlex::ArgumentError) do
 			phlex { div(style: { Object.new => "blue" }) }
