@@ -153,7 +153,7 @@ class Phlex::SGML
 			state = @_state
 			return unless state.should_render?
 
-			state.buffer << content.to_s
+			state.append(content.to_s)
 		when nil, "" # do nothing
 		else
 			raise Phlex::ArgumentError.new("You passed an unsafe object to `raw`.")
@@ -387,7 +387,7 @@ class Phlex::SGML
 
 		case content
 		when Phlex::SGML::SafeObject
-			state.buffer << content.to_s
+			state.append(content.to_s)
 		when String
 			state.buffer << Phlex::Escape.html_escape(content)
 		when Symbol

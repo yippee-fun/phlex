@@ -105,7 +105,7 @@ module Phlex::SGML::Elements
 							if original_length == buffer.bytesize
 								case content
 								when ::Phlex::SGML::SafeObject
-									buffer << content.to_s
+									state.append(content.to_s)
 								when String
 									buffer << ::Phlex::Escape.html_escape(content)
 								when Symbol
@@ -140,7 +140,7 @@ module Phlex::SGML::Elements
 							if original_length == buffer.bytesize
 								case content
 								when ::Phlex::SGML::SafeObject
-									buffer << content.to_s
+									state.append(content.to_s)
 								when String
 									buffer << ::Phlex::Escape.html_escape(content)
 								when Symbol
