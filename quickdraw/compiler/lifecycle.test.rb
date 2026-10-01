@@ -120,6 +120,29 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 	Phlex::Compiler::MethodCompiler.prepend(Sabotage)
 
+	# Runs a block on another thread once a method's calls have been resolved,
+	# standing in for a change made while compiling.
+	module Interleave
+		def self.pending = @pending
+
+		def self.pending=(pending)
+			@pending = pending
+		end
+
+		def compile(node, **)
+			result = super
+
+			if (pending = Interleave.pending)
+				Interleave.pending = nil
+				Thread.new(&pending).join
+			end
+
+			result
+		end
+	end
+
+	Phlex::Compiler::MethodCompiler.prepend(Interleave)
+
 	test "a component that fails to compile on first render is reported once and renders uncompiled" do
 		with_component_files(
 			"failing.rb" => <<~RUBY
@@ -426,6 +449,110 @@ class CompilerLifecycleTest < Quickdraw::Test
 			LifecycleReregistered.register_element :lifecycle_gadget, tag: "new-gadget"
 			assert_equal LifecycleReregistered.new.call, "<new-widget>x</new-widget><new-gadget>y</new-gadget>"
 			assert compiled_method?(LifecycleReregistered, :view_template)
+		end
+	end
+
+	test "a module included only into a subclass is watched when its parent is compiled" do
+		with_component_files(
+			"subclass_mixin.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSubclassOnlyHelpers
+				end
+
+				class LifecycleSubclassMixinParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleSubclassMixinChild < LifecycleSubclassMixinParent
+					include LifecycleSubclassOnlyHelpers
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleSubclassMixinChild)
+
+			LifecycleSubclassOnlyHelpers.define_method(:div) { |**| plain("subclass helper div") }
+			assert_equal LifecycleSubclassMixinChild.new.call, "subclass helper div"
+			assert_equal LifecycleSubclassMixinParent.new.call, "<div>x</div>"
+		end
+	end
+
+	test "prepending a module already further up the ancestry takes effect" do
+		with_component_files(
+			"reprepended.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleReprependedHelpers
+					def lifecycle_badge(**) = plain("helper badge")
+				end
+
+				class LifecycleReprependedParent < Phlex::HTML
+					include LifecycleReprependedHelpers
+				end
+
+				class LifecycleReprepended < LifecycleReprependedParent
+					register_element :lifecycle_badge
+
+					def view_template = lifecycle_badge { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleReprepended)
+			assert_equal LifecycleReprepended.new.call, "<lifecycle-badge>x</lifecycle-badge>"
+
+			LifecycleReprepended.prepend(LifecycleReprependedHelpers)
+			assert_equal LifecycleReprepended.new.call, "helper badge"
+		end
+	end
+
+	test "a module that can't be watched, added in place of the one given, leaves nothing inlined" do
+		with_component_files(
+			"substituted_frozen.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleFrozenSubstitute
+				end
+				LifecycleFrozenSubstitute.singleton_class.freeze
+
+				module LifecycleFrozenSubstituting
+					def self.include(*) = super(LifecycleFrozenSubstitute)
+				end
+
+				class LifecycleFrozenSubstitutingComponent < Phlex::HTML
+					include LifecycleFrozenSubstituting
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenSubstitutingComponent)
+			assert compiled_method?(LifecycleFrozenSubstitutingComponent, :view_template)
+
+			assert_raises(Phlex::Compiler::Error) { LifecycleFrozenSubstituting.include(Module.new) }
+			refute Phlex::Compiler.inlines?(LifecycleFrozenSubstitutingComponent)
+
+			LifecycleFrozenSubstitute.define_method(:div) { |**| plain("substitute div") }
+			assert_equal LifecycleFrozenSubstitutingComponent.new.call, "substitute div"
+		end
+	end
+
+	test "a module changed on another thread while compiling takes effect" do
+		with_component_files(
+			"concurrent.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleConcurrentHelpers
+				end
+
+				class LifecycleConcurrent < Phlex::HTML
+					include LifecycleConcurrentHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Interleave.pending = -> { LifecycleConcurrentHelpers.define_method(:div) { |**| plain("concurrent div") } }
+			Phlex::Compiler.compile(LifecycleConcurrent)
+
+			assert_equal LifecycleConcurrent.new.call, "concurrent div"
+		ensure
+			Interleave.pending = nil
 		end
 	end
 
