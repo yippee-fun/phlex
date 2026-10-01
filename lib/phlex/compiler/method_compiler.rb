@@ -495,7 +495,7 @@ module Phlex::Compiler
 
 		private def set_literal?(node)
 			node.name == :[] && node.block.nil? && node.arguments && (
-				(Refract::ConstantReadNode === node.receiver && node.receiver.name == :Set && @environment.unqualified_set_is_standard?) ||
+				(Refract::ConstantReadNode === node.receiver && node.receiver.name == :Set && @environment.standard_set?) ||
 				(Refract::ConstantPathNode === node.receiver && node.receiver.parent.nil? && node.receiver.name == :Set)
 			)
 		end

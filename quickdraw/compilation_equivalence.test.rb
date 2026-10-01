@@ -15,7 +15,7 @@ class CompilationEquivalenceTest < Quickdraw::Test
 	PENDING = {}.freeze
 
 	# Cases whose every method is expected to be left alone by the compiler.
-	NOTHING_TO_COMPILE = %w[positional_arguments].freeze
+	NOTHING_TO_COMPILE = %w[positional_arguments refinement_mid_file].freeze
 
 	DEFAULT_SCENARIOS = {
 		"call" => -> (klass) { klass.new.call },

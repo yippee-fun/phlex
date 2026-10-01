@@ -16,8 +16,9 @@ class Phlex::Compiler::Diagnostics
 		@diagnostics = []
 	end
 
+	# In file order, whichever pass reported them.
 	def each(&)
-		@diagnostics.each(&)
+		@diagnostics.each_with_index.sort_by { |diagnostic, index| [diagnostic.line || 0, index] }.map(&:first).each(&)
 	end
 
 	def report(node, message)

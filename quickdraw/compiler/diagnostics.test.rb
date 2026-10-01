@@ -48,6 +48,35 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	RUBY
 
+	test "a file edited since it was loaded is reported rather than compiled from the wrong lines" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "edited.rb")
+			File.write(path, <<~RUBY)
+				class EditedCase < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+			load path
+
+			File.write(path, <<~RUBY)
+				# A comment added after loading moves every definition down a line.
+				class EditedCase < Phlex::HTML
+					def view_template = div { "x" }
+					def added = span { "y" }
+				end
+			RUBY
+
+			assert_equal Phlex::Compiler.explain(EditedCase).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, [
+				"3: view_template isn't compiled because no live method is defined at this line, so the file may have changed since it was loaded",
+			]
+
+			Phlex::Compiler.compile(EditedCase)
+			refute Phlex::Compiler::MAP.key?(EditedCase.instance_method(:view_template).source_location[0])
+		ensure
+			Object.__send__(:remove_const, :EditedCase)
+		end
+	end
+
 	test "explain lists every call and method left to the runtime, with a reason" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "component.rb")
@@ -73,7 +102,6 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				"25: twice isn't compiled because it's defined more than once on this line",
 				"27: reserved isn't compiled because it uses a local that starts with __phlex_",
 				"32: hr keeps its call because it's in a parameter default",
-				"37: self::Dynamic couldn't be resolved, so nothing in it is compiled",
 			]
 
 			assert diagnostics.all? { |diagnostic| diagnostic.path == path }

@@ -2,8 +2,8 @@
 
 # What the compiler knows about the class whose methods it's compiling: which
 # bare calls are elements or helpers it can inline, which of those a loaded
-# subclass overrides, and what the lexical scopes around the class body were.
-# Built once per class body and shared by the methods in it.
+# subclass overrides, and whether a bare `Set` in the class body is the
+# standard library's. Built once per class body and shared by its methods.
 class Phlex::Compiler::Environment
 	ELEMENTS_SOURCE_PATH = Phlex::SGML::Elements.instance_method(:register_element).source_location[0]
 	HELPER_OWNERS = Set[Phlex::SGML, Phlex::HTML, Phlex::SVG].freeze
@@ -14,14 +14,16 @@ class Phlex::Compiler::Environment
 
 	Element = Data.define(:tag, :void)
 
-	attr_reader :component, :nesting
+	attr_reader :component
 
-	def initialize(component, nesting: [component])
+	def initialize(component, standard_set: standard_set_on?(component))
 		@component = component
-		@nesting = nesting
+		@standard_set = standard_set
 		@elements = {}
 		@helpers = {}
 	end
+
+	def standard_set? = @standard_set
 
 	# The element a bare call to the method renders, if it's a registered
 	# element that no loaded descendant overrides.
@@ -39,18 +41,11 @@ class Phlex::Compiler::Environment
 		@helpers[name] = resolve_helper(name)
 	end
 
-	# Whether a bare `Set` in the class body resolves to the standard
-	# library's, checking the lexical scopes around it first.
-	def unqualified_set_is_standard?
-		return @unqualified_set_is_standard if defined?(@unqualified_set_is_standard)
-
-		@nesting.reverse_each do |scope|
-			return @unqualified_set_is_standard = scope.const_get(:Set, false).equal?(::Set) if scope.const_defined?(:Set, false)
-		end
-
-		@unqualified_set_is_standard = @component.const_get(:Set).equal?(::Set)
+	# Without the lexical scopes, the class and its ancestors are the best guess.
+	private def standard_set_on?(component)
+		component.const_get(:Set).equal?(::Set)
 	rescue NameError
-		@unqualified_set_is_standard = false
+		false
 	end
 
 	private def resolve_element(name)
