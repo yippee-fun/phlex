@@ -24,7 +24,9 @@ class Phlex::CSV
 		strip_whitespace = trim_whitespace?
 		escape_csv_injection = escape_csv_injection?
 		row_buffer = @_row_buffer
+		row_buffer.clear
 		headers = @_headers
+		headers.clear
 		has_yielder = respond_to?(:yielder, true)
 		first_row = true
 		expected_number_of_columns = nil
@@ -128,7 +130,7 @@ class Phlex::CSV
 				end
 			end
 		else
-			@row_appender = row_appender
+			@_row_appender = row_appender
 			each_item do |record|
 				around_row(record)
 			end
@@ -139,7 +141,7 @@ class Phlex::CSV
 
 	def around_row(...)
 		row_template(...)
-		@row_appender.call
+		@_row_appender.call
 	end
 
 	def filename

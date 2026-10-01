@@ -188,6 +188,24 @@ CSV
 		assert_equal error.message, "Column count mismatch: expected 0, got 1."
 	end
 
+	test "discards a partial row left behind by an exception in row_template" do
+		example = Class.new(Phlex::CSV) do
+			def escape_csv_injection? = false
+
+			def row_template(row)
+				column("a", row)
+				raise "boom" if row == 2
+				column("b", row)
+			end
+		end
+
+		csv = example.new([1, 2])
+		assert_raises(RuntimeError) { csv.call }
+
+		csv.instance_variable_set(:@collection, [1])
+		assert_equal csv.call, "a,b\n1,1\n"
+	end
+
 	test "clears the rejected row so rendering can continue" do
 		example = Class.new(Phlex::CSV) do
 			def escape_csv_injection? = false
