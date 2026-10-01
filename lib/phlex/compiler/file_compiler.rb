@@ -158,7 +158,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	private def compile_namespace(namespace, definitions)
-		probe = Phlex::Compiler.probe(namespace)
+		probe = Phlex::Compiler.probe(namespace, usings:)
 		environments = {}.compare_by_identity
 
 		definitions.group_by { |definition| @targets[definition.node.start_line].component }.map do |component, component_definitions|
@@ -167,7 +167,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 				raise Phlex::Compiler::Error, "#{@path}:#{first.start_line} defines #{component}##{first.name}, but reopening its class and module statements reaches #{probe.component.inspect}"
 			end
 
-			environment = environments[component] ||= Phlex::Compiler::Environment.new(component, standard_set: probe.set.equal?(::Set), inline: @inline)
+			environment = environments[component] ||= Phlex::Compiler::Environment.new(component, standard_set: probe.set.equal?(::Set), method_resolver: probe.method_resolver, inline: @inline)
 			snippets = []
 			visibilities = {}
 
