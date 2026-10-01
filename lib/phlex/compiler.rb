@@ -170,6 +170,7 @@ module Phlex::Compiler
 
 		compiled_path = "#{path} (compiled #{@generations += 1})"
 		aliases = results.flat_map { |result| aliases_sharing(result.component, result.visibilities.keys) }
+		aliases = refreshable(aliases)
 
 		without_redefinition_warnings do
 			eval(
@@ -330,7 +331,7 @@ module Phlex::Compiler
 	# alone. They're matched by source location rather than with `==`, which
 	# doesn't hold for an alias reinstalled with define_method.
 	def self.aliases_sharing(component, names)
-		[component, *descendants_of(component)].reject(&:frozen?).flat_map do |owner|
+		[component, *descendants_of(component)].flat_map do |owner|
 			own_methods(owner).filter_map do |name|
 				method = owner.instance_method(name)
 				original = method.original_name
@@ -349,6 +350,22 @@ module Phlex::Compiler
 
 				[owner, name, component, original, visibility]
 			end
+		end
+	end
+
+	# A frozen class's alias can't be refreshed. One sharing an uncompiled body
+	# still behaves the same once the method is compiled, so it's left alone,
+	# but one sharing a compiled body would keep running it after it's been
+	# replaced, so that's refused.
+	def self.refreshable(aliases)
+		aliases.reject do |owner, name, component, original, _visibility|
+			next false unless owner.frozen?
+
+			if MAP.key?(component.instance_method(original).source_location&.first)
+				raise Error, "#{owner}##{name} is an alias of the compiled #{component}##{original}, which can't be recompiled because #{owner} is frozen."
+			end
+
+			true
 		end
 	end
 

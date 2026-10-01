@@ -123,6 +123,59 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
+	test "a definition that a later `def` replaces doesn't hide the edit" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "replaced.rb")
+			File.write(path, <<~RUBY)
+				class ReplacedCase < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+			load path
+
+			File.write(path, <<~RUBY)
+				class ReplacedCase < Phlex::HTML
+					attr_reader :view_template
+					def view_template = div { "x" }
+				end
+			RUBY
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(ReplacedCase) }
+			assert_equal error.message, "#{path}:3: no live method is defined at this line, so the file has changed since it was loaded"
+		ensure
+			Object.__send__(:remove_const, :ReplacedCase)
+		end
+	end
+
+	test "a ruby2_keywords mark on an alias in another file is refused" do
+		Dir.mktmpdir do |dir|
+			parent = File.join(dir, "parent.rb")
+			child = File.join(dir, "child.rb")
+			File.write(parent, <<~RUBY)
+				class KeywordsParent < Phlex::HTML
+					def delegate(*args) = div { target(*args) }
+					def target(*, name: "positional") = name
+				end
+			RUBY
+			File.write(child, <<~RUBY)
+				class KeywordsChild < KeywordsParent
+					alias_method :forward, :delegate
+					ruby2_keywords :forward
+					def view_template = forward(name: "kwargs")
+				end
+			RUBY
+			load parent
+			load child
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(KeywordsParent) }
+			assert_equal error.message, "#{parent}:2: delegate is marked ruby2_keywords, which the compiler can't preserve"
+			assert_equal KeywordsChild.new.call, "<div>kwargs</div>"
+		ensure
+			Object.__send__(:remove_const, :KeywordsChild)
+			Object.__send__(:remove_const, :KeywordsParent)
+		end
+	end
+
 	test "a call that doesn't define methods doesn't hide the edit" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "registered.rb")

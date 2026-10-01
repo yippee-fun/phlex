@@ -245,6 +245,29 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a frozen descendant's alias of a compiled method refuses recompiling it" do
+		with_component_files(
+			"frozen_alias.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFrozenAliasParent < Phlex::HTML
+					def heading = div { "heading" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenAliasParent)
+			child = Class.new(LifecycleFrozenAliasParent) do
+				alias_method :alternative, :heading
+				def view_template = alternative
+			end
+			child.freeze
+
+			error = assert_raises(Phlex::Compiler::Error) do
+				LifecycleFrozenAliasParent.include(Module.new { def div(**, &) = plain("included div") })
+			end
+			assert error.message.end_with?("#alternative is an alias of the compiled LifecycleFrozenAliasParent#heading, which can't be recompiled because #{child} is frozen.")
+		end
+	end
+
 	test "recompiling leaves a method above a `using` that never compiled alone" do
 		with_component_files(
 			"boundary.rb" => <<~RUBY

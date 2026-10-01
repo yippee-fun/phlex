@@ -5,16 +5,20 @@ module EquivalenceCases
 		# Each `def` here is replaced later in the class, so it isn't live and is
 		# left alone rather than taken as a sign the file has changed.
 		class SupersededDefinitions < Phlex::HTML
+			WRITABLE = true
+
 			def initialize
 				self.title = "from attr_writer"
 				self.name = "from attr_accessor"
 				self.rank = "from attr"
+				self.level = "from attr with a constant"
 			end
 
 			def view_template
 				h1 { title }
 				h2 { name }
 				h3 { rank }
+				h4 { level }
 				p { subtitle }
 				span { label }
 			end
@@ -31,6 +35,11 @@ module EquivalenceCases
 				@rank = "default"
 			end
 			attr :rank, true
+
+			def level=(value)
+				@level = "default"
+			end
+			attr :level, WRITABLE
 
 			def name = "default"
 			def name=(value)

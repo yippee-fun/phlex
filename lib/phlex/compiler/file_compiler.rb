@@ -41,6 +41,13 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		results.freeze
 	end
 
+	# The names the file marks with `ruby2_keywords`, wherever in it they are.
+	def ruby2_keywords_marks(node)
+		@top_level = node.statements
+		visit(node)
+		@keyword_flagged.map(&:node).compact
+	end
+
 	# The `using` statements to put before the compiled definitions.
 	def usings
 		@usings.map(&:node)
@@ -104,7 +111,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 
 		arguments = node.arguments&.arguments || []
 		lines = [node.start_line, node.block&.start_line].compact.uniq
-		writers = node.name == :attr_writer || node.name == :attr_accessor || (node.name == :attr && arguments in [_, Refract::TrueNode])
+		writers = node.name == :attr_writer || node.name == :attr_accessor || (node.name == :attr && attr_writable?(arguments))
 
 		arguments.each do |argument|
 			next unless Refract::SymbolNode === argument || Refract::StringNode === argument
@@ -118,14 +125,30 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		end
 	end
 
+	# `attr :name, writable` defines a writer too when `writable` is truthy,
+	# which only a literal `false` or `nil` rules out.
+	private def attr_writable?(arguments)
+		arguments.length == 2 && !(Refract::FalseNode === arguments[1] || Refract::NilNode === arguments[1])
+	end
+
 	# Whether a call recorded by record_generated accounts for the live
-	# method, which it does only from within the method's own class.
+	# method, which it does only from within the method's own class, and only
+	# if no later `def` in that class would have replaced it.
 	private def generated?(target)
 		@generated.any? do |generated|
-			generated.node == [target.name.name, target.line] && Phlex::Compiler.probe(generated.namespace).component.equal?(target.component)
-		rescue Phlex::Compiler::Error
-			false
+			name, line = generated.node
+			next false unless name == target.name.name && line == target.line && reaches?(generated.namespace, target.component)
+
+			@definitions.none? do |definition|
+				definition.node.name == target.name && definition.node.start_line > line && reaches?(definition.namespace, target.component)
+			end
 		end
+	end
+
+	private def reaches?(namespace, component)
+		Phlex::Compiler.probe(namespace).component.equal?(component)
+	rescue Phlex::Compiler::Error
+		false
 	end
 
 	private def ruby2_keywords_names(node)
@@ -199,7 +222,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 			elsif keyword_flagged?(target)
 				# Matched by name alone, since the mark can sit in a later reopening
 				# of the class, whose statements are different nodes.
-				@diagnostics.refuse(definition.node, "#{definition.node.name} is marked ruby2_keywords in this file, which the compiler can't preserve")
+				@diagnostics.refuse(definition.node, "#{definition.node.name} is marked ruby2_keywords, which the compiler can't preserve")
 			else
 				targeted << definition
 			end
@@ -207,10 +230,20 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# Marking an alias marks the body it shares with the method, so the
-	# method's aliases are checked too.
+	# method's aliases are checked too. The mark can be in any file that
+	# defines the class or an alias's owner, not only this one.
 	private def keyword_flagged?(target)
-		names = [target.name, *Phlex::Compiler.aliases_sharing(target.component, [target.name]).map { |_owner, name| name }]
-		@keyword_flagged.any? { |flagged| names.include?(flagged.node) }
+		aliases = Phlex::Compiler.aliases_sharing(target.component, [target.name])
+		names = [target.name, *aliases.map { |_owner, name| name }]
+		paths = [target.component, *aliases.map(&:first)].uniq.flat_map { |owner| Phlex::Compiler.defining_files(owner) }.uniq - [@path]
+
+		@keyword_flagged.any? { |flagged| names.include?(flagged.node) } ||
+			paths.any? { |path| (ruby2_keywords_marks_in(path) & names).any? }
+	end
+
+	private def ruby2_keywords_marks_in(path)
+		(@marks ||= {})[path] ||= self.class.new(path, targets: {}, diagnostics: Phlex::Compiler::Diagnostics.new(path, strict: false))
+			.ruby2_keywords_marks(Phlex::Compiler.parse(File.read(path), path))
 	end
 
 	private def compile_namespace(namespace, definitions)
