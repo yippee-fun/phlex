@@ -55,37 +55,11 @@ class Phlex::HTML < Phlex::SGML
 			raise Phlex::ArgumentError.new("Expected the tag name to be a Symbol.")
 		end
 
-		if (tag = StandardElements.__registered_elements__[name]) || ((tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z0-9-]+\z/))
-			if attributes.length > 0 # with attributes
-				if block_given # with content block
-					buffer << "<#{tag}" << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << ">"
-					begin
-						if tag == "svg"
-							render Phlex::SVG.new(&)
-						else
-							__yield_content__(&)
-						end
-					ensure
-						buffer << "</#{tag}>"
-					end
-				else # without content
-					buffer << "<#{tag}" << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << "></#{tag}>"
-				end
-			else # without attributes
-				if block_given # with content block
-					buffer << ("<#{tag}>")
-					begin
-						if tag == "svg"
-							render Phlex::SVG.new(&)
-						else
-							__yield_content__(&)
-						end
-					ensure
-						buffer << "</#{tag}>"
-					end
-				else # without content
-					buffer << "<#{tag}></#{tag}>"
-				end
+		if (tag = StandardElements.__registered_elements__[name] || __custom_element_name__(name))
+			if block_given && tag == "svg"
+				__standard_tag__(tag, attributes) { render Phlex::SVG.new(&) }
+			else
+				__standard_tag__(tag, attributes, &)
 			end
 		elsif (tag = VoidElements.__registered_elements__[name])
 			if block_given

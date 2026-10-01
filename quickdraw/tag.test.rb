@@ -258,4 +258,33 @@ HTML
 
 		assert_equal error.message, "Invalid SVG tag: x-widget onclick=alert(1)"
 	end
+
+	[
+		[:my_element, "my-element"],
+		[:foo_bar_baz, "foo-bar-baz"],
+		[:"x-1", "x-1"],
+		[:a1_b2, "a1-b2"],
+		[:foo_, "foo-"],
+		[:"foo--bar", "foo--bar"],
+	].each do |name, expected|
+		test "with valid custom tag name #{name.inspect}" do
+			assert_equal HTMLComponent.call(name), "<#{expected}></#{expected}>"
+			assert_equal SVGComponent.call(name), "<#{expected}></#{expected}>"
+		end
+	end
+
+	[:_foo, :"-foo", :"1-x", :"9_lives", :"Foo-bar", :foo, :-, :_].each do |name|
+		test "with invalid custom tag name #{name.inspect}" do
+			html_error = assert_raises(Phlex::ArgumentError) { HTMLComponent.call(name) }
+			assert_equal html_error.message, "Invalid HTML tag: #{name}"
+
+			svg_error = assert_raises(Phlex::ArgumentError) { SVGComponent.call(name) }
+			assert_equal svg_error.message, "Invalid SVG tag: #{name}"
+		end
+	end
+
+	test "custom tag with attributes and content" do
+		assert_equal HTMLComponent.call(:my_element, id: "a") { "hi" }, %(<my-element id="a">hi</my-element>)
+		assert_equal SVGComponent.call(:my_element, id: "a") { "hi" }, %(<my-element id="a">hi</my-element>)
+	end
 end

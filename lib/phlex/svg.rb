@@ -30,7 +30,6 @@ class Phlex::SVG < Phlex::SGML
 	def tag(name, **attributes, &)
 		state = @_state
 		block_given = block_given?
-		buffer = state.buffer
 
 		unless state.should_render?
 			yield(self) if block_given
@@ -41,30 +40,8 @@ class Phlex::SVG < Phlex::SGML
 			raise Phlex::ArgumentError.new("Expected the tag name to be a Symbol.")
 		end
 
-		if (tag = StandardElements.__registered_elements__[name]) || ((tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z0-9-]+\z/))
-			if attributes.length > 0 # with attributes
-				if block_given # with content block
-					buffer << "<#{tag}" << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << ">"
-					begin
-						__yield_content__(&)
-					ensure
-						buffer << "</#{tag}>"
-					end
-				else # without content
-					buffer << "<#{tag}" << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << "></#{tag}>"
-				end
-			else # without attributes
-				if block_given # with content block
-					buffer << ("<#{tag}>")
-					begin
-						__yield_content__(&)
-					ensure
-						buffer << "</#{tag}>"
-					end
-				else # without content
-					buffer << "<#{tag}></#{tag}>"
-				end
-			end
+		if (tag = StandardElements.__registered_elements__[name] || __custom_element_name__(name))
+			__standard_tag__(tag, attributes, &)
 		else
 			raise Phlex::ArgumentError.new("Invalid SVG tag: #{name}")
 		end
