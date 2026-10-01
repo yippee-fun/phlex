@@ -352,8 +352,10 @@ module Phlex::Compiler
 				true
 			in Refract::CallNode if node.receiver.nil?
 				element(node) || (helper?(node) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw)
-			in Refract::IfNode | Refract::UnlessNode
+			in Refract::IfNode
 				returns_nil?(node.statements&.body&.last) && returns_nil?(node.subsequent)
+			in Refract::UnlessNode
+				returns_nil?(node.statements&.body&.last) && returns_nil?(node.else_clause)
 			in Refract::ElseNode
 				returns_nil?(node.statements&.body&.last)
 			in Refract::CaseNode | Refract::CaseMatchNode
