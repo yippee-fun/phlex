@@ -203,6 +203,27 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "an alias of a compiled method follows it when it's recompiled" do
+		with_component_files(
+			"alias.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleAlias < Phlex::HTML
+					def view_template = alternative
+					def heading = div { "heading" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleAlias)
+			LifecycleAlias.alias_method(:alternative, :heading)
+			LifecycleAlias.__send__(:private, :alternative)
+			assert_equal LifecycleAlias.new.call, "<div>heading</div>"
+
+			LifecycleAlias.include(Module.new { def div(**, &) = plain("included div") })
+			assert_equal LifecycleAlias.new.call, "included div"
+			assert LifecycleAlias.private_method_defined?(:alternative, false)
+		end
+	end
+
 	test "an element defined on an ancestor after a descendant compiled takes effect in the descendant" do
 		with_component_files(
 			"ancestor.rb" => <<~RUBY,

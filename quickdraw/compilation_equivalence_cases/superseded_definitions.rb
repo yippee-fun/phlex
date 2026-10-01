@@ -6,17 +6,31 @@ module EquivalenceCases
 		# left alone rather than taken as a sign the file has changed.
 		class SupersededDefinitions < Phlex::HTML
 			def initialize
-				@title = "from attr_reader"
+				self.title = "from attr_writer"
+				self.name = "from attr_accessor"
 			end
 
 			def view_template
 				h1 { title }
+				h2 { name }
 				p { subtitle }
 				span { label }
 			end
 
 			def title = "default"
 			attr_reader :title
+
+			def title=(value)
+				@title = "default"
+			end
+			attr_writer :title
+
+			def name = "default"
+			def name=(value)
+				@name = "default"
+			end
+
+			attr_accessor :name
 
 			def subtitle = "default"
 			define_method(:subtitle) { "from define_method" }

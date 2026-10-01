@@ -11,6 +11,13 @@ module EquivalenceCases
 		module Unrelated
 			def unrelated = "unrelated"
 		end
+
+		# A component above the `using` whose method compiles to nothing is left
+		# alone too.
+		class Uncompiled < Phlex::HTML
+			def view_template = plain(label)
+			def label = "uncompiled"
+		end
 	end
 end
 

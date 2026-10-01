@@ -98,6 +98,30 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
+	test "a call naming a moved method in another class doesn't hide the edit" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "moved.rb")
+			File.write(path, <<~RUBY)
+				class MovedCase < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+			load path
+
+			File.write(path, <<~RUBY)
+				class MovedRegistry; def self.register(*) = nil; register(:view_template); end
+				class MovedCase < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(MovedCase) }
+			assert_equal error.message, "#{path}:3: no live method is defined at this line, so the file has changed since it was loaded"
+		ensure
+			Object.__send__(:remove_const, :MovedCase)
+		end
+	end
+
 	test "definitions that aren't live, or aren't compiled, aren't refused" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "superseded.rb")

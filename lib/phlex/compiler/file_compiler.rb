@@ -24,17 +24,18 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		@usings = []
 		@keyword_flagged = []
 		@generated = []
+		@compiled_lines = []
 	end
 
 	def compile(node)
 		@top_level = node.statements
 		visit(node)
-		definitions = definitions_by_namespace
-		return [].freeze unless refinements_reproducible?(definitions.values.flatten(1))
-
-		definitions.flat_map do |namespace, definitions|
+		results = definitions_by_namespace.flat_map do |namespace, definitions|
 			compile_namespace(namespace, definitions)
-		end.freeze
+		end
+		return [].freeze unless refinements_reproducible?
+
+		results.freeze
 	end
 
 	# The `using` statements to put before the compiled definitions.
@@ -96,11 +97,27 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	# symbol.
 	private def record_generated(node)
 		lines = [node.start_line, node.block&.start_line].compact.uniq
+		writers = node.name == :attr_writer || node.name == :attr_accessor
 
 		node.arguments&.arguments&.each do |argument|
 			next unless Refract::SymbolNode === argument || Refract::StringNode === argument
 
-			lines.each { |line| @generated << [argument.unescaped, line] }
+			names = [argument.unescaped]
+			names << "#{argument.unescaped}=" if writers
+
+			names.product(lines) do |name, line|
+				@generated << Scoped.new(namespace: @current_namespace.dup.freeze, node: [name, line])
+			end
+		end
+	end
+
+	# Whether a call recorded by record_generated accounts for the live
+	# method, which it does only from within the method's own class.
+	private def generated?(target)
+		@generated.any? do |generated|
+			generated.node == [target.name.name, target.line] && Phlex::Compiler.probe(generated.namespace).component.equal?(target.component)
+		rescue Phlex::Compiler::Error
+			false
 		end
 	end
 
@@ -115,10 +132,10 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# A refinement applies from its `using` to the end of the scope, so it can
-	# only be reproduced when every `using` comes before the definitions being
-	# compiled. Definitions above it that are left alone don't matter.
-	private def refinements_reproducible?(definitions)
-		first_definition = definitions.map { |definition| definition.node.start_line }.min
+	# only be reproduced when every `using` comes before the definitions that
+	# are replaced. Definitions above it that are left alone don't matter.
+	private def refinements_reproducible?
+		first_definition = @compiled_lines.min
 		partial = @usings.find { |using| !using.namespace.empty? || (first_definition && using.node.start_line > first_definition) }
 		return true unless partial
 
@@ -134,7 +151,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	private def definitions_by_namespace
 		orphaned = @targets.values.reject do |target|
 			@definitions.any? { |definition| definition.node.start_line == target.line && definition.node.name == target.name } ||
-				@generated.include?([target.name.name, target.line])
+				generated?(target)
 		end
 
 		unique_definitions.group_by(&:namespace).filter_map do |namespace, definitions|
@@ -201,6 +218,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 				next unless compiled
 
 				snippets << compiled
+				@compiled_lines << definition.node.start_line
 				visibilities[definition.node.name] = visibility_of(component, definition.node.name)
 			end
 

@@ -169,6 +169,7 @@ module Phlex::Compiler
 		formatting_result = Refract::Formatter.new(starting_line: 2).format_node(program)
 
 		compiled_path = "#{path} (compiled #{@generations += 1})"
+		aliases = results.flat_map { |result| aliases_sharing(result.component, result.visibilities.keys) }
 
 		without_redefinition_warnings do
 			eval(
@@ -177,6 +178,11 @@ module Phlex::Compiler
 				compiled_path,
 				1
 			)
+
+			aliases.each do |component, name, original, visibility|
+				component.alias_method(name, original)
+				component.__send__(visibility, name)
+			end
 		end
 
 		lines = {}
@@ -315,6 +321,27 @@ module Phlex::Compiler
 					targets[line] = Target.new(component:, name:, line:, compiled: false)
 				end
 			end
+		end
+	end
+
+	# The component's aliases that still share a body with one of the named
+	# methods, so they can be pointed at its replacement. An alias of an
+	# earlier definition of the method is left alone.
+	def self.aliases_sharing(component, names)
+		own_methods(component).filter_map do |name|
+			method = component.instance_method(name)
+			original = method.original_name
+			next if original == name || !names.include?(original) || method != component.instance_method(original)
+
+			visibility = if component.private_method_defined?(name, false)
+				:private
+			elsif component.protected_method_defined?(name, false)
+				:protected
+			else
+				:public
+			end
+
+			[component, name, original, visibility]
 		end
 	end
 
