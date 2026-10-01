@@ -34,4 +34,20 @@ class FIFOCacheStoreTest < Quickdraw::Test
 
 		assert_equal result, "A, B"
 	end
+
+	test "fetch accepts and ignores options" do
+		store = Phlex::FIFOCacheStore.new
+
+		assert_equal store.fetch("a", expires_in: 10) { "A" }, "A"
+		assert_equal store.fetch("a", expires_in: 10) { "B" }, "A"
+	end
+
+	test "components can pass cache options" do
+		component = Class.new(Phlex::HTML) do
+			def cache_store = @cache_store ||= Phlex::FIFOCacheStore.new
+			def view_template = cache(1, expires_in: 10) { div { "x" } }
+		end
+
+		assert_equal component.new.call, "<div>x</div>"
+	end
 end
