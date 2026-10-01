@@ -98,6 +98,34 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
+	test "definitions that aren't live, or aren't compiled, aren't refused" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "superseded.rb")
+			File.write(path, <<~RUBY)
+				class SupersededUnrelated; def x = 1; def y = 2; end
+
+				class SupersededCase < Phlex::HTML
+					def initialize = @title = "live"
+					def view_template = h1 { title }
+					def title = "default"
+					attr_reader :title
+					def subtitle = "default"
+					define_method(:subtitle) { "live" }
+				end
+			RUBY
+			load path
+
+			assert_equal Phlex::Compiler.explain(SupersededCase).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, []
+
+			Phlex::Compiler.compile(SupersededCase)
+			assert_equal SupersededCase.new.call, "<h1>live</h1>"
+			assert Phlex::Compiler::MAP.key?(SupersededCase.instance_method(:view_template).source_location[0])
+		ensure
+			Object.__send__(:remove_const, :SupersededCase)
+			Object.__send__(:remove_const, :SupersededUnrelated)
+		end
+	end
+
 	test "explain lists every call and method left to the runtime, with a reason" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "component.rb")

@@ -23,14 +23,16 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		@definitions = []
 		@usings = []
 		@keyword_flagged = []
+		@generated = []
 	end
 
 	def compile(node)
 		@top_level = node.statements
 		visit(node)
-		return [].freeze unless refinements_reproducible?
+		definitions = definitions_by_namespace
+		return [].freeze unless refinements_reproducible?(definitions.values.flatten(1))
 
-		definitions_by_namespace.flat_map do |namespace, definitions|
+		definitions.flat_map do |namespace, definitions|
 			compile_namespace(namespace, definitions)
 		end.freeze
 	end
@@ -67,6 +69,8 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	# refused if it's compiled.
 	visit Refract::CallNode do |node|
 		if node.receiver.nil?
+			record_generated(node)
+
 			case node.name
 			in :using
 				unless @stack[-2].equal?(@top_level) && node.arguments&.arguments in [Refract::ConstantReadNode | Refract::ConstantPathNode]
@@ -83,6 +87,22 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		super(node)
 	end
 
+	# A call such as `attr_reader :title` or `define_method(:title) { … }`
+	# may be what defines a live method, whose source location is then the
+	# call's line, or for `define_method` its block's. Any receiverless call
+	# naming a method with a literal is recorded, so a `def` it replaced isn't
+	# mistaken for a sign the file has changed.
+	private def record_generated(node)
+		lines = [node.start_line, node.block&.start_line].compact.uniq
+
+		node.arguments&.arguments&.each do |argument|
+			next unless Refract::SymbolNode === argument || Refract::StringNode === argument
+
+			name = argument.unescaped.to_sym
+			lines.each { |line| @generated << [name, line] }
+		end
+	end
+
 	private def ruby2_keywords_names(node)
 		(node.arguments&.arguments || []).map do |argument|
 			case argument
@@ -94,9 +114,10 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# A refinement applies from its `using` to the end of the scope, so it can
-	# only be reproduced for the whole file when every `using` is at the top.
-	private def refinements_reproducible?
-		first_definition = @definitions.map { |definition| definition.node.start_line }.min
+	# only be reproduced when every `using` comes before the definitions being
+	# compiled. Definitions above it that are left alone don't matter.
+	private def refinements_reproducible?(definitions)
+		first_definition = definitions.map { |definition| definition.node.start_line }.min
 		partial = @usings.find { |using| !using.namespace.empty? || (first_definition && using.node.start_line > first_definition) }
 		return true unless partial
 
@@ -105,12 +126,14 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# A definition with no live method at its line is usually just one that a
-	# later definition replaced. It means the file has changed since it was
-	# loaded when a live method of the same name has no definition at its own
-	# line, in which case compiling from this file would install the wrong code.
+	# later definition, `attr_reader` or `define_method` replaced. It means the
+	# file has changed since it was loaded when a live method of the same name
+	# has nothing defining it at its own line, in which case compiling from
+	# this file would install the wrong code.
 	private def definitions_by_namespace
 		orphaned = @targets.values.reject do |target|
-			@definitions.any? { |definition| definition.node.start_line == target.line && definition.node.name == target.name }
+			@definitions.any? { |definition| definition.node.start_line == target.line && definition.node.name == target.name } ||
+				@generated.include?([target.name, target.line])
 		end
 
 		unique_definitions.group_by(&:namespace).filter_map do |namespace, definitions|
@@ -129,13 +152,14 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# Two definitions on one line share a source location, so a live method
-	# there can't be matched to either, whatever their names or classes.
+	# there can't be matched to either, whatever their names or classes. Lines
+	# with no live method on them aren't compiled, so they're left unmatched.
 	private def unique_definitions
-		@definitions.group_by { |definition| definition.node.start_line }.filter_map do |_line, definitions|
-			next definitions.first if definitions.one?
+		@definitions.group_by { |definition| definition.node.start_line }.flat_map do |line, definitions|
+			next definitions if definitions.one? || !@targets.key?(line)
 
 			@diagnostics.refuse(definitions.first.node, "more than one method is defined on this line, so the compiler can't tell which definition is live")
-			nil
+			[]
 		end
 	end
 

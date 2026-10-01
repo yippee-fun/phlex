@@ -295,13 +295,15 @@ module Phlex::Compiler
 
 	# The lines in the file that define the components' live methods. A method
 	# that's already compiled is traced back through its generation's map, and
-	# is a target again only when recompiling.
+	# is a target again only when recompiling. An alias has the source location
+	# of the method it copied, so it's never a target itself.
 	def self.targets(path, components, recompile: false)
 		components.each_with_object({}) do |component, targets|
 			next if component.frozen? || !live?(component)
 
 			own_methods(component).each do |name|
-				next unless (location = component.instance_method(name).source_location)
+				method = component.instance_method(name)
+				next unless method.original_name == name && (location = method.source_location)
 
 				source_path, line = location
 
