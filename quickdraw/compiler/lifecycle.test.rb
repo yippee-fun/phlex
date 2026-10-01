@@ -202,6 +202,32 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "an element defined on an ancestor after a descendant compiled takes effect in the descendant" do
+		with_component_files(
+			"ancestor.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleAncestor < Phlex::HTML
+				end
+			RUBY
+			"descendant.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDescendant < LifecycleAncestor
+					def view_template = div { "descendant" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleDescendant)
+			assert_equal LifecycleDescendant.new.call, "<div>descendant</div>"
+
+			LifecycleAncestor.class_eval { def div(**, &) = plain("ancestor div") }
+			assert_equal LifecycleDescendant.new.call, "ancestor div"
+			assert compiled_method?(LifecycleDescendant, :view_template)
+
+			LifecycleAncestor.include(Module.new { def plain(content) = super("included #{content}") })
+			assert_equal LifecycleDescendant.new.call, "included ancestor div"
+		end
+	end
+
 	test "a refinement used by one compiled file doesn't reach another" do
 		with_component_files(
 			"refined.rb" => <<~RUBY,

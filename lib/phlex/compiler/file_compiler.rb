@@ -21,9 +21,11 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		@current_namespace = []
 		@definitions = []
 		@usings = []
+		@keyword_flagged = []
 	end
 
 	def compile(node)
+		@top_level = node.statements
 		visit(node)
 		return [].freeze unless refinements_reproducible?
 
@@ -57,18 +59,37 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		nil
 	end
 
-	# Ruby offers no way to read the `ruby2_keywords` flag back, so a compiled
-	# method would lose it.
+	# A `using` is copied into the compiled source, so it has to be a plain
+	# top-level statement naming a constant: one inside a conditional or
+	# using a local would mean something else there. Ruby offers no way to
+	# read the `ruby2_keywords` flag back, so a method marked with it is
+	# refused if it's compiled.
 	visit Refract::CallNode do |node|
 		if node.receiver.nil?
 			case node.name
-			in :using then @usings << Scoped.new(namespace: @current_namespace.dup.freeze, node:)
-			in :ruby2_keywords then @diagnostics.refuse(node, "ruby2_keywords can't be preserved by the compiler")
+			in :using
+				unless @stack[-2].equal?(@top_level) && node.arguments&.arguments in [Refract::ConstantReadNode | Refract::ConstantPathNode]
+					@diagnostics.refuse(node, "this `using` isn't a plain top-level statement naming a constant, which the compiler can't reproduce")
+				end
+
+				@usings << Scoped.new(namespace: @current_namespace.dup.freeze, node:)
+			in :ruby2_keywords
+				@keyword_flagged.concat(ruby2_keywords_names(node).map { |name| Scoped.new(namespace: @current_namespace.dup.freeze, node: name) })
 			else nil
 			end
 		end
 
 		super(node)
+	end
+
+	private def ruby2_keywords_names(node)
+		(node.arguments&.arguments || []).filter_map do |argument|
+			case argument
+			in Refract::SymbolNode then argument.unescaped.to_sym
+			in Refract::DefNode then argument.name
+			else nil
+			end
+		end
 	end
 
 	# A refinement applies from its `using` to the end of the scope, so it can
@@ -106,13 +127,13 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		end.to_h
 	end
 
-	# Two definitions of a method on one line share a source location, so
-	# neither can be told apart from the live method.
+	# Two definitions on one line share a source location, so a live method
+	# there can't be matched to either, whatever their names or classes.
 	private def unique_definitions
-		@definitions.group_by { |definition| [definition.node.name, definition.node.start_line] }.filter_map do |_key, definitions|
+		@definitions.group_by { |definition| definition.node.start_line }.filter_map do |_line, definitions|
 			next definitions.first if definitions.one?
 
-			@diagnostics.refuse(definitions.first.node, "#{definitions.first.node.name} is defined more than once on this line, so the compiler can't tell which is live")
+			@diagnostics.refuse(definitions.first.node, "more than one method is defined on this line, so the compiler can't tell which definition is live")
 			nil
 		end
 	end
@@ -125,6 +146,8 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 				unmatched << definition
 			elsif target.compiled
 				compiled << definition
+			elsif @keyword_flagged.any? { |flagged| flagged.namespace == definition.namespace && flagged.node == definition.node.name }
+				@diagnostics.refuse(definition.node, "#{definition.node.name} is marked ruby2_keywords, which the compiler can't preserve")
 			else
 				targeted << definition
 			end

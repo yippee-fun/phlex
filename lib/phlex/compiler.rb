@@ -91,13 +91,19 @@ module Phlex::Compiler
 		component.instance_variable_get(:@__phlex_compiled__) == true
 	end
 
+	# The failure check and the compilation share the lock, so two first
+	# renders racing each other still compile and report once.
 	def self.compile_on_first_render(component)
-		return if compiled?(component) || FAILURES.key?(component)
+		MUTEX.synchronize do
+			return if compiled?(component) || FAILURES.key?(component)
 
-		compile(component)
-	rescue StandardError, ScriptError => error
-		FAILURES[component] = error
-		@on_failure.call(component, error)
+			begin
+				compile_ancestry(component)
+			rescue StandardError, ScriptError => error
+				FAILURES[component] = error
+				@on_failure.call(component, error)
+			end
+		end
 	end
 
 	# Compiles the methods of the component and its Phlex ancestors wherever
@@ -105,20 +111,20 @@ module Phlex::Compiler
 	def self.compile(component)
 		component!(component)
 
-		return if component.frozen?
+		MUTEX.synchronize { compile_ancestry(component) }
+	end
 
-		MUTEX.synchronize do
-			return if compiled?(component)
+	def self.compile_ancestry(component)
+		return if component.frozen? || compiled?(component)
 
-			ancestors = phlex_ancestors(component).reject { |ancestor| ancestor.frozen? || compiled?(ancestor) }
-			components = ancestors.select { |ancestor| live?(ancestor) }
+		ancestors = phlex_ancestors(component).reject { |ancestor| ancestor.frozen? || compiled?(ancestor) }
+		components = ancestors.select { |ancestor| live?(ancestor) }
 
-			components.flat_map { |ancestor| defining_files(ancestor) }.uniq.each do |path|
-				compile_file(path, components:)
-			end
-
-			ancestors.each { |ancestor| ancestor.instance_variable_set(:@__phlex_compiled__, true) }
+		components.flat_map { |ancestor| defining_files(ancestor) }.uniq.each do |path|
+			compile_file(path, components:)
 		end
+
+		ancestors.each { |ancestor| ancestor.instance_variable_set(:@__phlex_compiled__, true) }
 	end
 
 	# Why parts of the files defining the component and its Phlex ancestors are
@@ -189,15 +195,17 @@ module Phlex::Compiler
 	end
 
 	# Called by Phlex::SGML when methods are defined on, removed from or mixed
-	# into a class or singleton class. A compiled ancestor that inlined one of
-	# them is recompiled, and with the override now loaded it stops inlining
-	# that name, so the change takes effect just as it would have uncompiled.
-	# An override on a single instance can't be compiled for, so it's refused.
+	# into a class or singleton class. A compiled class above or below it that
+	# inlined one of them is recompiled, and with the change now loaded it
+	# stops inlining that name, so the change takes effect just as it would
+	# have uncompiled. An override on a single instance can't be compiled for,
+	# so it's refused.
 	def self.inlining_changed(target, names)
 		return if MUTEX.owned?
 
-		affected = target.ancestors.select do |ancestor|
-			(inlined = ancestor.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
+		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
+		affected = related.select do |klass|
+			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end
 		return if affected.empty?
 
