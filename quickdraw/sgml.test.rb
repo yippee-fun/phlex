@@ -38,4 +38,12 @@ class SGMLTest < Quickdraw::Test
 
 		assert_raises(Phlex::DoubleRenderError) { instance.call }
 	end
+
+	test "can't render a class that isn't a component" do
+		error = assert_raises(Phlex::ArgumentError) do
+			Phlex.html { render String }
+		end
+
+		assert_equal error.message, "You can't render a String."
+	end
 end
