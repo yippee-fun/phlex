@@ -329,14 +329,21 @@ module Phlex::Compiler
 		RubyVM::InstructionSequence.of(method)&.label == method.original_name.name
 	end
 
-	# The names of the aliases, in the component or a descendant, that share a
-	# body with the component's method.
+	# The aliases, in the component or a descendant, that share a body with
+	# the component's method, as [owner, name] pairs. A descendant isn't being
+	# compiled, so it's reflected on without calling its own methods, which it
+	# may have overridden.
 	def self.aliases_sharing(component, name)
-		method = component.instance_method(name)
+		method = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
 
 		[component, *descendants_of(component)].flat_map do |owner|
-			own_methods(owner).select do |alias_name|
-				alias_name != name && owner.instance_method(alias_name).original_name == name && owner.instance_method(alias_name) == method
+			names = owner.instance_methods(false) + owner.private_instance_methods(false) + owner.protected_instance_methods(false)
+
+			names.filter_map do |alias_name|
+				next if alias_name == name
+
+				candidate = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(owner, alias_name)
+				[owner, alias_name] if candidate.original_name == name && candidate == method
 			end
 		end
 	end

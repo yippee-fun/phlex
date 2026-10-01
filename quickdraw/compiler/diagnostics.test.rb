@@ -147,6 +147,34 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
+	test "a descendant overriding instance_method doesn't stop its ancestor compiling" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "reflective.rb")
+			File.write(path, <<~RUBY)
+				class ReflectiveCase < Phlex::HTML
+					def view_template = div { "x" }
+					alias_method :other, :view_template
+				end
+
+				class ReflectiveLegacy
+					ruby2_keywords def other(*args) = args
+				end
+			RUBY
+			load path
+
+			Class.new(ReflectiveCase) do
+				def self.instance_method(*) = raise("overridden")
+				def own = nil
+			end
+
+			Phlex::Compiler.compile(ReflectiveCase)
+			assert Phlex::Compiler::MAP.key?(ReflectiveCase.instance_method(:view_template).source_location[0])
+		ensure
+			Object.__send__(:remove_const, :ReflectiveCase)
+			Object.__send__(:remove_const, :ReflectiveLegacy)
+		end
+	end
+
 	test "a call that doesn't define methods doesn't hide the edit" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "registered.rb")

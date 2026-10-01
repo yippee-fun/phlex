@@ -176,10 +176,21 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	# Marking an alias marks the body it shares with the method, so the
-	# method's aliases are checked too.
+	# method's aliases are checked too. A mark of the alias's name counts only
+	# when it's made in the alias's own class.
 	private def keyword_flagged?(target)
-		names = [target.name, *Phlex::Compiler.aliases_sharing(target.component, target.name)]
-		@keyword_flagged.any? { |flagged| names.include?(flagged.node) }
+		return false if @keyword_flagged.empty?
+		return true if @keyword_flagged.any? { |flagged| flagged.node == target.name }
+
+		Phlex::Compiler.aliases_sharing(target.component, target.name).any? do |owner, name|
+			@keyword_flagged.any? { |flagged| flagged.node == name && reaches?(flagged.namespace, owner) }
+		end
+	end
+
+	private def reaches?(namespace, component)
+		Phlex::Compiler.probe(namespace).component.equal?(component)
+	rescue Phlex::Compiler::Error
+		false
 	end
 
 	private def compile_namespace(namespace, definitions)
