@@ -90,14 +90,7 @@ module Phlex::Compiler
 
 			node.copy(
 				parameters:,
-				body: begin_node(
-					[*@preamble, body],
-					rescue_clause: rescue_node(
-						[constant("Exception")],
-						Refract::LocalVariableTargetNode.new(name: Locals::EXCEPTION),
-						[call(constant("Kernel"), :raise, call(nil, :__map_exception__, read(Locals::EXCEPTION)))]
-					)
-				)
+				body: mapping_exceptions([*@preamble, body])
 			)
 		end
 
@@ -118,6 +111,11 @@ module Phlex::Compiler
 		# unchanged, and the original is kept for when it isn't. Each level of
 		# nesting repeats the original bodies inside it, so past a few levels the
 		# calls are left alone.
+		#
+		# The block may outlive the method or be built before rendering starts, so
+		# the compiled body reads the state afresh rather than trusting the one
+		# read on entry, and maps its own exceptions, as the method's rescue may
+		# no longer be on the stack.
 		visit Refract::BlockNode do |node|
 			return super(node) unless @compiling_calls && node.body
 
@@ -136,8 +134,23 @@ module Phlex::Compiler
 
 			node.copy(
 				body: statements([
-					if_node(call(Refract::SelfNode.new, :equal?, read(self_local)), [compiled], else_body: [original]),
+					if_node(
+						call(Refract::SelfNode.new, :equal?, read(self_local)),
+						[mapping_exceptions([write(Locals::STATE, Refract::InstanceVariableReadNode.new(name: :@_state)), compiled])],
+						else_body: [original]
+					),
 				])
+			)
+		end
+
+		private def mapping_exceptions(body)
+			begin_node(
+				body,
+				rescue_clause: rescue_node(
+					[constant("Exception")],
+					Refract::LocalVariableTargetNode.new(name: Locals::EXCEPTION),
+					[call(constant("Kernel"), :raise, call(nil, :__map_exception__, read(Locals::EXCEPTION)))]
+				)
 			)
 		end
 
@@ -705,8 +718,10 @@ module Phlex::Compiler
 			Output::Append.new(parts:)
 		end
 
+		# Guarded blocks read the state themselves, so only output outside them
+		# needs it read on entry.
 		private def state_local
-			unless @state_local_set
+			unless @state_local_set || @guarded_blocks > 0
 				@preamble << write(Locals::STATE, Refract::InstanceVariableReadNode.new(name: :@_state))
 				@state_local_set = true
 			end

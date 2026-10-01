@@ -310,30 +310,34 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 			def a
 				begin
-					__phlex_state__ = @_state
 					__phlex_self__ = self
 					@items.each { |i|
 						if self.equal?(__phlex_self__)
-							(if __phlex_state__.should_render?
-								__phlex_state__.buffer.<<("<li>")
-							end
-							nil)
-							__phlex_done_1__ = false
 							begin
-								__implicit_output__(i)
-								__phlex_done_1__ = true
-							ensure
-								unless __phlex_done_1__
-									(if __phlex_state__.should_render?
-										__phlex_state__.buffer.<<("</li>")
-									end
-									nil)
+								__phlex_state__ = @_state
+								(if __phlex_state__.should_render?
+									__phlex_state__.buffer.<<("<li>")
 								end
+								nil)
+								__phlex_done_1__ = false
+								begin
+									__implicit_output__(i)
+									__phlex_done_1__ = true
+								ensure
+									unless __phlex_done_1__
+										(if __phlex_state__.should_render?
+											__phlex_state__.buffer.<<("</li>")
+										end
+										nil)
+									end
+								end
+								(if __phlex_state__.should_render?
+									__phlex_state__.buffer.<<("</li>")
+								end
+								nil)
+							rescue ::Exception => __phlex_exception__
+								::Kernel.raise(__map_exception__(__phlex_exception__))
 							end
-							(if __phlex_state__.should_render?
-								__phlex_state__.buffer.<<("</li>")
-							end
-							nil)
 						else
 							li {
 								i
