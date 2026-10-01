@@ -283,39 +283,39 @@ module Phlex::SGML::Attributes
 			case token
 			when String
 				token = token.gsub(gsub_from, gsub_to) if gsub_from
-				if i > 0
-					buffer << sep << token
-				else
+				if buffer.empty?
 					buffer << token
+				else
+					buffer << sep << token
 				end
 			when Symbol
 				token = token.name
 				token = token.tr("_", "-") if token.include?("_")
-				if i > 0
-					buffer << sep << token
-				else
+				if buffer.empty?
 					buffer << token
+				else
+					buffer << sep << token
 				end
 			when Integer, Float, Phlex::SGML::SafeObject
-				if i > 0
-					buffer << sep << token.to_s
-				else
+				if buffer.empty?
 					buffer << token.to_s
+				else
+					buffer << sep << token.to_s
 				end
 			when Array
 				if token.length > 0 && (value = generate_nested_tokens(token, sep, gsub_from, gsub_to))
-					if i > 0
-						buffer << sep << value
-					else
+					if buffer.empty?
 						buffer << value
+					else
+						buffer << sep << value
 					end
 				end
 			when Set
 				if token.length > 0 && (value = generate_nested_tokens(token.to_a, sep, gsub_from, gsub_to))
-					if i > 0
-						buffer << sep << value
-					else
+					if buffer.empty?
 						buffer << value
+					else
+						buffer << sep << value
 					end
 				end
 			when nil
