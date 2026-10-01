@@ -28,9 +28,14 @@ module Phlex::Compiler
 			@compiling_calls = true
 		end
 
-		def compile(node)
+		# Returns nil when there's nothing to compile, unless the method is being
+		# recompiled, when the definition must still replace the compiled one.
+		def compile(node, keep_uncompiled: false)
 			tree = visit(node)
-			(@appends > 0) ? Emitter.new(@locals).visit(tree) : nil
+			return tree if @appends == 0 && keep_uncompiled
+			return nil if @appends == 0
+
+			Emitter.new(@locals).visit(tree)
 		end
 
 		visit Refract::ClassNode do |node|
@@ -69,7 +74,7 @@ module Phlex::Compiler
 		end
 
 		# Generated locals all start with `__phlex_`, so a method that already uses
-		# a name like that is left alone rather than risk a collision. Parameter
+		# a name like that is refused rather than risk a collision. Parameter
 		# defaults run before the body, so before the state local exists, so
 		# element calls in them stay as calls.
 		visit Refract::DefNode do |node|

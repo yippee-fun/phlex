@@ -134,13 +134,13 @@ module Phlex::Compiler
 
 	# Compiles the methods that the given components, by default every loaded
 	# one, define in an already-loaded file.
-	def self.compile_file(path, components: loaded_components)
+	def self.compile_file(path, components: loaded_components, recompile: false)
 		unless File.exist?(path)
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
 		source = File.read(path)
-		file_compiler = FileCompiler.new(path, targets: targets(path, components))
+		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:)
 		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
@@ -170,9 +170,43 @@ module Phlex::Compiler
 			result.visibilities.each do |name, visibility|
 				result.component.__send__(visibility, name) unless visibility == :public
 			end
+
+			inlined = result.component.instance_variable_get(:@__phlex_inlined__) || Set.new
+			result.component.instance_variable_set(:@__phlex_inlined__, (inlined | result.inlined).freeze)
 		end
 
 		nil
+	end
+
+	# Called by Phlex::SGML when methods are defined on, removed from or mixed
+	# into a class or singleton class. A compiled ancestor that inlined one of
+	# them is recompiled, and with the override now loaded it stops inlining
+	# that name, so the change takes effect just as it would have uncompiled.
+	# An override on a single instance can't be compiled for, so it's refused.
+	def self.inlining_changed(target, names)
+		return if MUTEX.owned?
+
+		affected = target.ancestors.select do |ancestor|
+			(inlined = ancestor.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
+		end
+		return if affected.empty?
+
+		if target.singleton_class?
+			raise Error, "#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling."
+		end
+
+		affected.each { |component| recompile(component) }
+	end
+
+	# Compiles the component's methods again, replacing the compiled ones.
+	def self.recompile(component)
+		MUTEX.synchronize do
+			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
+
+			defining_files(component).each do |path|
+				compile_file(path, components: [component], recompile: true)
+			end
+		end
 	end
 
 	# Reopens the class and module statements around a definition with nothing
@@ -213,8 +247,9 @@ module Phlex::Compiler
 	end
 
 	# The lines in the file that define the components' live methods. A method
-	# that's already compiled is traced back through its generation's map.
-	def self.targets(path, components)
+	# that's already compiled is traced back through its generation's map, and
+	# is a target again only when recompiling.
+	def self.targets(path, components, recompile: false)
 		components.each_with_object({}) do |component, targets|
 			next if component.frozen? || !live?(component)
 
@@ -226,7 +261,7 @@ module Phlex::Compiler
 				if (generation = MAP[source_path])
 					next unless generation.path == path && (line = generation.lines[line])
 
-					targets[line] = Target.new(component:, name:, line:, compiled: true)
+					targets[line] = Target.new(component:, name:, line:, compiled: !recompile)
 				elsif source_path == path
 					targets[line] = Target.new(component:, name:, line:, compiled: false)
 				end

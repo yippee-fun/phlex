@@ -16,11 +16,15 @@ class Phlex::Compiler::Environment
 
 	attr_reader :component
 
+	# The element and helper names compiled methods have taken the meaning of.
+	attr_reader :inlined
+
 	def initialize(component, standard_set: standard_set_on?(component))
 		@component = component
 		@standard_set = standard_set
 		@elements = {}
 		@helpers = {}
+		@inlined = Set.new
 	end
 
 	def standard_set? = @standard_set
@@ -30,7 +34,9 @@ class Phlex::Compiler::Environment
 	def element(name)
 		return @elements[name] if @elements.key?(name)
 
-		@elements[name] = resolve_element(name)
+		element = @elements[name] = resolve_element(name)
+		@inlined << name if element
+		element
 	end
 
 	# Whether a bare call to the method reaches one of the SGML helpers, such
@@ -38,7 +44,9 @@ class Phlex::Compiler::Environment
 	def helper?(name)
 		return @helpers[name] if @helpers.key?(name)
 
-		@helpers[name] = resolve_helper(name)
+		helper = @helpers[name] = resolve_helper(name)
+		@inlined << name if helper
+		helper
 	end
 
 	# Without the lexical scopes, the class and its ancestors are the best guess.

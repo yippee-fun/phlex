@@ -7,16 +7,17 @@
 # and the enclosing class and module statements are then reopened with a
 # probe so Ruby itself confirms they name that component.
 class Phlex::Compiler::FileCompiler < Refract::Visitor
-	Result = Data.define(:namespace, :component, :compiled_snippets, :visibilities)
+	Result = Data.define(:namespace, :component, :compiled_snippets, :visibilities, :inlined)
 
 	# A statement in the file and the class and module statements around it.
 	Scoped = Data.define(:namespace, :node)
 
-	def initialize(path, targets:, diagnostics: Phlex::Compiler::Diagnostics.new(path))
+	def initialize(path, targets:, diagnostics: Phlex::Compiler::Diagnostics.new(path), recompile: false)
 		super()
 		@path = path
 		@targets = targets
 		@diagnostics = diagnostics
+		@recompile = recompile
 		@current_namespace = []
 		@definitions = []
 		@usings = []
@@ -145,14 +146,14 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 			visibilities = {}
 
 			component_definitions.each do |definition|
-				compiled = Phlex::Compiler::MethodCompiler.new(environment, @path, diagnostics: @diagnostics).compile(definition.node)
+				compiled = Phlex::Compiler::MethodCompiler.new(environment, @path, diagnostics: @diagnostics).compile(definition.node, keep_uncompiled: @recompile)
 				next unless compiled
 
 				snippets << compiled
 				visibilities[definition.node.name] = visibility_of(component, definition.node.name)
 			end
 
-			Result.new(namespace:, component:, compiled_snippets: snippets.freeze, visibilities: visibilities.freeze)
+			Result.new(namespace:, component:, compiled_snippets: snippets.freeze, visibilities: visibilities.freeze, inlined: environment.inlined)
 		end
 	end
 
