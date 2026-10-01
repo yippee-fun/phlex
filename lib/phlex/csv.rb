@@ -80,6 +80,7 @@ class Phlex::CSV
 
 				buffer << "\n" if render_headers
 			elsif number_of_columns != expected_number_of_columns
+				row_buffer.clear
 				raise Phlex::RuntimeError.new("Column count mismatch: expected #{expected_number_of_columns}, got #{number_of_columns}.")
 			end
 
@@ -90,6 +91,7 @@ class Phlex::CSV
 				header, value = row[i]
 
 				unless headers[i] == header
+					row_buffer.clear
 					raise Phlex::RuntimeError.new("Header mismatch at index #{i}: expected #{headers[i]}, got #{header}.")
 				end
 

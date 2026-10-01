@@ -188,6 +188,28 @@ CSV
 		assert_equal error.message, "Column count mismatch: expected 0, got 1."
 	end
 
+	test "clears the rejected row so rendering can continue" do
+		example = Class.new(Phlex::CSV) do
+			def escape_csv_injection? = false
+
+			def row_template(row)
+				row.each { |value| column(value) }
+			end
+
+			def around_row(row)
+				super
+			rescue Phlex::RuntimeError
+				nil
+			end
+		end
+
+		assert_equal example.new([["a", "b"], ["c"], ["d", "e"]]).call, <<~CSV
+			"",""
+			a,b
+			d,e
+		CSV
+	end
+
 	test "with a custom around_row" do
 		example = Class.new(Phlex::CSV) do
 			def escape_csv_injection? = true
