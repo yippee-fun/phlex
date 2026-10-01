@@ -246,10 +246,11 @@ module Phlex::Compiler
 	# The method resolver captures the file's refinements, so element and helper
 	# lookup uses the same lexical scope as the compiled definitions. The
 	# statements are copied without their superclasses, so they only reopen.
+	# Bind and call separately: TruffleRuby's bind_call loses the caller's refinements.
 	def self.probe(namespace, usings: [])
 		report = parse(<<~RUBY, PROBE_PATH).statements.body.first
 			::Phlex::Compiler.__probe__(self, defined?(Set) && Set, ->(component, name) {
-				::Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
+				::Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind(component).call(name)
 			})
 		RUBY
 		program = Refract::StatementsNode.new(body: [*usings, wrap_in_namespace(namespace, [report])])
