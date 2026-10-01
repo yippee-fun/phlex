@@ -779,6 +779,55 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a module with a frozen singleton class is fine when nothing is inlined" do
+		with_component_files(
+			"frozen_uninlined.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleFrozenUninlined
+					def greeting = "hi"
+				end
+				LifecycleFrozenUninlined.singleton_class.freeze
+
+				class LifecycleFrozenUninlinedComponent < Phlex::HTML
+					include LifecycleFrozenUninlined
+
+					def view_template = plain(greeting)
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenUninlinedComponent)
+
+			refute Phlex::Compiler.inlines?(LifecycleFrozenUninlinedComponent)
+			assert_equal LifecycleFrozenUninlinedComponent.new.call, "hi"
+		end
+	end
+
+	test "a module mixed into Phlex::SGML is watched" do
+		with_component_files(
+			"sgml_mixin.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSGMLElements
+					extend Phlex::SGML::Elements
+
+					register_element :lifecycle_everywhere
+				end
+
+				# As if mixed in before anything was compiled, so Phlex::SGML's hook doesn't see it.
+				Module.instance_method(:include).bind_call(Phlex::SGML, LifecycleSGMLElements)
+
+				class LifecycleUsesSGMLMixin < Phlex::HTML
+					def view_template = lifecycle_everywhere { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleUsesSGMLMixin)
+			assert_equal LifecycleUsesSGMLMixin.new.call, "<lifecycle-everywhere>x</lifecycle-everywhere>"
+
+			LifecycleSGMLElements.define_method(:lifecycle_everywhere) { |**| plain("redefined everywhere") }
+			assert_equal LifecycleUsesSGMLMixin.new.call, "redefined everywhere"
+		end
+	end
+
 	test "a module mixed into a class that isn't compiled isn't watched" do
 		with_component_files(
 			"unwatched.rb" => <<~RUBY

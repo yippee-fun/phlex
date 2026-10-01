@@ -191,11 +191,12 @@ module Phlex::Compiler
 		changes = @changes
 		components = targets.each_value.map(&:component).uniq
 
-		# Subclasses inherit what's inlined, so their modules are watched too,
-		# though one that can't be only matters if something is inlined.
+		# Subclasses inherit what's inlined, so their modules are watched too. A
+		# module that can't be watched only matters if something is inlined.
 		if inline
-			components.each { |component| watch_mixins(component) }
-			components.flat_map { |component| descendants_of(component) }.uniq.each { |descendant| watch_mixins(descendant, strict: false) }
+			components.flat_map { |component| [component, *descendants_of(component)] }.uniq.each do |component|
+				watch_mixins(component, strict: false)
+			end
 		end
 
 		file_compiler = FileCompiler.new(path, targets:, recompile:, inline:)
@@ -203,12 +204,12 @@ module Phlex::Compiler
 		return if results.empty?
 
 		# Before anything is replaced, modules mixed in meanwhile are watched,
-		# and those of subclasses inheriting something inlined must be.
+		# and those of anything running inlined code must be.
 		if inline
-			components.each { |component| watch_mixins(component) }
+			components.each { |component| watch_mixins(component, strict: false) }
 
-			results.reject { |result| result.inlined.empty? }.map(&:component).uniq.flat_map { |component| descendants_of(component) }.uniq.each do |descendant|
-				watch_mixins(descendant)
+			results.reject { |result| result.inlined.empty? }.map(&:component).uniq.flat_map { |component| [component, *descendants_of(component)] }.uniq.each do |component|
+				watch_mixins(component)
 			end
 		end
 
@@ -292,8 +293,9 @@ module Phlex::Compiler
 	end
 
 	# A compiled component inlines elements and helpers its modules define, so
-	# those modules, and any mixed in later, report their changes too.
-	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Phlex::SGML }, strict: true)
+	# those modules, and any mixed in later, report their changes too. That
+	# includes modules mixed into Phlex::SGML, but not Object's.
+	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Object }, strict: true)
 		unwatched_mixins(component, modules, strict:).each { |mod| KERNEL_SINGLETON_CLASS.bind_call(mod).prepend(mixin_hooks_for(mod)) }
 	end
 
