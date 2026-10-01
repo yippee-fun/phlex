@@ -369,20 +369,20 @@ module Phlex::Compiler
 		private def compile_attribute_pieces(node, keyword_hash, closing)
 			normalized_keys = Phlex::SGML::Elements::NORMALIZED_ATTRIBUTES[node.name]
 			elements = keyword_hash.elements
-			last_impure = elements.rindex { |assoc| !(Refract::AssocNode === assoc) || !pure?(assoc.value) }
-			several_dynamic = elements.count { |assoc| !(Refract::AssocNode === assoc) || !static_attribute_value(assoc.value) } > 1
+			last_impure = elements.rindex { |assoc| !(Refract::AssocNode === assoc) || !pure?(attribute_value(assoc)) }
+			several_dynamic = elements.count { |assoc| !(Refract::AssocNode === assoc) || !static_attribute_value(attribute_value(assoc)) } > 1
 			keys = Set.new
 			hoisted = []
 
 			pieces = catch(:together) do
 				elements.each_with_index.map do |assoc, index|
-					throw :together, "a key is splatted or isn't a literal" unless assoc in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode => key, value:]
+					throw :together, "a key is splatted or isn't a literal" unless assoc in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode => key]
 
 					key_value = static_value(key)
 					throw :together, "#{key_value} is rewritten by the element's attribute normaliser" if normalized_keys&.include?(key_value)
 					throw :together, "#{key_value} is repeated" unless keys.add?(key_value)
 
-					attribute_piece(key, key_value, value, hoisted, hoist: several_dynamic || (last_impure && index <= last_impure))
+					attribute_piece(key, key_value, attribute_value(assoc), hoisted, hoist: several_dynamic || (last_impure && index <= last_impure))
 				rescue Phlex::ArgumentError => e
 					throw :together, "#{key_value} raised #{e.class}: #{e.message}"
 				end
@@ -395,6 +395,12 @@ module Phlex::Compiler
 			in Array
 				Attributes.new(hoisted:, parts: attribute_parts(pieces, closing))
 			end
+		end
+
+		# Shorthand `title:` wraps its value in an ImplicitNode, which the
+		# formatter prints as nothing when it's taken out of the hash.
+		private def attribute_value(assoc)
+			(Refract::ImplicitNode === assoc.value) ? assoc.value.value : assoc.value
 		end
 
 		private def attribute_piece(key, key_value, value, hoisted, hoist:)
