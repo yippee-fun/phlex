@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "json"
-
 # An extremely fast in-memory cache store that evicts keys on a first-in-first-out basis.
 class Phlex::FIFOCacheStore
 	def initialize(max_bytesize: 2 ** 20)
@@ -16,11 +14,12 @@ class Phlex::FIFOCacheStore
 		key = map_key(key)
 
 		if (result = fifo[key])
-			JSON.parse(result)
+			# Only load bytes serialized by this in-memory store.
+			Marshal.load(result)
 		else
 			result = yield
 
-			fifo[key] = JSON.generate(result)
+			fifo[key] = Marshal.dump(result)
 
 			result
 		end

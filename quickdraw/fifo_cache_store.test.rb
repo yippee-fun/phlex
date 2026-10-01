@@ -34,4 +34,19 @@ class FIFOCacheStoreTest < Quickdraw::Test
 
 		assert_equal result, "A, B"
 	end
+
+	test "fetch preserves fragment identifier types" do
+		store = Phlex::FIFOCacheStore.new
+		value = [
+			"content",
+			{
+				:outer => [0, 7, [:piece, "piece"]],
+				:piece => [0, 3, []],
+				"piece" => [3, 4, []],
+			},
+		]
+
+		assert_equal store.fetch("page") { value }, value
+		assert_equal store.fetch("page") { failure! { "Unexpected cache miss." } }, value
+	end
 end
