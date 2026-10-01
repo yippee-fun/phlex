@@ -49,7 +49,7 @@ module Phlex::Compiler
 	Target = Data.define(:component, :name, :line, :compiled)
 
 	# What reopening a definition's class and module statements reached.
-	Probe = Data.define(:component, :set)
+	Probe = Data.define(:component, :set, :method_resolver)
 
 	# compiled path => Generation
 	MAP = Phlex::COMPILED_SOURCE_MAPS
@@ -242,12 +242,18 @@ module Phlex::Compiler
 	end
 
 	# Reopens the class and module statements around a definition with nothing
-	# inside but a call reporting the class reached and what `Set` names there,
-	# so Ruby resolves them exactly as it did when the file was loaded. The
+	# inside but a call reporting the class reached and what `Set` names there.
+	# The method resolver captures the file's refinements, so element and helper
+	# lookup uses the same lexical scope as the compiled definitions. The
 	# statements are copied without their superclasses, so they only reopen.
-	def self.probe(namespace)
-		report = parse("::Phlex::Compiler.__probe__(self, defined?(Set) && Set)", PROBE_PATH).statements.body.first
-		source = Refract::Formatter.new.format_node(wrap_in_namespace(namespace, [report])).source
+	def self.probe(namespace, usings: [])
+		report = parse(<<~RUBY, PROBE_PATH).statements.body.first
+			::Phlex::Compiler.__probe__(self, defined?(Set) && Set, ->(component, name) {
+				::Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
+			})
+		RUBY
+		program = Refract::StatementsNode.new(body: [*usings, wrap_in_namespace(namespace, [report])])
+		source = Refract::Formatter.new.format_node(program).source
 
 		Thread.current[:__phlex_compiler_probe__] = nil
 		eval(source, scope, PROBE_PATH, 1)
@@ -262,8 +268,8 @@ module Phlex::Compiler
 		SCOPES.pop
 	end
 
-	def self.__probe__(component, set)
-		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, set:)
+	def self.__probe__(component, set, method_resolver)
+		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, set:, method_resolver:)
 	end
 
 	# Whether the class is still the one its name refers to. After a reload the

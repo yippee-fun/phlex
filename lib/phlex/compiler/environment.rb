@@ -22,9 +22,10 @@ class Phlex::Compiler::Environment
 
 	# With `inline: false` nothing is recognised, so every method compiles to
 	# its original definition. Used to restore a class before it's frozen.
-	def initialize(component, standard_set: standard_set_on?(component), inline: true)
+	def initialize(component, standard_set: standard_set_on?(component), method_resolver: Phlex::UNBOUND_INSTANCE_METHOD_METHOD.method(:bind_call), inline: true)
 		@component = component
 		@standard_set = standard_set
+		@method_resolver = method_resolver
 		@inline = inline
 		@elements = {}
 		@helpers = {}
@@ -82,9 +83,7 @@ class Phlex::Compiler::Environment
 	# loaded subclass overrides.
 	private def overridden_by_descendant?(name, owner)
 		descendants.any? do |descendant|
-			Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(descendant, name).owner != owner
-		rescue NameError
-			true
+			instance_method(name, descendant)&.owner != owner
 		end
 	end
 
@@ -96,8 +95,8 @@ class Phlex::Compiler::Environment
 		component.subclasses.flat_map { |subclass| [subclass, *descendants_of(subclass)] }
 	end
 
-	private def instance_method(name)
-		Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(@component, name)
+	private def instance_method(name, component = @component)
+		@method_resolver.call(component, name)
 	rescue NameError
 		nil
 	end

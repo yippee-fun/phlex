@@ -283,6 +283,116 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "refined elements keep their calls while unaffected elements compile" do
+		with_component_files(
+			"refined_elements.rb" => <<~RUBY,
+				module LifecycleElementRefinements
+					refine Phlex::HTML do
+						def div(**attributes, &block) = span(**attributes, &block)
+						def br(**attributes) = hr(**attributes)
+					end
+				end
+
+				using LifecycleElementRefinements
+
+				class LifecycleRefinedElements < Phlex::HTML
+					def view_template
+						div(class: "greeting") { "hello" }
+						br(class: "break")
+						section { div { "nested" } }
+					end
+				end
+			RUBY
+			"unrefined_elements.rb" => <<~RUBY
+				class LifecycleUnrefinedElements < Phlex::HTML
+					def view_template = div { "hello" }
+				end
+			RUBY
+		) do
+			expected = '<span class="greeting">hello</span><hr class="break"><section><span>nested</span></section>'
+			assert_equal LifecycleRefinedElements.call, expected
+
+			Phlex::Compiler.compile(LifecycleRefinedElements)
+			Phlex::Compiler.compile(LifecycleUnrefinedElements)
+
+			assert compiled_method?(LifecycleRefinedElements, :view_template)
+			assert_equal LifecycleRefinedElements.call, expected
+			assert_equal LifecycleRefinedElements.instance_variable_get(:@__phlex_inlined__), Set[:section]
+			assert compiled_method?(LifecycleUnrefinedElements, :view_template)
+			assert_equal LifecycleUnrefinedElements.call, "<div>hello</div>"
+		end
+	end
+
+	test "refined helpers preserve their output and return values" do
+		with_component_files(
+			"refined_helpers.rb" => <<~RUBY
+				module LifecycleHelperRefinements
+					refine Phlex::SGML do
+						def plain(value) = "refined " + value
+						def safe(value) = super("<b>" + value + "</b>")
+					end
+
+					refine Phlex::HTML do
+						def doctype = span { "doctype" }
+					end
+				end
+
+				using LifecycleHelperRefinements
+
+				class LifecycleRefinedHelpers < Phlex::HTML
+					def view_template
+						doctype
+						div { plain "hello" }
+						raw safe("hello")
+					end
+				end
+			RUBY
+		) do
+			expected = "<span>doctype</span><div>refined hello</div><b>hello</b>"
+			assert_equal LifecycleRefinedHelpers.call, expected
+
+			Phlex::Compiler.compile(LifecycleRefinedHelpers)
+
+			assert compiled_method?(LifecycleRefinedHelpers, :view_template)
+			assert_equal LifecycleRefinedHelpers.call, expected
+		end
+	end
+
+	test "a refinement of a descendant prevents inlining in an inherited method" do
+		with_component_files(
+			"refined_descendant.rb" => <<~RUBY
+				class LifecycleRefinedParent < Phlex::HTML
+				end
+
+				class LifecycleRefinedChild < LifecycleRefinedParent
+				end
+
+				module LifecycleDescendantRefinements
+					refine LifecycleRefinedChild do
+						def div(**attributes, &block) = span(**attributes, &block)
+					end
+				end
+
+				using LifecycleDescendantRefinements
+
+				class LifecycleRefinedParent
+					def view_template
+						section { div { "hello" } }
+					end
+				end
+			RUBY
+		) do
+			assert_equal LifecycleRefinedParent.call, "<section><div>hello</div></section>"
+			assert_equal LifecycleRefinedChild.call, "<section><span>hello</span></section>"
+
+			Phlex::Compiler.compile(LifecycleRefinedChild)
+
+			assert compiled_method?(LifecycleRefinedParent, :view_template)
+			assert_equal LifecycleRefinedParent.call, "<section><div>hello</div></section>"
+			assert_equal LifecycleRefinedChild.call, "<section><span>hello</span></section>"
+		end
+	end
+
 	test "a refinement used by one compiled file doesn't reach another" do
 		with_component_files(
 			"refined.rb" => <<~RUBY,
