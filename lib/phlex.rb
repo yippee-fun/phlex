@@ -69,8 +69,13 @@ module Phlex
 	# once per render into Phlex::SGML::State, never per element.
 	#
 	# Before Ruby 4.0 a non-main Ractor can’t autoload, so on Ruby 3.2 and 3.3
-	# call `Phlex::Loader.eager_load` before spawning one.
-	if Ractor.respond_to?(:store_if_absent) # Ruby 3.4+
+	# call `Phlex::Loader.eager_load` before spawning one. Rubies without Ractors
+	# (TruffleRuby, JRuby) always use ATTRIBUTE_CACHE.
+	if !defined?(::Ractor)
+		def self.attribute_cache
+			ATTRIBUTE_CACHE
+		end
+	elsif ::Ractor.respond_to?(:store_if_absent) # Ruby 3.4+
 		def self.attribute_cache
 			if Ractor.main?
 				ATTRIBUTE_CACHE

@@ -25,15 +25,18 @@ class RactorTest < Quickdraw::Test
 
 	def run_in_ractor(&) = self.class.run_in_ractor(&)
 
+	# Ractor-local storage needs Ruby 3.4+; TruffleRuby and JRuby have no Ractors.
+	RACTORS = defined?(::Ractor) && ::Ractor.respond_to?(:store_if_absent)
+
 	# Phlex escapes text through ERB::Escape, whose html_escape is only marked
 	# Ractor-safe since erb 5.0.2 — whether the render test runs depends on the
 	# erb in the bundle (Ruby 4.0 ships a safe one; Ruby 3.3 and 3.4 do not).
 	ERB_ESCAPE_RACTOR_SAFE =
-		Ractor.respond_to?(:store_if_absent) && begin
+		RACTORS && begin
 			report = Thread.report_on_exception
 			Thread.report_on_exception = false
 			run_in_ractor { ERB::Escape.html_escape("<") } == "&lt;"
-		rescue Ractor::Error
+		rescue ::Ractor::Error
 			false
 		ensure
 			Thread.report_on_exception = report
@@ -43,7 +46,7 @@ class RactorTest < Quickdraw::Test
 		assert_equal Phlex.attribute_cache.equal?(Phlex::ATTRIBUTE_CACHE), true
 	end
 
-	if Ractor.respond_to?(:store_if_absent)
+	if RACTORS
 		test "a non-main Ractor gets its own attribute cache" do
 			main_cache_id = Phlex::ATTRIBUTE_CACHE.object_id
 			ractor_cache_ids = run_in_ractor { [Phlex.attribute_cache.object_id, Phlex.attribute_cache.object_id] }
