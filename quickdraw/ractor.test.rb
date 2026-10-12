@@ -10,9 +10,20 @@ class RactorTest < Quickdraw::Test
 			div(class: "card", id: "example") do
 				span(data: { count: 1 }) { "Hello" }
 				img(src: "/a.png", alt: "a")
+				tag(:p, class: "dynamic") { "Dynamic" }
 				trix_editor(class: "custom") { "Custom" }
 				svg(viewBox: "0 0 1 1") { |s| s.path(d: "M0 0") }
 			end
+		end
+	end
+
+	class TagExample < Phlex::HTML
+		def view_template
+			tag(:div, class: "a") { "x" }
+			tag(:img, src: "/a.png", srcset: ["/a.png 1x", "/b.png 2x"])
+			tag(:my_widget, data: { k: 1 }) { "w" }
+			tag(:svg, viewBox: "0 0 1 1") { |s| s.tag(:path, d: "M0 0") }
+			tag(:br)
 		end
 	end
 
@@ -56,6 +67,13 @@ class RactorTest < Quickdraw::Test
 	end
 
 	if RACTORS
+		test "the built-in element registries are shareable" do
+			[Phlex::HTML::StandardElements, Phlex::HTML::VoidElements, Phlex::SVG::StandardElements].each do |elements|
+				assert Ractor.shareable?(elements.__registered_elements__)
+				assert Ractor.shareable?(elements.__registered_void_elements__)
+			end
+		end
+
 		test "a non-main Ractor gets its own attribute cache" do
 			main_cache_id = Phlex::ATTRIBUTE_CACHE.object_id
 			ractor_cache_ids = run_in_ractor { [Phlex.attribute_cache.object_id, Phlex.attribute_cache.object_id] }
@@ -94,6 +112,10 @@ class RactorTest < Quickdraw::Test
 	if ERB_ESCAPE_RACTOR_SAFE
 		test "renders inside a non-main Ractor with the same output" do
 			assert_equal run_in_ractor { Example.call }, Example.call
+		end
+
+		test "tag renders inside a non-main Ractor" do
+			assert_equal run_in_ractor { TagExample.call }, TagExample.call
 		end
 
 		test "caches a fragment inside a non-main Ractor" do

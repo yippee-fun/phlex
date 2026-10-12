@@ -63,4 +63,6 @@ module Phlex::HTML::VoidElements
 	# [MDN Docs](https://developer.mozilla.org/docs/Web/HTML/Element/track)
 	# [Spec](https://html.spec.whatwg.org/#the-track-element)
 	__register_void_element__ def track(**attributes) = nil
+
+	__freeze_registries__
 end
