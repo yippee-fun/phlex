@@ -91,10 +91,24 @@ module Phlex::Compiler
 		component.instance_variable_get(:@__phlex_compiled__) == true
 	end
 
+	# Only the main Ractor compiles: compiling redefines methods and needs MUTEX,
+	# neither of which a non-main Ractor can touch. Those render whatever is
+	# defined, compiled or not.
+	if !defined?(::Ractor)
+		def self.main_ractor? = true
+	elsif ::Ractor.respond_to?(:main?)
+		def self.main_ractor? = ::Ractor.main?
+	else
+		def self.main_ractor? = ::Ractor.current == ::Ractor.main
+	end
+
 	# The failure check and the compilation share the lock, so two first
 	# renders racing each other still compile and report once. The handler
-	# runs outside it, since it may well render something.
+	# runs outside it, since it may well render something. A compiled
+	# component skips the lock: the flag is set once compilation has finished.
 	def self.compile_on_first_render(component)
+		return if compiled?(component) || !main_ractor?
+
 		error = MUTEX.synchronize do
 			return if compiled?(component) || FAILURES.key?(component)
 

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 class RactorTest < Quickdraw::Test
 	class Example < Phlex::HTML
 		register_element :trix_editor
@@ -85,6 +87,33 @@ class RactorTest < Quickdraw::Test
 	if ERB_ESCAPE_RACTOR_SAFE
 		test "renders inside a non-main Ractor with the same output" do
 			assert_equal run_in_ractor { Example.call }, Example.call
+		end
+
+		test "renders inside a non-main Ractor with lazy compilation enabled" do
+			Dir.mktmpdir do |dir|
+				path = File.join(dir, "ractor_lazy.rb")
+				File.write(path, <<~RUBY)
+					# frozen_string_literal: true
+					class RactorLazyCompiled < Phlex::HTML
+						def view_template = div(class: "compiled") { "compiled" }
+					end
+
+					class RactorLazyUncompiled < Phlex::HTML
+						def view_template = div(class: "uncompiled") { "uncompiled" }
+					end
+				RUBY
+				load path
+
+				Phlex::Compiler.enable!
+				begin
+					expected = RactorLazyCompiled.call # the main Ractor compiles it
+
+					assert_equal run_in_ractor { RactorLazyCompiled.call }, expected
+					assert_equal run_in_ractor { RactorLazyUncompiled.call }, %(<div class="uncompiled">uncompiled</div>)
+				ensure
+					Phlex::Compiler.disable!
+				end
+			end
 		end
 	end
 end
