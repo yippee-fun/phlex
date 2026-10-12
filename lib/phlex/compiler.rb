@@ -197,7 +197,10 @@ module Phlex::Compiler
 		formatting_result.source_map.each_with_index do |original_line, generated_line|
 			lines[generated_line] = original_line if original_line
 		end
-		MAP[compiled_path] = Generation.new(path:, lines: lines.freeze)
+		generation = Generation.new(path: -path, lines: lines.freeze)
+		generation = ::Ractor.make_shareable(generation) if defined?(::Ractor)
+		MAP[compiled_path] = generation
+		Phlex.__publish_compiled_source_map__(-compiled_path, generation)
 
 		results.each do |result|
 			result.visibilities.each do |name, visibility|

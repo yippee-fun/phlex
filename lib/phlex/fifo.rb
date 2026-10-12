@@ -19,6 +19,14 @@ class Phlex::FIFO
 		end
 	end
 
+	# Raises the limit to `bytes` unless it's already that large. Unlike `expand`,
+	# callers racing to the same target grow it once.
+	def grow_to(bytes)
+		@mutex.synchronize do
+			@max_bytesize = bytes if bytes > @max_bytesize
+		end
+	end
+
 	def [](key)
 		k, v = @store[key.hash]
 		v if k.eql?(key)

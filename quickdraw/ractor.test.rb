@@ -16,6 +16,13 @@ class RactorTest < Quickdraw::Test
 		end
 	end
 
+	class Cached < Phlex::HTML
+		# One store per Ractor: a FIFOCacheStore can't be shared between them.
+		def cache_store = Ractor.store_if_absent(:ractor_test_cache_store) { Phlex::FIFOCacheStore.new }
+
+		def view_template = cache { div { "cached" } }
+	end
+
 	def self.run_in_ractor(&)
 		experimental = Warning[:experimental]
 		Warning[:experimental] = false
@@ -87,6 +94,35 @@ class RactorTest < Quickdraw::Test
 	if ERB_ESCAPE_RACTOR_SAFE
 		test "renders inside a non-main Ractor with the same output" do
 			assert_equal run_in_ractor { Example.call }, Example.call
+		end
+
+		test "caches a fragment inside a non-main Ractor" do
+			assert_equal run_in_ractor { [Cached.call, Cached.call] }, [%(<div>cached</div>)] * 2
+		end
+
+		test "a compiled component's error keeps its class inside a non-main Ractor" do
+			Dir.mktmpdir do |dir|
+				path = File.join(dir, "ractor_raising.rb")
+				File.write(path, <<~RUBY)
+					# frozen_string_literal: true
+					class RactorRaising < Phlex::HTML
+						def view_template
+							div { raise ArgumentError, "boom" }
+						end
+					end
+				RUBY
+				load path
+				Phlex::Compiler.compile(RactorRaising)
+
+				error = begin
+					run_in_ractor { RactorRaising.call }
+					nil
+				rescue Ractor::RemoteError => e
+					e.cause
+				end
+
+				assert_equal [error.class, error.message], [ArgumentError, "boom"]
+			end
 		end
 
 		test "renders inside a non-main Ractor with lazy compilation enabled" do

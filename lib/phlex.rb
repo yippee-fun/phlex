@@ -43,9 +43,20 @@ module Phlex
 	# Lives here so the runtime can consult it without loading the compiler.
 	COMPILED_SOURCE_MAPS = {}
 
+	# A frozen, Ractor-shareable copy of COMPILED_SOURCE_MAPS, republished by the
+	# compiler after each write, so renders on any Ractor can read it.
+	@compiled_source_maps = {}.freeze
+
+	def self.__compiled_source_maps__ = @compiled_source_maps
+
+	# Only the compiler calls this, on the main Ractor and under its lock.
+	def self.__publish_compiled_source_map__(path, generation)
+		@compiled_source_maps = @compiled_source_maps.merge(path => generation).freeze
+	end
+
 	# The original line for a location that may be in compiled code.
 	def self.__source_line__(location)
-		if (generation = COMPILED_SOURCE_MAPS[location.path])
+		if (generation = @compiled_source_maps[location.path])
 			generation.lines[location.lineno] || location.lineno
 		else
 			location.lineno
@@ -103,8 +114,8 @@ module Phlex
 	# cache catches up with templates defined since it was created when it's
 	# next fetched (once per render).
 	def self.__sized_attribute_cache__(cache)
-		shortfall = ATTRIBUTE_CACHE_MAX_BYTESIZE + @attribute_cache_expansion - cache.max_bytesize
-		cache.expand(shortfall) if shortfall > 0
+		target = ATTRIBUTE_CACHE_MAX_BYTESIZE + @attribute_cache_expansion
+		cache.grow_to(target) if cache.max_bytesize < target
 		cache
 	end
 
