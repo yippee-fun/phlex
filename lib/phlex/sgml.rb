@@ -434,7 +434,7 @@ class Phlex::SGML
 	end
 
 	private def __attributes__(attributes)
-		Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+		@_state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 	end
 
 	private_class_method def self.method_added(method_name)

@@ -27,7 +27,15 @@ module Phlex
 
 	DEPLOYED_AT = Process.clock_gettime(Process::CLOCK_MONOTONIC, :millisecond)
 	CACHED_FILES = Set.new
-	ATTRIBUTE_CACHE = FIFO.new(max_bytesize: 2 ** 20)
+	ATTRIBUTE_CACHE_MAX_BYTESIZE = 2 ** 20
+
+	# The main Ractor’s attribute cache. A FIFO is not shareable, so a non-main
+	# Ractor can’t read this constant — it gets its own through Phlex.attribute_cache.
+	ATTRIBUTE_CACHE = FIFO.new(max_bytesize: ATTRIBUTE_CACHE_MAX_BYTESIZE)
+
+	# Bytes every attribute cache has been expanded by so far (see
+	# __expand_attribute_cache__), so a Ractor-local cache starts the same size.
+	@attribute_cache_expansion = 0
 
 	UNBOUND_INSTANCE_METHOD_METHOD = Module.instance_method(:instance_method)
 
@@ -49,8 +57,41 @@ module Phlex
 
 		unless CACHED_FILES.include?(file_path)
 			CACHED_FILES << file_path
-			Phlex::ATTRIBUTE_CACHE.expand(File.size(file_path))
+			bytes = File.size(file_path)
+			@attribute_cache_expansion += bytes
+			Phlex::ATTRIBUTE_CACHE.expand(bytes)
 		end
+	end
+
+	# The attribute cache for the current Ractor: ATTRIBUTE_CACHE on the main
+	# Ractor, a Ractor-local FIFO anywhere else (sized like the main one,
+	# including the expansion for every view_template seen so far). Resolved
+	# once per render into Phlex::SGML::State, never per element.
+	#
+	# Before Ruby 4.0 a non-main Ractor can’t autoload, so on Ruby 3.2 and 3.3
+	# call `Phlex::Loader.eager_load` before spawning one.
+	if Ractor.respond_to?(:store_if_absent) # Ruby 3.4+
+		def self.attribute_cache
+			if Ractor.main?
+				ATTRIBUTE_CACHE
+			else
+				Ractor.store_if_absent(:__phlex_attribute_cache__) { __new_attribute_cache__ }
+			end
+		end
+	else
+		def self.attribute_cache
+			ractor = Ractor.current
+
+			if ractor == Ractor.main
+				ATTRIBUTE_CACHE
+			else
+				ractor[:__phlex_attribute_cache__] ||= __new_attribute_cache__
+			end
+		end
+	end
+
+	def self.__new_attribute_cache__
+		FIFO.new(max_bytesize: ATTRIBUTE_CACHE_MAX_BYTESIZE + @attribute_cache_expansion)
 	end
 
 	# Generate an HTML string using Phlex’ HTML DSL
