@@ -80,7 +80,7 @@ module Phlex
 			if Ractor.main?
 				ATTRIBUTE_CACHE
 			else
-				Ractor.store_if_absent(:__phlex_attribute_cache__) { __new_attribute_cache__ }
+				__sized_attribute_cache__(Ractor.store_if_absent(:__phlex_attribute_cache__) { __new_attribute_cache__ })
 			end
 		end
 	else
@@ -90,13 +90,22 @@ module Phlex
 			if ractor == Ractor.main
 				ATTRIBUTE_CACHE
 			else
-				ractor[:__phlex_attribute_cache__] ||= __new_attribute_cache__
+				__sized_attribute_cache__(ractor[:__phlex_attribute_cache__] ||= __new_attribute_cache__)
 			end
 		end
 	end
 
 	def self.__new_attribute_cache__
 		FIFO.new(max_bytesize: ATTRIBUTE_CACHE_MAX_BYTESIZE + @attribute_cache_expansion)
+	end
+
+	# __expand_attribute_cache__ only reaches the main cache, so a Ractor-local
+	# cache catches up with templates defined since it was created when it's
+	# next fetched (once per render).
+	def self.__sized_attribute_cache__(cache)
+		shortfall = ATTRIBUTE_CACHE_MAX_BYTESIZE + @attribute_cache_expansion - cache.max_bytesize
+		cache.expand(shortfall) if shortfall > 0
+		cache
 	end
 
 	# Generate an HTML string using Phlex’ HTML DSL

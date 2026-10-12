@@ -58,6 +58,28 @@ class RactorTest < Quickdraw::Test
 		test "a non-main Ractor's cache is as large as the main one" do
 			assert_equal run_in_ractor { Phlex.attribute_cache.max_bytesize }, Phlex::ATTRIBUTE_CACHE.max_bytesize
 		end
+
+		test "a non-main Ractor's cache grows with templates defined after it was created" do
+			experimental = Warning[:experimental]
+			Warning[:experimental] = false
+			ractor = Ractor.new do
+				Ractor.main << Phlex.attribute_cache.max_bytesize # before
+				Ractor.receive
+				Phlex.attribute_cache.max_bytesize # after
+			end
+
+			before = Ractor.receive
+			Phlex.__expand_attribute_cache__(File.expand_path("../bench.rb", __dir__))
+			expected = Phlex::ATTRIBUTE_CACHE.max_bytesize
+
+			ractor << :go
+			after = ractor.respond_to?(:value) ? ractor.value : ractor.take
+
+			assert_equal after, expected
+			assert_equal after > before, true
+		ensure
+			Warning[:experimental] = experimental
+		end
 	end
 
 	if ERB_ESCAPE_RACTOR_SAFE
