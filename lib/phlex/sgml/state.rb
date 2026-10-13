@@ -141,8 +141,9 @@ class Phlex::SGML::State
 	end
 
 	# Flushing moves bytes out of the buffer without changing how much was written.
+	# Read through `buffer` so overrides that redirect output (e.g. phlex-rails) are measured too.
 	def output_bytesize
-		@flushed_bytesize + @buffer.bytesize
+		@flushed_bytesize + buffer.bytesize
 	end
 
 	def append(content)
@@ -153,7 +154,7 @@ class Phlex::SGML::State
 			end
 		end
 
-		@buffer << content
+		buffer << content
 	end
 
 	def flush
