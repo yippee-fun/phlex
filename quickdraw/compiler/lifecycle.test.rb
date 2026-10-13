@@ -81,6 +81,45 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a lazy render of a compiled component waits for a recompilation in progress" do
+		with_component_files(
+			"waits.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleWaits < Phlex::HTML
+					def view_template = div { "waits" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.enable!
+			begin
+				LifecycleWaits.call
+				assert Phlex::Compiler.compiled?(LifecycleWaits)
+
+				locked = Queue.new
+				release = Queue.new
+				recompiling = Thread.new do
+					Phlex::Compiler::MUTEX.synchronize do
+						locked << true
+						release.pop
+					end
+				end
+				locked.pop
+
+				render = Thread.new { LifecycleWaits.call }
+				deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+				Thread.pass until render.status == "sleep" || !render.alive? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+				assert render.alive?
+				release << true
+				assert_equal render.value, "<div>waits</div>"
+				recompiling.join
+			ensure
+				release&.<< true
+				Phlex::Compiler.disable!
+			end
+		end
+	end
+
 	test "lazy compilation compiles a component on its first render" do
 		with_component_files(
 			"lazy.rb" => <<~RUBY

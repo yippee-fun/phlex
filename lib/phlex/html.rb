@@ -58,7 +58,7 @@ class Phlex::HTML < Phlex::SGML
 		if (tag = StandardElements.__registered_elements__[name]) || ((tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z][a-z0-9-]*\z/))
 			if attributes.length > 0 # with attributes
 				if block_given # with content block
-					buffer << "<#{tag}" << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << ">"
+					buffer << "<#{tag}" << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << ">"
 					begin
 						if tag == "svg"
 							render Phlex::SVG.new(&)
@@ -69,7 +69,7 @@ class Phlex::HTML < Phlex::SGML
 						buffer << "</#{tag}>"
 					end
 				else # without content
-					buffer << "<#{tag}" << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << "></#{tag}>"
+					buffer << "<#{tag}" << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << "></#{tag}>"
 				end
 			else # without attributes
 				if block_given # with content block
@@ -99,7 +99,7 @@ class Phlex::HTML < Phlex::SGML
 						Phlex::SGML::Elements.public_send(normalizer, attributes)
 					end
 
-					buffer << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 				ensure
 					buffer << ">"
 				end

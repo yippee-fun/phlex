@@ -12,11 +12,12 @@ class Phlex::SGML::State
 		@cache_stack = []
 		@halt_signal = nil
 		@output_buffer = output_buffer
+		@attribute_cache = Phlex.attribute_cache
 	end
 
 	attr_accessor :capturing, :user_context
 
-	attr_reader :fragments, :fragment_depth, :output_buffer, :buffer, :should_render
+	attr_reader :fragments, :fragment_depth, :output_buffer, :buffer, :should_render, :attribute_cache
 
 	# Kept as a stored boolean so the check is a plain attribute read.
 	alias_method :should_render?, :should_render

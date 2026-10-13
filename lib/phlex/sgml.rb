@@ -434,7 +434,7 @@ class Phlex::SGML
 	end
 
 	private def __attributes__(attributes)
-		Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+		@_state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 	end
 
 	private_class_method def self.method_added(method_name)
@@ -503,7 +503,7 @@ class Phlex::SGML
 
 		exception.set_backtrace(
 			locations.map do |loc|
-				if (generation = Phlex::COMPILED_SOURCE_MAPS[loc.path]) && (line = generation.lines[loc.lineno])
+				if (generation = Phlex.__compiled_source_maps__[loc.path]) && (line = generation.lines[loc.lineno])
 					"#{generation.path}:#{line}:in '#{loc.label}'"
 				else
 					loc.to_s

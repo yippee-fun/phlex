@@ -418,4 +418,6 @@ module Phlex::SVG::StandardElements
 		**attributes,
 		&content
 	) = nil
+
+	__freeze_registries__
 end

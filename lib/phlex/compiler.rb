@@ -91,10 +91,24 @@ module Phlex::Compiler
 		component.instance_variable_get(:@__phlex_compiled__) == true
 	end
 
+	# Only the main Ractor compiles: compiling redefines methods and needs MUTEX,
+	# neither of which a non-main Ractor can touch. Those render whatever is
+	# defined, compiled or not.
+	if !defined?(::Ractor)
+		def self.main_ractor? = true
+	elsif ::Ractor.respond_to?(:main?)
+		def self.main_ractor? = ::Ractor.main?
+	else
+		def self.main_ractor? = ::Ractor.current == ::Ractor.main
+	end
+
 	# The failure check and the compilation share the lock, so two first
-	# renders racing each other still compile and report once. The handler
-	# runs outside it, since it may well render something.
+	# renders racing each other still compile and report once, and a render
+	# that starts while a recompilation holds it waits for the new methods.
+	# The handler runs outside it, since it may well render something.
 	def self.compile_on_first_render(component)
+		return unless main_ractor?
+
 		error = MUTEX.synchronize do
 			return if compiled?(component) || FAILURES.key?(component)
 
@@ -183,7 +197,10 @@ module Phlex::Compiler
 		formatting_result.source_map.each_with_index do |original_line, generated_line|
 			lines[generated_line] = original_line if original_line
 		end
-		MAP[compiled_path] = Generation.new(path:, lines: lines.freeze)
+		generation = Generation.new(path: -path, lines: lines.freeze)
+		generation = ::Ractor.make_shareable(generation) if defined?(::Ractor)
+		MAP[compiled_path] = generation
+		Phlex.__publish_compiled_source_map__(-compiled_path, generation)
 
 		results.each do |result|
 			result.visibilities.each do |name, visibility|

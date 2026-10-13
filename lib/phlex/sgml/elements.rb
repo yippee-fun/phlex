@@ -72,6 +72,16 @@ module Phlex::SGML::Elements
 		@__registered_void_elements__ ||= {}
 	end
 
+	# The built-in element modules call this once their bodies have registered
+	# every element. It freezes both registries in place, without copying them,
+	# so `tag` can read them from any Ractor. A later registration on a frozen
+	# registry swaps in a frozen copy instead of mutating it.
+	def __freeze_registries__
+		__freeze_registry__(__registered_elements__)
+		__freeze_registry__(__registered_void_elements__)
+		nil
+	end
+
 	def register_element(method_name, tag: method_name.name.tr("_", "-"))
 		# Aliasing the method to itself suppresses Ruby's method redefinition warning.
 		alias_method(method_name, method_name) if method_defined?(method_name)
@@ -94,7 +104,7 @@ module Phlex::SGML::Elements
 						buffer << "<#{tag}"
 						begin
 							#{Phlex::SGML::Elements.normalizer_call(method_name)}
-							buffer << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+							buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 						ensure
 							buffer << ">"
 						end
@@ -125,7 +135,7 @@ module Phlex::SGML::Elements
 						buffer << "<#{tag}"
 						begin
 							#{Phlex::SGML::Elements.normalizer_call(method_name)}
-							buffer << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+							buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 						ensure
 							buffer << "></#{tag}>"
 						end
@@ -167,8 +177,7 @@ module Phlex::SGML::Elements
 			end
 		RUBY
 
-		__registered_elements__[method_name] = tag
-		__registered_void_elements__.delete(method_name)
+		__record_element__(method_name, tag, void: false)
 
 		method_name
 	end
@@ -191,7 +200,7 @@ module Phlex::SGML::Elements
 					buffer << "<#{tag}"
 					begin
 						#{Phlex::SGML::Elements.normalizer_call(method_name)}
-						buffer << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+						buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 					ensure
 						buffer << ">"
 					end
@@ -203,9 +212,37 @@ module Phlex::SGML::Elements
 			end
 		RUBY
 
-		__registered_elements__[method_name] = tag
-		__registered_void_elements__[method_name] = tag
+		__record_element__(method_name, tag, void: true)
 
 		method_name
+	end
+
+	private def __record_element__(method_name, tag, void:)
+		elements = __registered_elements__
+		void_elements = __registered_void_elements__
+
+		if elements.frozen? || void_elements.frozen?
+			tag = -tag.to_s
+			@__registered_elements__ = __freeze_registry__(elements.merge(method_name => tag))
+			@__registered_void_elements__ = __freeze_registry__(
+				void ? void_elements.merge(method_name => tag) : void_elements.except(method_name)
+			)
+		else
+			elements[method_name] = tag
+
+			if void
+				void_elements[method_name] = tag
+			else
+				void_elements.delete(method_name)
+			end
+		end
+	end
+
+	private def __freeze_registry__(registry)
+		if defined?(::Ractor)
+			::Ractor.make_shareable(registry)
+		else
+			registry.each_value(&:freeze).freeze
+		end
 	end
 end
