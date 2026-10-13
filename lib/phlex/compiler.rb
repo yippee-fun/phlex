@@ -103,11 +103,11 @@ module Phlex::Compiler
 	end
 
 	# The failure check and the compilation share the lock, so two first
-	# renders racing each other still compile and report once. The handler
-	# runs outside it, since it may well render something. A compiled
-	# component skips the lock: the flag is set once compilation has finished.
+	# renders racing each other still compile and report once, and a render
+	# that starts while a recompilation holds it waits for the new methods.
+	# The handler runs outside it, since it may well render something.
 	def self.compile_on_first_render(component)
-		return if compiled?(component) || !main_ractor?
+		return unless main_ractor?
 
 		error = MUTEX.synchronize do
 			return if compiled?(component) || FAILURES.key?(component)
