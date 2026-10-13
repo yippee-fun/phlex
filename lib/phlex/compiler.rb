@@ -158,9 +158,9 @@ module Phlex::Compiler
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
-		source = File.read(path)
+		parse_result = Prism.parse(File.read(path), filepath: path)
 		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
-		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
+		results = file_compiler.compile(convert(parse_result)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
 		program = Refract::StatementsNode.new(
@@ -172,7 +172,7 @@ module Phlex::Compiler
 
 		without_redefinition_warnings do
 			eval(
-				"#{magic_comments(source)}#{formatting_result.source}",
+				"#{magic_comments(parse_result)}#{formatting_result.source}",
 				scope,
 				compiled_path,
 				1
@@ -360,7 +360,11 @@ module Phlex::Compiler
 	end
 
 	def self.parse(source, path)
-		Refract::Converter.new.visit(Prism.parse(source, filepath: path).value)
+		convert(Prism.parse(source, filepath: path))
+	end
+
+	def self.convert(parse_result)
+		Refract::Converter.new.visit(parse_result.value)
 	end
 
 	# Replacing a method is the whole point, so the warning for it is noise.
@@ -373,12 +377,42 @@ module Phlex::Compiler
 	end
 
 	# The generated source is always prefixed with exactly one line so the
-	# line arithmetic stays the same whether or not the file freezes strings.
-	def self.magic_comments(source)
-		if source.lines.first(2).any? { |line| line.match?(/\A#.*frozen_string_literal:\s*true/) }
-			"# frozen_string_literal: true\n"
-		else
-			"\n"
+	# line arithmetic stays the same whatever the file's magic comments are.
+	# Emacs-style syntax lets the encoding and frozen string literal comments
+	# share that line, which is the only place Ruby reads an encoding from.
+	def self.magic_comments(parse_result)
+		comments = ["coding: #{parse_result.encoding.name}"]
+		comments << "frozen_string_literal: true" if frozen_string_literal?(parse_result)
+		"# -*- #{comments.join('; ')} -*-\n"
+	end
+
+	# Ruby only reads a frozen string literal comment from the comment block
+	# before the first token, with the last valid one there winning.
+	def self.frozen_string_literal?(parse_result)
+		first_token = first_token_offset(parse_result)
+
+		comment = parse_result.magic_comments.reverse_each.find do |magic_comment|
+			magic_comment.key_loc.start_offset < first_token &&
+				magic_comment.key.tr("-", "_").casecmp?("frozen_string_literal") &&
+				(magic_comment.value.casecmp?("true") || magic_comment.value.casecmp?("false"))
+		end
+
+		comment&.value&.casecmp?("true") || false
+	end
+
+	# The byte offset of the first token, found by skipping the byte order
+	# mark, whitespace and comments. The AST can't tell us this because it
+	# leaves out tokens such as a lone semicolon.
+	def self.first_token_offset(parse_result)
+		source = parse_result.source.source.b
+		comments = parse_result.comments.to_h { |comment| [comment.location.start_offset, comment.location.end_offset] }
+		offset = source.start_with?("\xEF\xBB\xBF".b) ? 3 : 0
+
+		loop do
+			offset = source.index(/[^ \t\r\n\f\v]/n, offset) || source.bytesize
+			break offset unless (comment_end = comments[offset])
+
+			offset = comment_end
 		end
 	end
 
