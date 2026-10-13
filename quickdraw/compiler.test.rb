@@ -197,7 +197,7 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 	end
 
-	test "whitespace with dynamic content is inlined behind the runtime's render check" do
+	test "whitespace with dynamic content is inlined and evaluated even when not rendering" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a
 				whitespace { @text }
@@ -206,17 +206,15 @@ class CompilerTest < Quickdraw::Test
 			def a
 				begin
 					__phlex_state__ = @_state
-					if __phlex_state__.should_render?
-						(if __phlex_state__.should_render?
-							__phlex_state__.buffer.<<(" ")
-						end
-						nil)
-						__implicit_output__(@text)
-						(if __phlex_state__.should_render?
-							__phlex_state__.buffer.<<(" ")
-						end
-						nil)
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<(" ")
 					end
+					nil)
+					__implicit_output__(@text)
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<(" ")
+					end
+					nil)
 				rescue ::Exception => __phlex_exception__
 					::Kernel.raise(__map_exception__(__phlex_exception__))
 				end

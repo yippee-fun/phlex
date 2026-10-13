@@ -190,4 +190,28 @@ class SelectiveRenderingTest < Quickdraw::Test
 		output = WithCaptureBlock.new.call(fragments: ["inside"])
 		assert_equal output, ""
 	end
+
+	test "finds fragments inside whitespace" do
+		output = Phlex::HTML.new.call(fragments: ["a"]) do |view|
+			view.div { view.whitespace { view.fragment("a") { view.span { "hi" } } } }
+		end
+
+		assert_equal output, "<span>hi</span>"
+	end
+
+	test "finds fragments inside comments" do
+		output = Phlex::HTML.new.call(fragments: ["b"]) do |view|
+			view.comment { view.fragment("b") { view.span { "c" } } }
+		end
+
+		assert_equal output, "<span>c</span>"
+	end
+
+	test "finds fragments inside cdata" do
+		output = Phlex::SVG.new.call(fragments: ["c"]) do |view|
+			view.svg { view.cdata { view.fragment("c") { view.path(d: "1") } } }
+		end
+
+		assert_equal output, %(<path d="1"></path>)
+	end
 end

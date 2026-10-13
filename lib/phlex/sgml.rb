@@ -118,7 +118,11 @@ class Phlex::SGML
 	# Output a single space character. If a block is given, a space will be output before and after the block.
 	def whitespace(&)
 		state = @_state
-		return unless state.should_render?
+
+		unless state.should_render?
+			yield(self) if block_given?
+			return nil
+		end
 
 		buffer = state.buffer
 
@@ -137,7 +141,11 @@ class Phlex::SGML
 	# [MDN Docs](https://developer.mozilla.org/en-US/docs/Web/HTML/Comments)
 	def comment(&)
 		state = @_state
-		return unless state.should_render?
+
+		unless state.should_render?
+			yield(self) if block_given?
+			return nil
+		end
 
 		buffer = state.buffer
 

@@ -15,7 +15,11 @@ class Phlex::SVG < Phlex::SGML
 
 	def cdata(content = nil, &block)
 		state = @_state
-		return unless state.should_render?
+
+		unless state.should_render?
+			yield(self) if block
+			return nil
+		end
 
 		if !block && String === content
 			state.buffer << "<![CDATA[" << content.gsub("]]>", "]]]]><![CDATA[>") << "]]>"
