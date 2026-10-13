@@ -46,7 +46,7 @@ module Phlex::Compiler
 	Generation = Data.define(:path, :lines)
 
 	# A live method and the line in the file being compiled that defines it.
-	Target = Data.define(:component, :name, :line, :compiled)
+	Target = Data.define(:component, :name, :line, :compiled, :replaced)
 
 	# What reopening a definition's class and module statements reached.
 	Probe = Data.define(:component, :set, :method_resolver)
@@ -289,29 +289,72 @@ module Phlex::Compiler
 		descendants_of(Phlex::SGML).select { |component| live?(component) }
 	end
 
+	# Class#subclasses is called directly, so a class overriding it can't hide
+	# or invent descendants.
+	SUBCLASSES = Class.instance_method(:subclasses)
+
 	def self.descendants_of(component)
-		component.subclasses.flat_map { |subclass| [subclass, *descendants_of(subclass)] }
+		SUBCLASSES.bind_call(component).flat_map { |subclass| [subclass, *descendants_of(subclass)] }
 	end
 
 	# The lines in the file that define the components' live methods. A method
 	# that's already compiled is traced back through its generation's map, and
-	# is a target again only when recompiling.
+	# is a target again only when recompiling. An alias has the source location
+	# of the method it copied, and a method made by `attr_reader` or
+	# `define_method` has none of a `def`'s source to compile, so neither is a
+	# target.
 	def self.targets(path, components, recompile: false)
 		components.each_with_object({}) do |component, targets|
 			next if component.frozen? || !live?(component)
 
 			own_methods(component).each do |name|
-				next unless (location = component.instance_method(name).source_location)
+				method = component.instance_method(name)
+				next unless method.original_name == name && (location = method.source_location)
 
 				source_path, line = location
 
 				if (generation = MAP[source_path])
 					next unless generation.path == path && (line = generation.lines[line])
 
-					targets[line] = Target.new(component:, name:, line:, compiled: !recompile)
-				elsif source_path == path
-					targets[line] = Target.new(component:, name:, line:, compiled: false)
+					targets[line] = Target.new(component:, name:, line:, compiled: !recompile, replaced: true)
+				elsif source_path == path && defined_by_def?(method)
+					targets[line] = Target.new(component:, name:, line:, compiled: false, replaced: false)
 				end
+			end
+		end
+	end
+
+	# Whether the method was made by `def`. Only CRuby can tell: a method from
+	# `attr_reader` has no instruction sequence, and one from `define_method`
+	# has a block's. Anything else, or any method elsewhere, is assumed to be,
+	# so a change in how Ruby labels them makes a `def` that an `attr_reader`
+	# or `define_method` replaced refused, rather than stopping compilation.
+	def self.defined_by_def?(method)
+		return true unless defined?(RubyVM::InstructionSequence)
+
+		iseq = RubyVM::InstructionSequence.of(method)
+		!iseq.nil? && !iseq.label.start_with?("block ")
+	end
+
+	# Module's own method listings, called directly so a class overriding them
+	# can't change what the compiler sees.
+	METHOD_LISTS = [:instance_methods, :private_instance_methods, :protected_instance_methods].map { |list| Module.instance_method(list) }.freeze
+
+	# The aliases, in the component or a descendant, that share a body with
+	# the component's method, as [owner, name] pairs. A descendant isn't being
+	# compiled, so it's reflected on without calling its own methods, which it
+	# may have overridden.
+	def self.aliases_sharing(component, name)
+		method = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
+
+		[component, *descendants_of(component)].flat_map do |owner|
+			names = METHOD_LISTS.flat_map { |list| list.bind_call(owner, false) }
+
+			names.filter_map do |alias_name|
+				next if alias_name == name
+
+				candidate = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(owner, alias_name)
+				[owner, alias_name] if candidate.original_name == name && candidate == method
 			end
 		end
 	end

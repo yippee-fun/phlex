@@ -203,6 +203,35 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "recompiling leaves a method above a `using` that never compiled alone" do
+		with_component_files(
+			"boundary.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleShout
+					refine(String) { def shout = upcase }
+				end
+
+				class LifecycleBoundary < Phlex::HTML
+					def label = "label"
+				end
+
+				using LifecycleShout
+
+				class LifecycleBoundary
+					def view_template = div { label.shout }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleBoundary)
+			assert compiled_method?(LifecycleBoundary, :view_template)
+			assert_equal LifecycleBoundary.new.call, "<div>LABEL</div>"
+
+			LifecycleBoundary.include(Module.new { def div(**, &) = plain("included div") })
+			assert_equal LifecycleBoundary.new.call, "included div"
+			refute compiled_method?(LifecycleBoundary, :label)
+		end
+	end
+
 	test "an element defined on an ancestor after a descendant compiled takes effect in the descendant" do
 		with_component_files(
 			"ancestor.rb" => <<~RUBY,
