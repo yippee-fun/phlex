@@ -58,6 +58,48 @@ class KitTest < Quickdraw::Test
 		assert_equal Page.call, %(<h2>Welcome</h2>)
 	end
 
+	module ShadowingComponents
+		extend Phlex::Kit
+
+		class Thread < Phlex::HTML
+			def view_template = hr
+		end
+
+		class Card < Phlex::HTML
+			def view_template = br
+		end
+	end
+
+	class ShadowingExample < Phlex::HTML
+		def view_template
+			ShadowingComponents::Card()
+		end
+	end
+
+	test "a kit with its own Thread constant still finds the rendering context" do
+		assert_equal ShadowingExample.call, %(<br>)
+	end
+
+	module KeywordComponents
+		extend Phlex::Kit
+
+		const_set(:BEGIN, Class.new(Phlex::HTML) { def view_template = hr })
+		const_set(:END, Class.new(Phlex::HTML) { def view_template = br })
+	end
+
+	class KeywordExample < Phlex::HTML
+		include KeywordComponents
+
+		def view_template
+			public_send(:BEGIN)
+			KeywordComponents.public_send(:END)
+		end
+	end
+
+	test "components named BEGIN or END get kit methods" do
+		assert_equal KeywordExample.call, %(<hr><br>)
+	end
+
 	if defined?(::Ractor)
 		# No text or attributes, so rendering doesn't depend on ERB::Escape or
 		# the attribute cache being usable from a non-main Ractor.
