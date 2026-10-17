@@ -57,4 +57,58 @@ class KitTest < Quickdraw::Test
 	test "phlex rendering context" do
 		assert_equal Page.call, %(<h2>Welcome</h2>)
 	end
+
+	if defined?(::Ractor)
+		# No text or attributes, so rendering doesn't depend on ERB::Escape or
+		# the attribute cache being usable from a non-main Ractor.
+		module RactorComponents
+			extend Phlex::Kit
+
+			class Rules < Phlex::HTML
+				def initialize(count, with_break: false)
+					@count = count
+					@with_break = with_break
+				end
+
+				def view_template
+					section do
+						@count.times { hr }
+						br if @with_break
+						yield
+					end
+				end
+			end
+		end
+
+		class RactorExample < Phlex::HTML
+			include RactorComponents
+
+			def view_template
+				Rules(2, with_break: true) { hr }
+			end
+		end
+
+		class RactorNamespacedExample < Phlex::HTML
+			def view_template
+				RactorComponents::Rules(1) { br }
+			end
+		end
+
+		def run_in_ractor(&)
+			experimental = Warning[:experimental]
+			Warning[:experimental] = false
+			ractor = Ractor.new(&)
+			ractor.respond_to?(:value) ? ractor.value : ractor.take
+		ensure
+			Warning[:experimental] = experimental
+		end
+
+		test "kit methods can be called inside a non-main Ractor" do
+			assert_equal run_in_ractor { RactorExample.call }, %(<section><hr><hr><br><hr></section>)
+		end
+
+		test "namespaced kit methods can be called inside a non-main Ractor" do
+			assert_equal run_in_ractor { RactorNamespacedExample.call }, %(<section><hr><br></section>)
+		end
+	end
 end
