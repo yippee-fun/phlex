@@ -9,6 +9,10 @@ class CompilerLifecycleTest < Quickdraw::Test
 		Phlex.__compiled_source_maps__.key?(component.instance_method(name).source_location[0])
 	end
 
+	def generations_of(path)
+		Phlex.__compiled_source_maps__.each_value.count { |generation| generation.path == path }
+	end
+
 	def with_component_files(files)
 		Dir.mktmpdir do |dir|
 			paths = files.map do |name, source|
@@ -181,6 +185,29 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 	Phlex::Compiler::MethodCompiler.prepend(Sabotage)
 
+	# Runs a block on another thread once a method's calls have been resolved,
+	# standing in for a change made while compiling.
+	module Interleave
+		def self.pending = @pending
+
+		def self.pending=(pending)
+			@pending = pending
+		end
+
+		def compile(node, **)
+			result = super
+
+			if (pending = Interleave.pending)
+				Interleave.pending = nil
+				Thread.new(&pending).join
+			end
+
+			result
+		end
+	end
+
+	Phlex::Compiler::MethodCompiler.prepend(Interleave)
+
 	test "a component that fails to compile on first render is reported once and renders uncompiled" do
 		with_component_files(
 			"failing.rb" => <<~RUBY
@@ -316,6 +343,991 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			LifecycleAncestor.include(Module.new { def plain(content) = super("included #{content}") })
 			assert_equal LifecycleDescendant.new.call, "included ancestor div"
+		end
+	end
+
+	test "an element defined later on an included module takes effect by recompiling what inlined it" do
+		with_component_files(
+			"module_helpers.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleHelpers
+				end
+
+				module LifecycleNestedHelpers
+				end
+
+				class LifecycleUsesHelpers < Phlex::HTML
+					include LifecycleHelpers
+
+					def view_template
+						div { "x" }
+						span { "y" }
+						p { "z" }
+					end
+				end
+
+				class LifecycleUsesHelpersChild < LifecycleUsesHelpers
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleUsesHelpersChild)
+			assert_equal LifecycleUsesHelpersChild.new.call, "<div>x</div><span>y</span><p>z</p>"
+
+			LifecycleHelpers.define_method(:div) { |**| plain("helper div") }
+			assert_equal LifecycleUsesHelpers.new.call, "helper div<span>y</span><p>z</p>"
+			assert_equal LifecycleUsesHelpersChild.new.call, "helper div<span>y</span><p>z</p>"
+			assert compiled_method?(LifecycleUsesHelpers, :view_template)
+
+			# A module mixed into a watched module is watched too.
+			LifecycleHelpers.include(LifecycleNestedHelpers)
+			LifecycleNestedHelpers.define_method(:span) { |**| plain("nested span") }
+			assert_equal LifecycleUsesHelpersChild.new.call, "helper divnested span<p>z</p>"
+
+			# And so is one mixed into the compiled class later.
+			later = Module.new
+			LifecycleUsesHelpers.include(later)
+			later.define_method(:p) { |**| plain("later p") }
+			assert_equal LifecycleUsesHelpersChild.new.call, "helper divnested spanlater p"
+
+			later.__send__(:remove_method, :p)
+			LifecycleHelpers.__send__(:undef_method, :div)
+			assert_raises(NoMethodError) { LifecycleUsesHelpers.new.call }
+		end
+	end
+
+	test "an element defined later on a module included into a subclass of a compiled class takes effect" do
+		with_component_files(
+			"inheriting.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleInlinedParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleInheritingChild < LifecycleInlinedParent
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleInheritingChild)
+
+			mixin = Module.new
+			LifecycleInheritingChild.include(mixin)
+			mixin.define_method(:div) { |**| plain("mixin div") }
+
+			assert_equal LifecycleInheritingChild.new.call, "mixin div"
+			assert_equal LifecycleInlinedParent.new.call, "<div>x</div>"
+		end
+	end
+
+	test "a watched module's own include and prepend keep their return values" do
+		with_component_files(
+			"returning.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleReturning
+					def self.include(*) = (super; :included)
+					def self.prepend(*) = (super; :prepended)
+				end
+
+				class LifecycleReturningComponent < Phlex::HTML
+					include LifecycleReturning
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleReturningComponent)
+
+			assert LifecycleReturning.singleton_class < Phlex::Compiler::MixinHooks
+			assert_equal LifecycleReturning.include(Module.new), :included
+			assert_equal LifecycleReturning.prepend(Module.new), :prepended
+		end
+	end
+
+	test "a module with a frozen singleton class is refused before anything is compiled" do
+		with_component_files(
+			"frozen_singleton.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleFrozenSingleton
+				end
+				LifecycleFrozenSingleton.singleton_class.freeze
+
+				class LifecycleFrozenSingletonComponent < Phlex::HTML
+					include LifecycleFrozenSingleton
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleFrozenSingletonComponent) }
+			assert_equal error.message, "LifecycleFrozenSingleton can't be watched for changes because its singleton class is frozen, so LifecycleFrozenSingletonComponent can't inline what it defines."
+			refute compiled_method?(LifecycleFrozenSingletonComponent, :view_template)
+		end
+	end
+
+	test "a module with a frozen singleton class mixed in later is refused before it's mixed in" do
+		with_component_files(
+			"frozen_later.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleFrozenLaterHelpers
+				end
+
+				class LifecycleFrozenLater < Phlex::HTML
+					include LifecycleFrozenLaterHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenLater)
+
+			frozen = Module.new
+			frozen.singleton_class.freeze
+
+			assert_raises(Phlex::Compiler::Error) { LifecycleFrozenLater.include(frozen) }
+			assert_raises(Phlex::Compiler::Error) { LifecycleFrozenLaterHelpers.include(frozen) }
+			refute LifecycleFrozenLater.include?(frozen)
+		end
+	end
+
+	test "the modules an overridden include actually adds are watched" do
+		with_component_files(
+			"substituting.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSubstitute
+				end
+
+				module LifecycleSubstituting
+					def self.include(*) = super(LifecycleSubstitute)
+				end
+
+				class LifecycleSubstitutingComponent < Phlex::HTML
+					include LifecycleSubstituting
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleSubstitutingComponent)
+
+			LifecycleSubstituting.include(Module.new)
+			LifecycleSubstitute.define_method(:div) { |**| plain("substitute div") }
+			assert_equal LifecycleSubstitutingComponent.new.call, "substitute div"
+		end
+	end
+
+	test "an element registered again with a new tag takes effect" do
+		with_component_files(
+			"reregistered.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleRegisteredElements
+					extend Phlex::SGML::Elements
+
+					register_element :lifecycle_widget
+				end
+
+				class LifecycleReregistered < Phlex::HTML
+					include LifecycleRegisteredElements
+
+					register_element :lifecycle_gadget
+
+					def view_template
+						lifecycle_widget { "x" }
+						lifecycle_gadget { "y" }
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleReregistered)
+			assert_equal LifecycleReregistered.new.call, "<lifecycle-widget>x</lifecycle-widget><lifecycle-gadget>y</lifecycle-gadget>"
+
+			LifecycleRegisteredElements.register_element :lifecycle_widget, tag: "new-widget"
+			LifecycleReregistered.register_element :lifecycle_gadget, tag: "new-gadget"
+			assert_equal LifecycleReregistered.new.call, "<new-widget>x</new-widget><new-gadget>y</new-gadget>"
+			assert compiled_method?(LifecycleReregistered, :view_template)
+		end
+	end
+
+	test "a module included only into a subclass is watched when its parent is compiled" do
+		with_component_files(
+			"subclass_mixin.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSubclassOnlyHelpers
+				end
+
+				class LifecycleSubclassMixinParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleSubclassMixinChild < LifecycleSubclassMixinParent
+					include LifecycleSubclassOnlyHelpers
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleSubclassMixinChild)
+
+			LifecycleSubclassOnlyHelpers.define_method(:div) { |**| plain("subclass helper div") }
+			assert_equal LifecycleSubclassMixinChild.new.call, "subclass helper div"
+			assert_equal LifecycleSubclassMixinParent.new.call, "<div>x</div>"
+		end
+	end
+
+	test "prepending a module already further up the ancestry takes effect" do
+		with_component_files(
+			"reprepended.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleReprependedHelpers
+					def lifecycle_badge(**) = plain("helper badge")
+				end
+
+				class LifecycleReprependedParent < Phlex::HTML
+					include LifecycleReprependedHelpers
+				end
+
+				class LifecycleReprepended < LifecycleReprependedParent
+					register_element :lifecycle_badge
+
+					def view_template = lifecycle_badge { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleReprepended)
+			assert_equal LifecycleReprepended.new.call, "<lifecycle-badge>x</lifecycle-badge>"
+
+			LifecycleReprepended.prepend(LifecycleReprependedHelpers)
+
+			# TruffleRuby leaves a module already further up where it is.
+			if LifecycleReprepended.ancestors.first == LifecycleReprependedHelpers
+				assert_equal LifecycleReprepended.new.call, "helper badge"
+			else
+				assert_equal LifecycleReprepended.new.call, "<lifecycle-badge>x</lifecycle-badge>"
+			end
+		end
+	end
+
+	test "a module that can't be watched, added in place of the one given, leaves nothing inlined" do
+		with_component_files(
+			"substituted_frozen.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleFrozenSubstitute
+				end
+				LifecycleFrozenSubstitute.singleton_class.freeze
+
+				module LifecycleFrozenSubstituting
+					def self.include(*) = super(LifecycleFrozenSubstitute)
+				end
+
+				class LifecycleFrozenSubstitutingComponent < Phlex::HTML
+					include LifecycleFrozenSubstituting
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenSubstitutingComponent)
+			assert compiled_method?(LifecycleFrozenSubstitutingComponent, :view_template)
+
+			assert_raises(Phlex::Compiler::Error) { LifecycleFrozenSubstituting.include(Module.new) }
+			refute Phlex::Compiler.inlines?(LifecycleFrozenSubstitutingComponent)
+
+			LifecycleFrozenSubstitute.define_method(:div) { |**| plain("substitute div") }
+			assert_equal LifecycleFrozenSubstitutingComponent.new.call, "substitute div"
+		end
+	end
+
+	test "a module changed on another thread while compiling takes effect" do
+		with_component_files(
+			"concurrent.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleConcurrentHelpers
+				end
+
+				class LifecycleConcurrent < Phlex::HTML
+					include LifecycleConcurrentHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Interleave.pending = -> { LifecycleConcurrentHelpers.define_method(:div) { |**| plain("concurrent div") } }
+			Phlex::Compiler.compile(LifecycleConcurrent)
+
+			assert_equal LifecycleConcurrent.new.call, "concurrent div"
+		ensure
+			Interleave.pending = nil
+		end
+	end
+
+	test "an unrelated change on another thread while compiling doesn't compile again" do
+		with_component_files(
+			"concurrent_unrelated.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleConcurrentUnrelated < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleConcurrentBystander < Phlex::HTML
+				end
+			RUBY
+		) do |(path)|
+			Interleave.pending = lambda do
+				LifecycleConcurrentBystander.define_method(:div) { |**| plain("bystander div") }
+				LifecycleConcurrentBystander.define_method(:helper) { nil }
+			end
+
+			Phlex::Compiler.compile(LifecycleConcurrentUnrelated)
+
+			assert_equal generations_of(path), 1
+			assert_equal LifecycleConcurrentUnrelated.new.call, "<div>x</div>"
+		ensure
+			Interleave.pending = nil
+		end
+	end
+
+	test "an included module that undefines an inlined element takes effect" do
+		with_component_files(
+			"hidden.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleHidden < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				module LifecycleHides
+					def div = nil
+					undef_method :div
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleHidden)
+			assert_equal LifecycleHidden.new.call, "<div>x</div>"
+
+			LifecycleHidden.include(LifecycleHides)
+			assert_raises(NoMethodError) { LifecycleHidden.new.call }
+		end
+	end
+
+	test "a module that undefines an inlined element, included into a subclass, takes effect there" do
+		with_component_files(
+			"hidden_below.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleHiddenParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleHiddenChild < LifecycleHiddenParent
+					def helper = span { "y" }
+				end
+
+				module LifecycleHidesBelow
+					def div = nil
+					undef_method :div
+				end
+			RUBY
+		) do |(path)|
+			Phlex::Compiler.compile(LifecycleHiddenChild)
+			assert_equal LifecycleHiddenChild.new.call, "<div>x</div>"
+
+			# The child's own helper doesn't resolve in the parent, which isn't
+			# a reason to compile anything again.
+			LifecycleHiddenParent.include(Module.new)
+			assert_equal generations_of(path), 1
+
+			LifecycleHiddenChild.include(LifecycleHidesBelow)
+			assert_raises(NoMethodError) { LifecycleHiddenChild.new.call }
+			assert_equal LifecycleHiddenParent.new.call, "<div>x</div>"
+		end
+	end
+
+	test "a module that undefines an element, included on another thread while compiling, takes effect" do
+		with_component_files(
+			"hidden_concurrently.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleHiddenConcurrently < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				module LifecycleHidesConcurrently
+					def div = nil
+					undef_method :div
+				end
+			RUBY
+		) do
+			Interleave.pending = -> { LifecycleHiddenConcurrently.include(LifecycleHidesConcurrently) }
+			Phlex::Compiler.compile(LifecycleHiddenConcurrently)
+
+			assert_raises(NoMethodError) { LifecycleHiddenConcurrently.new.call }
+		ensure
+			Interleave.pending = nil
+		end
+	end
+
+	test "a change that can't be compiled for is refused every time" do
+		with_component_files(
+			"unrecompilable.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleUnrecompilableHelpers
+				end
+
+				class LifecycleUnrecompilable < Phlex::HTML
+					include LifecycleUnrecompilableHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do |(path)|
+			Phlex::Compiler.compile(LifecycleUnrecompilable)
+			File.write(path, "\n#{File.read(path)}")
+
+			2.times do
+				error = assert_raises(Phlex::Compiler::Error) do
+					LifecycleUnrecompilableHelpers.define_method(:div) { |**| plain("helper div") }
+				end
+
+				assert error.message.include?("changed since it was loaded")
+			end
+		end
+	end
+
+	test "a watched module's own include still receives keywords" do
+		with_component_files(
+			"keywords.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleKeywords
+					def self.include(*modules, validate: true)
+						super(*modules)
+						validate
+					end
+				end
+
+				class LifecycleKeywordsComponent < Phlex::HTML
+					include LifecycleKeywords
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleKeywordsComponent)
+
+			assert LifecycleKeywords.singleton_class < Phlex::Compiler::MixinHooks
+			assert_equal LifecycleKeywords.include(Module.new, validate: false), false
+		end
+	end
+
+	test "modules overriding frozen? and ancestors are still watched" do
+		with_component_files(
+			"overriding.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleClaimsFrozen
+					def self.frozen? = true
+				end
+
+				module LifecycleHidesAncestors
+					def self.ancestors = [self]
+				end
+
+				class LifecycleOverriding < Phlex::HTML
+					include LifecycleClaimsFrozen
+					include LifecycleHidesAncestors
+
+					def view_template
+						div { "x" }
+						span { "y" }
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleOverriding)
+
+			LifecycleClaimsFrozen.define_method(:div) { |**| plain("unfrozen div") }
+			assert_equal LifecycleOverriding.new.call, "unfrozen div<span>y</span>"
+
+			hidden = Module.new
+			LifecycleHidesAncestors.include(hidden)
+			hidden.define_method(:span) { |**| plain("hidden span") }
+			assert_equal LifecycleOverriding.new.call, "unfrozen divhidden span"
+		end
+	end
+
+	test "a module mixed in by an include that then raises is still watched" do
+		with_component_files(
+			"raising.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleRaisingHelpers
+				end
+
+				class LifecycleRaising < Phlex::HTML
+					include LifecycleRaisingHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleRaising)
+
+			refusing = Module.new { def self.included(*) = raise("refused") }
+			assert_raises(RuntimeError) { LifecycleRaisingHelpers.include(refusing) }
+			assert LifecycleRaisingHelpers.include?(refusing)
+
+			refusing.define_method(:div) { |**| plain("refusing div") }
+			assert_equal LifecycleRaising.new.call, "refusing div"
+		end
+	end
+
+	test "a watched module's private include stays private" do
+		with_component_files(
+			"private_include.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecyclePrivateInclude
+					private_class_method :include
+				end
+
+				class LifecyclePrivateIncludeComponent < Phlex::HTML
+					include LifecyclePrivateInclude
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecyclePrivateIncludeComponent)
+
+			assert LifecyclePrivateInclude.singleton_class < Phlex::Compiler::MixinHooks
+			assert_raises(NoMethodError) { LifecyclePrivateInclude.include(Module.new) }
+			assert LifecyclePrivateInclude.respond_to?(:prepend)
+
+			hidden = Module.new
+			LifecyclePrivateInclude.__send__(:include, hidden)
+			hidden.define_method(:div) { |**| plain("hidden div") }
+			assert_equal LifecyclePrivateIncludeComponent.new.call, "hidden div"
+		end
+	end
+
+	test "a watched module's public method_added stays public" do
+		with_component_files(
+			"public_callback.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecyclePublicCallback
+					public_class_method :method_added
+				end
+
+				class LifecyclePublicCallbackComponent < Phlex::HTML
+					include LifecyclePublicCallback
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecyclePublicCallbackComponent)
+
+			assert LifecyclePublicCallback.singleton_class < Phlex::Compiler::MixinHooks
+			assert LifecyclePublicCallback.respond_to?(:method_added)
+			refute LifecyclePublicCallback.respond_to?(:method_removed)
+			assert_equal LifecyclePublicCallback.method_added(:unrelated), nil
+		end
+	end
+
+	module FreezeWhileWatching
+		def self.arm(mod, calls)
+			@mod = mod
+			@calls = calls
+		end
+
+		def self.called(modules)
+			return unless @mod && modules.include?(@mod) && (@calls -= 1).zero?
+
+			@mod.singleton_class.freeze
+			@mod = nil
+		end
+
+		def unwatched_mixins(component, modules, **)
+			super.tap { FreezeWhileWatching.called(modules) }
+		end
+	end
+
+	Phlex::Compiler.singleton_class.prepend(FreezeWhileWatching)
+
+	test "a module frozen on another thread while it's mixed in decompiles what it could change" do
+		with_component_files(
+			"frozen_meanwhile.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleFrozenMeanwhileHelpers
+				end
+
+				class LifecycleFrozenMeanwhile < Phlex::HTML
+					include LifecycleFrozenMeanwhileHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenMeanwhile)
+			assert compiled_method?(LifecycleFrozenMeanwhile, :view_template)
+
+			frozen = Module.new
+			# Frozen between the check before watching and installing the hooks.
+			FreezeWhileWatching.arm(frozen, 2)
+			assert_raises(Phlex::Compiler::Error) { LifecycleFrozenMeanwhileHelpers.include(frozen) }
+			refute Phlex::Compiler.inlines?(LifecycleFrozenMeanwhile)
+
+			frozen.define_method(:div) { |**| plain("frozen div") }
+			assert_equal LifecycleFrozenMeanwhile.new.call, "frozen div"
+		end
+	end
+
+	test "a subclass overriding <= still sees an included module hide an inlined element" do
+		with_component_files(
+			"comparing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleComparingParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleComparingChild < LifecycleComparingParent
+					def self.<=(other) = false
+				end
+
+				module LifecycleHidesFromComparing
+					def div = nil
+					undef_method :div
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleComparingChild)
+			assert_equal LifecycleComparingChild.new.call, "<div>x</div>"
+
+			LifecycleComparingChild.include(LifecycleHidesFromComparing)
+			assert_raises(NoMethodError) { LifecycleComparingChild.new.call }
+		end
+	end
+
+	test "a component defining to_ary is still found when its module changes" do
+		with_component_files(
+			"to_ary.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleToAryHelpers
+				end
+
+				class LifecycleToAry < Phlex::HTML
+					include LifecycleToAryHelpers
+
+					def self.to_ary = []
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleToAry)
+
+			LifecycleToAryHelpers.define_method(:div) { |**| plain("helper div") }
+			assert_equal LifecycleToAry.new.call, "helper div"
+		end
+	end
+
+	test "an element a method_added callback defines while compiling takes effect" do
+		with_component_files(
+			"reentrant.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleReentrantHelpers
+				end
+
+				class LifecycleReentrant < Phlex::HTML
+					include LifecycleReentrantHelpers
+
+					def self.arm(&block)
+						@armed = block
+					end
+
+					def self.method_added(name)
+						super
+
+						if name == :view_template && (armed = @armed)
+							@armed = nil
+							armed.call
+						end
+					end
+
+					def view_template
+						div { "x" }
+						span { "y" }
+					end
+				end
+			RUBY
+		) do
+			LifecycleReentrant.arm { LifecycleReentrantHelpers.define_method(:div) { |**| plain("module div") } }
+			Phlex::Compiler.compile(LifecycleReentrant)
+			assert_equal LifecycleReentrant.new.call, "module div<span>y</span>"
+
+			LifecycleReentrant.arm { LifecycleReentrant.define_method(:span) { |**| plain("class span") } }
+			Phlex::Compiler.recompile(LifecycleReentrant)
+			assert_equal LifecycleReentrant.new.call, "module divclass span"
+		end
+	end
+
+	test "a module hiding an element, included by a method_added callback while compiling, takes effect" do
+		with_component_files(
+			"reentrant_hidden.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleReentrantHides
+					def div = nil
+					undef_method :div
+				end
+
+				class LifecycleReentrantHidden < Phlex::HTML
+					def self.method_added(name)
+						super
+						include(LifecycleReentrantHides) if name == :view_template && @armed
+					end
+
+					def self.arm
+						@armed = true
+					end
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			LifecycleReentrantHidden.arm
+			Phlex::Compiler.compile(LifecycleReentrantHidden)
+			assert_raises(NoMethodError) { LifecycleReentrantHidden.new.call }
+		end
+	end
+
+	test "a method_added callback that changes an element every time it's compiled is refused" do
+		with_component_files(
+			"unsettled.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleUnsettledHelpers
+				end
+
+				class LifecycleUnsettled < Phlex::HTML
+					include LifecycleUnsettledHelpers
+
+					def self.method_added(name)
+						super
+
+						if name == :view_template && @armed
+							LifecycleUnsettledHelpers.define_method(:div) { |**| plain("div") }
+							LifecycleUnsettledHelpers.remove_method(:div)
+						end
+					end
+
+					def self.arm
+						@armed = true
+					end
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do |(path)|
+			LifecycleUnsettled.arm
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleUnsettled) }
+			assert_equal error.message, "LifecycleUnsettledHelpers kept changing what was inlined each time it was compiled again."
+			assert generations_of(path) <= 11
+		end
+	end
+
+	test "a method_added callback that changes an element every time it's compiled lazily is reported and still renders" do
+		with_component_files(
+			"unsettled_lazy.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleUnsettledLazyHelpers
+				end
+
+				class LifecycleUnsettledLazy < Phlex::HTML
+					include LifecycleUnsettledLazyHelpers
+
+					def self.method_added(name)
+						super
+
+						if name == :view_template && @armed
+							LifecycleUnsettledLazyHelpers.define_method(:div) { |**| plain("div") }
+							LifecycleUnsettledLazyHelpers.remove_method(:div)
+						end
+					end
+
+					def self.arm
+						@armed = true
+					end
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			LifecycleUnsettledLazy.arm
+			failures = []
+			Phlex::Compiler.enable!(on_failure: -> (component, error) { failures << [component, error.class] if component == LifecycleUnsettledLazy })
+			begin
+				assert_equal LifecycleUnsettledLazy.new.call, "<div>x</div>"
+			ensure
+				Phlex::Compiler.disable!
+			end
+			assert_equal failures, [[LifecycleUnsettledLazy, Phlex::Compiler::Error]]
+		end
+	end
+
+	test "modules overriding singleton_class? and including classes overriding ancestors are still watched" do
+		with_component_files(
+			"singleton_claims.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleClaimsSingleton
+					def self.singleton_class? = true
+				end
+
+				module LifecycleOverriddenAncestry
+				end
+
+				class LifecycleClaimsSingletonParent < Phlex::HTML
+					def view_template
+						div { "x" }
+						span { "y" }
+					end
+				end
+
+				class LifecycleClaimsSingletonChild < LifecycleClaimsSingletonParent
+					include LifecycleClaimsSingleton
+				end
+
+				class LifecycleOverriddenAncestryChild < LifecycleClaimsSingletonParent
+					include LifecycleOverriddenAncestry
+
+					def self.ancestors = [self]
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleClaimsSingletonParent)
+			assert_equal LifecycleClaimsSingletonParent.instance_variable_get(:@__phlex_inlined__), Set[:div, :span]
+
+			LifecycleClaimsSingleton.define_method(:div) { |**| plain("claimed div") }
+			assert_equal LifecycleClaimsSingletonChild.new.call, "claimed div<span>y</span>"
+
+			LifecycleOverriddenAncestry.define_method(:span) { |**| plain("overridden span") }
+			assert_equal LifecycleOverriddenAncestryChild.new.call, "<div>x</div>overridden span"
+			assert_equal LifecycleClaimsSingletonParent.new.call, "<div>x</div><span>y</span>"
+		end
+	end
+
+	test "a subclass's module changed on another thread while its parent compiles takes effect" do
+		with_component_files(
+			"concurrent_subclass.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleConcurrentSubclassHelpers
+				end
+
+				class LifecycleConcurrentParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleConcurrentChild < LifecycleConcurrentParent
+					include LifecycleConcurrentSubclassHelpers
+				end
+			RUBY
+		) do
+			Interleave.pending = -> { LifecycleConcurrentSubclassHelpers.define_method(:div) { |**| plain("concurrent div") } }
+			Phlex::Compiler.compile(LifecycleConcurrentParent)
+
+			assert_equal LifecycleConcurrentChild.new.call, "concurrent div"
+			assert_equal LifecycleConcurrentParent.new.call, "<div>x</div>"
+		ensure
+			Interleave.pending = nil
+		end
+	end
+
+	test "modules overriding singleton_class, and subclasses overriding ancestors, are still watched" do
+		with_component_files(
+			"singleton_override.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSingletonDecoy
+				end
+
+				module LifecycleOverridesSingleton
+					def self.singleton_class = LifecycleSingletonDecoy
+				end
+
+				class LifecycleOverridesSingletonComponent < Phlex::HTML
+					include LifecycleOverridesSingleton
+
+					def view_template
+						div { "x" }
+						span { "y" }
+					end
+				end
+
+				class LifecycleHidesParent < LifecycleOverridesSingletonComponent
+					def self.ancestors = [self]
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleOverridesSingletonComponent)
+
+			LifecycleOverridesSingleton.define_method(:div) { |**| plain("real div") }
+			assert_equal LifecycleOverridesSingletonComponent.new.call, "real div<span>y</span>"
+
+			later = Module.new
+			LifecycleHidesParent.include(later)
+			later.define_method(:span) { |**| plain("later span") }
+			assert_equal LifecycleHidesParent.new.call, "real divlater span"
+		end
+	end
+
+	test "a module with a frozen singleton class is fine when nothing is inlined" do
+		with_component_files(
+			"frozen_uninlined.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleFrozenUninlined
+					def greeting = "hi"
+				end
+				LifecycleFrozenUninlined.singleton_class.freeze
+
+				class LifecycleFrozenUninlinedComponent < Phlex::HTML
+					include LifecycleFrozenUninlined
+
+					def view_template = plain(greeting)
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenUninlinedComponent)
+
+			refute Phlex::Compiler.inlines?(LifecycleFrozenUninlinedComponent)
+			assert_equal LifecycleFrozenUninlinedComponent.new.call, "hi"
+		end
+	end
+
+	test "a module mixed into Phlex::SGML is watched" do
+		with_component_files(
+			"sgml_mixin.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSGMLElements
+					extend Phlex::SGML::Elements
+
+					register_element :lifecycle_everywhere
+				end
+
+				# As if mixed in before anything was compiled, so Phlex::SGML's hook doesn't see it.
+				Module.instance_method(:include).bind_call(Phlex::SGML, LifecycleSGMLElements)
+
+				class LifecycleUsesSGMLMixin < Phlex::HTML
+					def view_template = lifecycle_everywhere { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleUsesSGMLMixin)
+			assert_equal LifecycleUsesSGMLMixin.new.call, "<lifecycle-everywhere>x</lifecycle-everywhere>"
+
+			LifecycleSGMLElements.define_method(:lifecycle_everywhere) { |**| plain("redefined everywhere") }
+			assert_equal LifecycleUsesSGMLMixin.new.call, "redefined everywhere"
+		end
+	end
+
+	test "a module mixed into a class that isn't compiled isn't watched" do
+		with_component_files(
+			"unwatched.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleUnwatchedHelpers
+				end
+
+				class LifecycleUnwatched < Phlex::HTML
+					include LifecycleUnwatchedHelpers
+				end
+			RUBY
+		) do
+			refute LifecycleUnwatchedHelpers.singleton_class < Phlex::Compiler::MixinHooks
 		end
 	end
 

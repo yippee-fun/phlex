@@ -212,6 +212,7 @@ module Phlex::SGML::Elements
 		end
 
 		Phlex::SGML::Elements.record_registered_name(method_name)
+		__registration_changed__(method_name)
 
 		method_name
 	end
@@ -258,7 +259,14 @@ module Phlex::SGML::Elements
 		end
 
 		Phlex::SGML::Elements.record_registered_name(method_name)
+		__registration_changed__(method_name)
 
 		method_name
+	end
+
+	# Defining the method already reported it, but before the registry named
+	# its new tag, so what inlined it is recompiled again.
+	private def __registration_changed__(method_name)
+		Phlex::Compiler.inlining_changed(self, [method_name]) unless Phlex.__compiled_source_maps__.empty?
 	end
 end
