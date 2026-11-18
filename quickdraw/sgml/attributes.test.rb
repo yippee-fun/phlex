@@ -351,6 +351,26 @@ class AttributesTest < Quickdraw::Test
 		assert_equal output, %(<div class="foo bar"></div>)
 	end
 
+	test "_, Array(false | token)" do
+		output = phlex { div(class: ["a", false]) }
+		assert_equal output, %(<div class="a"></div>)
+
+		output = phlex { div(class: [false, "a", [false, "b"], Set[false]]) }
+		assert_equal output, %(<div class="a b"></div>)
+
+		output = phlex { div(class: [false]) }
+		assert_equal output, %(<div></div>)
+
+		output = phlex { div(data: { action: ["a", false] }) }
+		assert_equal output, %(<div data-action="a"></div>)
+	end
+
+	test "_, Array(true)" do
+		assert_raises(Phlex::ArgumentError) do
+			phlex { div(class: ["a", true]) }
+		end
+	end
+
 	test "_, Array(EmptyArray | String)" do
 		output = phlex { div(class: [[], "foo"]) }
 		assert_equal output, %(<div class="foo"></div>)
@@ -684,6 +704,30 @@ class AttributesTest < Quickdraw::Test
 
 		output = phlex { div(style: ["", {}, { color: nil }]) }
 		assert_equal output, %(<div></div>)
+	end
+
+	test ":style, Array(false)" do
+		output = phlex { div(style: ["color: red", false]) }
+		assert_equal output, %(<div style="color: red;"></div>)
+
+		output = phlex { div(style: Set[false]) }
+		assert_equal output, %(<div></div>)
+
+		assert_raises(Phlex::ArgumentError) do
+			phlex { div(style: ["color: red", true]) }
+		end
+	end
+
+	test ":style, Hash(_, false)" do
+		output = phlex { div(style: { color: false, top: 0 }) }
+		assert_equal output, %(<div style="top: 0;"></div>)
+
+		output = phlex { div(style: { color: false }) }
+		assert_equal output, %(<div></div>)
+
+		assert_raises(Phlex::ArgumentError) do
+			phlex { div(style: { color: true }) }
+		end
 	end
 
 	test ":style, Set(nil)" do
