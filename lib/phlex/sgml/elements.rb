@@ -58,23 +58,51 @@ module Phlex::SGML::Elements
 		attributes
 	end
 
+	# Every name registered by any class or module, so `tag` only searches a
+	# component's ancestors for a name something has registered. Replaced rather
+	# than mutated, so it stays shareable between Ractors.
+	@registered_names = {}.freeze
+	@registered_names_mutex = Mutex.new
+
+	def self.registered_name?(name)
+		@registered_names.key?(name)
+	end
+
+	def self.record_registered_name(name)
+		return if @registered_names.key?(name)
+
+		@registered_names_mutex.synchronize do
+			names = @registered_names.merge(name => true)
+			@registered_names = defined?(::Ractor) ? ::Ractor.make_shareable(names) : names.freeze
+		end
+	end
+
 	def self.normalizer_call(method_name)
 		if (normalizer = ATTRIBUTE_NORMALIZERS[method_name])
 			"Phlex::SGML::Elements.#{normalizer}(attributes)"
 		end
 	end
 
+	Registry = Data.define(:elements, :void_elements)
+	EMPTY_REGISTRY = Registry.new(elements: {}.freeze, void_elements: {}.freeze)
+	REGISTRATION_MUTEX = Mutex.new
+
+	# Frozen and replaced whole on each registration, so any Ractor can read it
+	# and an element's tag is never seen without its void status.
+	def __element_registry__
+		@__element_registry__ || EMPTY_REGISTRY
+	end
+
 	def __registered_elements__
-		@__registered_elements__ ||= {}
+		(@__element_registry__ || EMPTY_REGISTRY).elements
 	end
 
 	def __registered_void_elements__
-		@__registered_void_elements__ ||= {}
+		(@__element_registry__ || EMPTY_REGISTRY).void_elements
 	end
 
-	# Unlike `__registered_elements__`, this doesn't write to the class, so it works when the class is frozen.
 	def __element_registered__?(name)
-		!!@__registered_elements__&.key?(name)
+		__registered_elements__.key?(name)
 	end
 
 	def register_element(method_name, tag: method_name.name.tr("_", "-"))
@@ -99,7 +127,7 @@ module Phlex::SGML::Elements
 						buffer << "<#{tag}"
 						begin
 							#{Phlex::SGML::Elements.normalizer_call(method_name)}
-							buffer << Phlex::SERIALIZED_ATTRIBUTES.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+							buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 						ensure
 							buffer << ">"
 						end
@@ -130,7 +158,7 @@ module Phlex::SGML::Elements
 						buffer << "<#{tag}"
 						begin
 							#{Phlex::SGML::Elements.normalizer_call(method_name)}
-							buffer << ::Phlex::SERIALIZED_ATTRIBUTES.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+							buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 						ensure
 							buffer << "></#{tag}>"
 						end
@@ -172,8 +200,18 @@ module Phlex::SGML::Elements
 			end
 		RUBY
 
-		__registered_elements__[method_name] = tag
-		__registered_void_elements__.delete(method_name)
+		tag = String.new(tag.to_s).freeze
+
+		REGISTRATION_MUTEX.synchronize do
+			registry = __element_registry__
+
+			@__element_registry__ = Registry.new(
+				elements: registry.elements.merge(method_name => tag).freeze,
+				void_elements: registry.void_elements.except(method_name).freeze,
+			)
+		end
+
+		Phlex::SGML::Elements.record_registered_name(method_name)
 
 		method_name
 	end
@@ -196,7 +234,7 @@ module Phlex::SGML::Elements
 					buffer << "<#{tag}"
 					begin
 						#{Phlex::SGML::Elements.normalizer_call(method_name)}
-						buffer << ::Phlex::SERIALIZED_ATTRIBUTES.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+						buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 					ensure
 						buffer << ">"
 					end
@@ -208,8 +246,18 @@ module Phlex::SGML::Elements
 			end
 		RUBY
 
-		__registered_elements__[method_name] = tag
-		__registered_void_elements__[method_name] = tag
+		tag = String.new(tag.to_s).freeze
+
+		REGISTRATION_MUTEX.synchronize do
+			registry = __element_registry__
+
+			@__element_registry__ = Registry.new(
+				elements: registry.elements.merge(method_name => tag).freeze,
+				void_elements: registry.void_elements.merge(method_name => tag).freeze,
+			)
+		end
+
+		Phlex::SGML::Elements.record_registered_name(method_name)
 
 		method_name
 	end

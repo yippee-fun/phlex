@@ -169,7 +169,7 @@ class NativeAttributesTest < Quickdraw::Test
 
 	def self.compare_fetch(attributes)
 		ruby = outcome { Attributes.instance_method(:generate_attributes).bind_call(Attributes, attributes) }
-		native = outcome { Phlex::SERIALIZED_ATTRIBUTES.fetch(attributes) { Attributes.generate_attributes(attributes) } }
+		native = outcome { Phlex.__attribute_cache__.fetch(attributes) { Attributes.generate_attributes(attributes) } }
 		{ method_name: :fetch, args: [attributes], ruby:, native: } unless ruby == native
 	end
 
@@ -178,11 +178,41 @@ class NativeAttributesTest < Quickdraw::Test
 	end
 
 	test "replaces the attribute cache" do
-		assert_equal Phlex::SERIALIZED_ATTRIBUTES, Phlex::Native::SerializedAttributes
+		assert_equal Phlex.__attribute_cache__, Phlex::Native::SerializedAttributes
+	end
+
+	if defined?(::Ractor)
+		test "serialises attributes in another Ractor" do
+			attributes = {
+				href: "/search?q=a&page=2",
+				src: "java&#115;cript:x",
+				onclick: Phlex::SGML::SafeValue.new("go()"),
+				style: { width: 1.5, z_index: 2 },
+				class: ["a", :b_c],
+				data: { x_y: 1 },
+			}
+
+			experimental = Warning[:experimental]
+			Warning[:experimental] = false
+			ractor = Ractor.new(attributes) do |attributes|
+				[
+					Phlex.__attribute_cache__.equal?(Phlex::Native::SerializedAttributes),
+					Phlex.__attribute_cache__.fetch(attributes) { raise },
+					Phlex::SGML::Attributes.reference_attribute(:href, "href", "javascript:x"),
+				]
+			end
+			native, serialized, dropped = ractor.respond_to?(:value) ? ractor.value : ractor.take
+
+			assert native
+			assert_equal serialized, Attributes.instance_method(:generate_attributes).bind_call(Attributes, attributes)
+			assert_equal dropped, ""
+		ensure
+			Warning[:experimental] = experimental
+		end
 	end
 
 	test "fetch yields when it can't serialise the attributes" do
-		assert_equal Phlex::SERIALIZED_ATTRIBUTES.fetch({ class: Set["a"] }) { "fallback" }, "fallback"
+		assert_equal Phlex.__attribute_cache__.fetch({ class: Set["a"] }) { "fallback" }, "fallback"
 	end
 
 	test "generate_attributes stays in Ruby so a fallback doesn't run the C twice" do
@@ -193,12 +223,12 @@ class NativeAttributesTest < Quickdraw::Test
 		attributes = { style: { color: "red", z_index: 1, font_family: :sans_serif }, data: { style: ["a", "b"] } }
 
 		assert_equal(
-			Phlex::SERIALIZED_ATTRIBUTES.fetch(attributes) { raise },
+			Phlex.__attribute_cache__.fetch(attributes) { raise },
 			Attributes.generate_attributes(attributes),
 		)
 
 		assert_equal(
-			Phlex::SERIALIZED_ATTRIBUTES.fetch({ style: ["color: red", "", nil, { margin: 0 }] }) { raise },
+			Phlex.__attribute_cache__.fetch({ style: ["color: red", "", nil, { margin: 0 }] }) { raise },
 			%( style="color: red; margin: 0;"),
 		)
 	end

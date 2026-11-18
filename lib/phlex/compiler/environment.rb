@@ -61,12 +61,14 @@ class Phlex::Compiler::Environment
 		return unless (method = instance_method(name))
 
 		owner = method.owner
-		return unless owner.respond_to?(:__registered_elements__)
+		return unless owner.respond_to?(:__element_registry__)
 		return unless method.source_location&.first == ELEMENTS_SOURCE_PATH
-		return unless (tag = owner.__registered_elements__[name])
+
+		registry = owner.__element_registry__
+		return unless (tag = registry.elements[name])
 		return if overridden_by_descendant?(name, owner)
 
-		Element.new(tag:, void: owner.__registered_void_elements__.key?(name))
+		Element.new(tag:, void: registry.void_elements.key?(name))
 	end
 
 	private def resolve_helper(name)
