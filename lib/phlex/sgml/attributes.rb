@@ -298,7 +298,8 @@ module Phlex::SGML::Attributes
 		if value.include?("&")
 			decode_html_character_references(value).downcase.delete("^a-z:").start_with?("javascript:")
 		elsif value.include?(":") && (value.include?("j") || value.include?("J"))
-			value.downcase.delete("^a-z:").start_with?("javascript:")
+			# A subclass could override `downcase`; decoding returned a plain String.
+			(String.equal?(value.class) ? value : String.new(value)).downcase.delete("^a-z:").start_with?("javascript:")
 		else
 			false
 		end

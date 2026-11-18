@@ -89,7 +89,7 @@ module Phlex::SGML::Elements
 					return nil
 				end
 
-				if attributes && !(Hash === attributes)
+				unless Hash === attributes || attributes.nil?
 					raise ::Phlex::ArgumentError.new("Expected attributes to be keyword arguments or a Hash.")
 				end
 
@@ -191,7 +191,7 @@ module Phlex::SGML::Elements
 
 				buffer = state.buffer
 
-				if attributes && !(Hash === attributes)
+				unless Hash === attributes || attributes.nil?
 					raise ::Phlex::ArgumentError.new("Expected attributes to be keyword arguments or a Hash.")
 				end
 

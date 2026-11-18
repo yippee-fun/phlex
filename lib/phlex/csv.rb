@@ -8,6 +8,8 @@ class Phlex::CSV
 	end.freeze
 
 	UNDEFINED = Object.new
+	NO_VALUE = Object.new
+	private_constant :NO_VALUE
 
 	def initialize(collection)
 		@collection = collection
@@ -148,8 +150,8 @@ class Phlex::CSV
 	end
 
 	# An optional parameter before a required one makes Ruby allocate an Array per call.
-	private def column(header, value = UNDEFINED)
-		if UNDEFINED.equal?(value)
+	private def column(header, value = NO_VALUE)
+		if NO_VALUE.equal?(value)
 			@_row_buffer.push(nil, header)
 		else
 			@_row_buffer.push(header, value)
