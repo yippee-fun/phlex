@@ -8,4 +8,16 @@ class Phlex::SGML::SafeValue
 	end
 
 	attr_reader :to_s
+
+	def ==(other)
+		self.class == other.class && @to_s == other.to_s
+	end
+
+	def eql?(other)
+		self.class == other.class && @to_s.eql?(other.to_s)
+	end
+
+	def hash
+		[self.class, @to_s].hash
+	end
 end
