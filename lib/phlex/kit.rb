@@ -47,35 +47,32 @@ module Phlex::Kit
 	def const_added(name)
 		return if autoload?(name)
 
-		me = self
 		constant = const_get(name)
 
 		case constant
 		when Class
 			if constant < Phlex::SGML
-				constant.include(me)
+				constant.include(self)
 
-				constant = nil
+				# Defined from a string so they can be called from any Ractor.
+				reference = (name in :BEGIN | :END) ? "::Module.nesting.first.const_get(:#{name})" : name
 
-				if name in :BEGIN | :END
-					define_method(name) do |*args, **kwargs, &block|
-						render(me.const_get(name).new(*args, **kwargs), &block)
+				module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
+					def #{name}(*, **, &)
+						render(#{reference}.new(*, **), &)
 					end
-				else
-					DEFINE_COMPONENT_METHOD.call(me, name)
-				end
 
-				define_singleton_method(name) do |*args, **kwargs, &block|
-					component = Thread.current[:__phlex_component__]
-					if component
-						component.instance_exec do
-							constant = me.const_get(name)
-							render(constant.new(*args, **kwargs), &block)
+					def self.#{name}(*args, **kwargs, &block)
+						component = ::Thread.current[:__phlex_component__]
+						if component
+							component.instance_exec do
+								render(#{reference}.new(*args, **kwargs), &block)
+							end
+						else
+							raise "You can't call `#{name}' outside of a Phlex rendering context."
 						end
-					else
-						raise "You can't call `#{name}' outside of a Phlex rendering context."
 					end
-				end
+				RUBY
 			end
 		when Module
 			constant.extend(Phlex::Kit)
@@ -83,16 +80,4 @@ module Phlex::Kit
 
 		super
 	end
-end
-
-# Evaluated outside the module body so the constant is looked up from the kit,
-# as `const_get` would, on each call. Reloading the constant still works.
-Phlex::Kit::DEFINE_COMPONENT_METHOD = -> (kit, name) do
-	kit.module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
-		# frozen_string_literal: true
-
-		def #{name}(*, **, &)
-			render(#{name}.new(*, **), &)
-		end
-	RUBY
 end
