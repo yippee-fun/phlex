@@ -92,9 +92,15 @@ class Phlex::HTML < Phlex::SGML
 		else
 			if attributes.length > 0 # with attributes
 				if block_given # with content block
-					buffer << "<#{tag}" << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << ">"
+					buffer << "<#{tag}"
 					begin
-						if tag == "svg"
+						buffer << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					ensure
+						buffer << ">"
+					end
+
+					begin
+						if :svg == name
 							render Phlex::SVG.new(&)
 						else
 							__yield_content__(&)
@@ -103,13 +109,18 @@ class Phlex::HTML < Phlex::SGML
 						buffer << "</#{tag}>"
 					end
 				else # without content
-					buffer << "<#{tag}" << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << "></#{tag}>"
+					buffer << "<#{tag}"
+					begin
+						buffer << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					ensure
+						buffer << "></#{tag}>"
+					end
 				end
 			else # without attributes
 				if block_given # with content block
 					buffer << ("<#{tag}>")
 					begin
-						if tag == "svg"
+						if :svg == name
 							render Phlex::SVG.new(&)
 						else
 							__yield_content__(&)
@@ -121,6 +132,10 @@ class Phlex::HTML < Phlex::SGML
 					buffer << "<#{tag}></#{tag}>"
 				end
 			end
+
+			flush if "head" == tag
+
+			nil
 		end
 	end
 end

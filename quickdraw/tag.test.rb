@@ -340,6 +340,51 @@ HTML
 		assert_equal error.message, "Invalid SVG tag: foo"
 	end
 
+	test "head flushes like its registered method" do
+		[:head, :page_head].each do |name|
+			component = Class.new(Phlex::HTML) do
+				register_element :page_head, tag: "head"
+				define_method(:view_template) do
+					tag(name) { "x" }
+					body
+				end
+			end
+
+			chunks = []
+			component.new.call(chunks)
+
+			assert_equal chunks, ["<head>x</head>", "<body></body>"]
+		end
+	end
+
+	test "an element registered as svg yields to the component like its method" do
+		component = Class.new(Phlex::HTML) do
+			register_element :svg_root, tag: "svg"
+			def view_template = tag(:svg_root) { div }
+		end
+
+		assert_equal component.call, "<svg><div></div></svg>"
+	end
+
+	[[Phlex::HTML, :div], [Phlex::HTML, :custom_tag], [Phlex::SVG, :g], [Phlex::SVG, :custom_tag]].each do |component_class, name|
+		[false, true].each do |with_block|
+			test "#{component_class} #{name} closes its opening tag when attributes are invalid (block: #{with_block})" do
+				output = component_class.call do |component|
+					assert_raises(Phlex::ArgumentError) do
+						if with_block
+							component.tag(name, invalid: Object.new) { "x" }
+						else
+							component.tag(name, invalid: Object.new)
+						end
+					end
+				end
+
+				tag = name.name.tr("_", "-")
+				assert_equal output, with_block ? "<#{tag}>" : "<#{tag}></#{tag}>"
+			end
+		end
+	end
+
 	test "elements registered on a frozen class" do
 		component = Class.new(HTMLComponent) { register_element :foo }.freeze
 

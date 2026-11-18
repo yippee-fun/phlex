@@ -78,14 +78,25 @@ class Phlex::SVG < Phlex::SGML
 		else
 			if attributes.length > 0 # with attributes
 				if block_given # with content block
-					buffer << "<#{tag}" << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << ">"
+					buffer << "<#{tag}"
+					begin
+						buffer << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					ensure
+						buffer << ">"
+					end
+
 					begin
 						__yield_content__(&)
 					ensure
 						buffer << "</#{tag}>"
 					end
 				else # without content
-					buffer << "<#{tag}" << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << "></#{tag}>"
+					buffer << "<#{tag}"
+					begin
+						buffer << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					ensure
+						buffer << "></#{tag}>"
+					end
 				end
 			else # without attributes
 				if block_given # with content block
@@ -99,6 +110,10 @@ class Phlex::SVG < Phlex::SGML
 					buffer << "<#{tag}></#{tag}>"
 				end
 			end
+
+			flush if "head" == tag
+
+			nil
 		end
 	end
 end
