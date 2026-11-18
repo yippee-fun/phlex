@@ -15,17 +15,21 @@ module Phlex::SGML::Attributes
 
 	# Symbol keys whose names have passed every name check, mapped to their names.
 	# Values for these only need serialising. Reference attributes are kept apart
-	# because their values also need checking.
-	CHECKED_NAMES = {}
-	CHECKED_REFERENCE_NAMES = {}
+	# because their values also need checking. Replaced rather than mutated, so
+	# they stay shareable between Ractors.
+	@checked_names = {}.freeze
+	@checked_reference_names = {}.freeze
+	@checked_names_mutex = Mutex.new
 	CHECKED_NAMES_LIMIT = 1_000
-	CHECKED_NAMES_MUTEX = Mutex.new
 
 	def generate_attributes(attributes, buffer = +"")
+		checked_names = @checked_names
+		checked_reference_names = @checked_reference_names
+
 		attributes.each do |k, v|
 			next unless v
 
-			if (name = CHECKED_NAMES[k])
+			if (name = checked_names[k])
 				case v
 				when String
 					buffer << " " << name << '="' << (v.include?('"') ? v.gsub('"', "&quot;") : v) << '"'
@@ -34,7 +38,7 @@ module Phlex::SGML::Attributes
 				else
 					generate_attribute(k, name, v, buffer)
 				end
-			elsif String === v && (name = CHECKED_REFERENCE_NAMES[k]) && !(Phlex::SGML::SafeObject === v)
+			elsif String === v && (name = checked_reference_names[k]) && !(Phlex::SGML::SafeObject === v)
 				value = v.include?('"') ? v.gsub('"', "&quot;") : v
 				buffer << " " << name << '="' << value << '"' unless unsafe_reference?(value)
 			else
@@ -83,11 +87,22 @@ module Phlex::SGML::Attributes
 	end
 
 	private def remember_checked_name(k, name)
-		names = REF_ATTRIBUTES.include?(name) ? CHECKED_REFERENCE_NAMES : CHECKED_NAMES
-		return if names.key?(k)
+		reference = REF_ATTRIBUTES.include?(name)
+		names = reference ? @checked_reference_names : @checked_names
+		return if names.key?(k) || names.size >= CHECKED_NAMES_LIMIT || !Phlex.__main_ractor__?
 
-		CHECKED_NAMES_MUTEX.synchronize do
-			names[k] = -name if names.size < CHECKED_NAMES_LIMIT
+		@checked_names_mutex.synchronize do
+			names = reference ? @checked_reference_names : @checked_names
+			next if names.key?(k) || names.size >= CHECKED_NAMES_LIMIT
+
+			names = names.merge(k => -name)
+			names = defined?(::Ractor) ? ::Ractor.make_shareable(names) : names.freeze
+
+			if reference
+				@checked_reference_names = names
+			else
+				@checked_names = names
+			end
 		end
 	end
 

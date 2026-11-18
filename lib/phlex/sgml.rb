@@ -446,7 +446,7 @@ class Phlex::SGML
 	end
 
 	private def __attributes__(attributes)
-		Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+		@_state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 	end
 
 	private_class_method def self.method_added(method_name)
@@ -487,7 +487,7 @@ class Phlex::SGML
 	# A frozen class can't be recompiled when an element or helper it inlined
 	# changes, so its original definitions are put back first.
 	def self.freeze
-		Phlex::Compiler.decompile(self) if !Phlex::COMPILED_SOURCE_MAPS.empty? && Phlex::Compiler.compiled?(self) && !frozen?
+		Phlex::Compiler.decompile(self) if !Phlex.__compiled_source_maps__.empty? && Phlex::Compiler.compiled?(self) && !frozen?
 
 		super
 	end
@@ -496,7 +496,7 @@ class Phlex::SGML
 	# time, so a change to one has to be seen. Nothing to do until something
 	# has been compiled.
 	private_class_method def self.__inlining_changed__(target, names)
-		Phlex::Compiler.inlining_changed(target, names) unless Phlex::COMPILED_SOURCE_MAPS.empty?
+		Phlex::Compiler.inlining_changed(target, names) unless Phlex.__compiled_source_maps__.empty?
 	end
 
 	private def singleton_method_added(method_name)
@@ -515,7 +515,7 @@ class Phlex::SGML
 
 		exception.set_backtrace(
 			locations.map do |loc|
-				if (generation = Phlex::COMPILED_SOURCE_MAPS[loc.path]) && (line = generation.lines[loc.lineno])
+				if (generation = Phlex.__compiled_source_maps__[loc.path]) && (line = generation.lines[loc.lineno])
 					"#{generation.path}:#{line}:in '#{loc.label}'"
 				else
 					loc.to_s

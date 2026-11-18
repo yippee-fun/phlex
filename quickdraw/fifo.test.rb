@@ -96,4 +96,23 @@ class FIFOTest < Quickdraw::Test
 		assert_equal fifo.fetch(1) { "a" * 11 }, "a" * 11
 		assert_equal fifo.size, 0
 	end
+
+	test "grow_to raises the limit to a target and never lowers it" do
+		fifo = Phlex::FIFO.new(max_bytesize: 10)
+
+		fifo.grow_to(25)
+		assert_equal fifo.max_bytesize, 25
+
+		fifo.grow_to(25)
+		fifo.grow_to(5)
+		assert_equal fifo.max_bytesize, 25
+	end
+
+	test "grow_to from racing threads grows to the target once" do
+		fifo = Phlex::FIFO.new(max_bytesize: 10)
+
+		Array.new(8) { Thread.new { 100.times { fifo.grow_to(25) } } }.each(&:join)
+
+		assert_equal fifo.max_bytesize, 25
+	end
 end

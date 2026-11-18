@@ -7,8 +7,8 @@ class Phlex::CSV
 		end
 	end.freeze
 
-	UNDEFINED = Object.new
-	NO_VALUE = Object.new
+	UNDEFINED = Object.new.freeze
+	NO_VALUE = Object.new.freeze
 	private_constant :NO_VALUE
 
 	def initialize(collection)
