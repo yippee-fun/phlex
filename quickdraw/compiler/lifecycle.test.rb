@@ -943,6 +943,139 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 	Phlex::Compiler.singleton_class.prepend(FreezeWhileWatching)
 
+	# Runs a block on another thread once a component's modules must be
+	# watched, just before compiled methods are installed.
+	module AfterWatching
+		def self.arm(component, &block)
+			@component = component
+			@block = block
+		end
+
+		def self.watched(component)
+			return unless @component.equal?(component) && (block = @block)
+
+			@block = nil
+			Thread.new(&block).join
+		end
+
+		def watch_mixins(component, *, strict: true)
+			super.tap { AfterWatching.watched(component) if strict }
+		end
+	end
+
+	Phlex::Compiler.singleton_class.prepend(AfterWatching)
+
+	test "an empty module included into a subclass on another thread just before installing is watched" do
+		with_component_files(
+			"last_moment.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleLastMomentHelpers
+				end
+
+				class LifecycleLastMomentParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleLastMomentChild < LifecycleLastMomentParent
+				end
+			RUBY
+		) do |(path)|
+			AfterWatching.arm(LifecycleLastMomentChild) { LifecycleLastMomentChild.include(LifecycleLastMomentHelpers) }
+			Phlex::Compiler.compile_file(path, components: [LifecycleLastMomentParent])
+			assert LifecycleLastMomentChild.include?(LifecycleLastMomentHelpers)
+
+			LifecycleLastMomentHelpers.define_method(:div) { |**| plain("helper div") }
+			assert_equal LifecycleLastMomentChild.new.call, "helper div"
+			assert_equal LifecycleLastMomentParent.new.call, "<div>x</div>"
+		end
+	end
+
+	test "an empty module a method_added callback mixes into a watched module while compiling is watched" do
+		with_component_files(
+			"callback_mixin.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleCallbackMixinEmpty
+				end
+
+				module LifecycleCallbackMixinHelpers
+				end
+
+				class LifecycleCallbackMixin < Phlex::HTML
+					include LifecycleCallbackMixinHelpers
+
+					def self.method_added(name)
+						super
+						LifecycleCallbackMixinHelpers.include(LifecycleCallbackMixinEmpty) if name == :view_template && @armed
+					end
+
+					def self.arm
+						@armed = true
+					end
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do |(path)|
+			LifecycleCallbackMixin.arm
+			Phlex::Compiler.compile_file(path, components: [LifecycleCallbackMixin])
+			assert LifecycleCallbackMixin.include?(LifecycleCallbackMixinEmpty)
+
+			LifecycleCallbackMixinEmpty.define_method(:div) { |**| plain("empty div") }
+			assert_equal LifecycleCallbackMixin.new.call, "empty div"
+		end
+	end
+
+	test "a watched module nothing inlines from any more mixes in a module with a frozen singleton class" do
+		with_component_files(
+			"abandoned.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleAbandonedHelpers
+				end
+
+				class LifecycleAbandoned < Phlex::HTML
+					include LifecycleAbandonedHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			assert_raises(RuntimeError) do
+				Sabotage.active = true
+				Phlex::Compiler.compile(LifecycleAbandoned)
+			ensure
+				Sabotage.active = false
+			end
+			assert LifecycleAbandonedHelpers.singleton_class < Phlex::Compiler::MixinHooks
+
+			frozen = Module.new
+			frozen.singleton_class.freeze
+			LifecycleAbandonedHelpers.include(frozen)
+			assert LifecycleAbandonedHelpers.include?(frozen)
+		end
+	end
+
+	test "a module whose singleton class overrides prepend is still watched" do
+		with_component_files(
+			"prepend_ignored.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecyclePrependIgnored
+				end
+				LifecyclePrependIgnored.singleton_class.define_singleton_method(:prepend) { |*| self }
+
+				class LifecyclePrependIgnoredComponent < Phlex::HTML
+					include LifecyclePrependIgnored
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecyclePrependIgnoredComponent)
+
+			LifecyclePrependIgnored.define_method(:div) { |**| plain("module div") }
+			assert_equal LifecyclePrependIgnoredComponent.new.call, "module div"
+		end
+	end
+
 	test "a module frozen on another thread while it's mixed in decompiles what it could change" do
 		with_component_files(
 			"frozen_meanwhile.rb" => <<~RUBY

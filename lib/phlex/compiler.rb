@@ -26,7 +26,7 @@ require "refract"
 # refused with a Phlex::Compiler::Error naming the file and line rather than
 # compiled approximately. Refused: a method marked `ruby2_keywords`, a `using`
 # that applies to only part of its file, two definitions of a method on one
-# line, a local named like one the compiler generates (`__phlex_…`), a file
+# line, a local named like one the compiler generates (`__phlex_â¦`), a file
 # edited since it was loaded, and redefining an inlined element or helper on
 # a single instance with `extend` or a singleton method. Redefining one on a
 # class, by including a module, or on a module already included recompiles
@@ -62,10 +62,24 @@ module Phlex::Compiler
 	KERNEL_FROZEN = Kernel.instance_method(:frozen?)
 	MODULE_INSTANCE_METHODS = Module.instance_method(:instance_methods)
 	MODULE_PRIVATE_INSTANCE_METHODS = Module.instance_method(:private_instance_methods)
+	MODULE_PREPEND = Module.instance_method(:prepend)
+	MODULE_PRIVATE_METHOD_DEFINED = Module.instance_method(:private_method_defined?)
+	MODULE_PROTECTED_METHOD_DEFINED = Module.instance_method(:protected_method_defined?)
 
 	# Another Ractor checks an instance's extends with these.
 	if defined?(::Ractor)
-		::Ractor.make_shareable([MODULE_ANCESTORS, MODULE_SINGLETON_CLASS, MODULE_LE, KERNEL_SINGLETON_CLASS, KERNEL_FROZEN, MODULE_INSTANCE_METHODS, MODULE_PRIVATE_INSTANCE_METHODS])
+		::Ractor.make_shareable([
+			MODULE_ANCESTORS,
+			MODULE_SINGLETON_CLASS,
+			MODULE_LE,
+			KERNEL_SINGLETON_CLASS,
+			KERNEL_FROZEN,
+			MODULE_INSTANCE_METHODS,
+			MODULE_PRIVATE_INSTANCE_METHODS,
+			MODULE_PREPEND,
+			MODULE_PRIVATE_METHOD_DEFINED,
+			MODULE_PROTECTED_METHOD_DEFINED,
+		])
 	end
 
 	MUTEX = Mutex.new
@@ -228,7 +242,7 @@ module Phlex::Compiler
 		end
 
 		unless File.exist?(path)
-			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
+			raise ArgumentError, "Canât compile #{path} because it doesnât exist."
 		end
 
 		Phlex.__add_compiled_source_map__(STARTED_PATH, Generation.new(path: STARTED_PATH, lines: {}.freeze)) unless Phlex.__compiled_source_maps__.key?(STARTED_PATH)
@@ -258,10 +272,7 @@ module Phlex::Compiler
 		# and those of anything running inlined code must be.
 		if inline
 			components.each { |component| watch_mixins(component, strict: false) }
-
-			results.reject { |result| result.inlined.empty? }.map(&:component).uniq.flat_map { |component| [component, *descendants_of(component)] }.uniq.each do |component|
-				watch_mixins(component)
-			end
+			watch_inlining_mixins(results)
 		end
 
 		program = Refract::StatementsNode.new(
@@ -310,12 +321,33 @@ module Phlex::Compiler
 		@reported.clear
 
 		if inline
+			# A module mixed in since the last watch, here or on another thread,
+			# saw nothing inlined yet, so it wasn’t watched.
+			begin
+				watch_inlining_mixins(results) if missed.any? || @deferred.any?
+			rescue Error
+				results.map(&:component).uniq.each { |component| decompile(component) }
+				raise
+			end
+
 			results.map(&:component).uniq.each do |component|
 				recompile_unlocked(component) if missed.any? { |target, names| inlines_any?(component, names | hidden_names(target)) && related(target).include?(component) }
 			end
 		end
 
 		nil
+	end
+
+	# The modules of anything running inlined code must be watched.
+	def self.watch_inlining_mixins(results)
+		results.reject { |result| result.inlined.empty? }.map(&:component).uniq.flat_map { |component| [component, *descendants_of(component)] }.uniq.each do |component|
+			watch_mixins(component)
+		end
+	end
+
+	# Whether a change to the target can reach inlined code.
+	def self.affects_inlined_code?(target)
+		related(target).any? { |klass| inlines?(klass) }
 	end
 
 	def self.inlines_any?(component, names)
@@ -399,7 +431,7 @@ module Phlex::Compiler
 	# includes modules mixed into Phlex::SGML, but not Object's.
 	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Object }, strict: true)
 		unwatched_mixins(component, modules, strict:).each do |mod|
-			KERNEL_SINGLETON_CLASS.bind_call(mod).prepend(mixin_hooks_for(mod))
+			MODULE_PREPEND.bind_call(KERNEL_SINGLETON_CLASS.bind_call(mod), mixin_hooks_for(mod))
 		rescue FrozenError
 			# Frozen by another thread since it was checked.
 			raise if unwatched_mixins(component, [mod], strict:).any?
@@ -425,9 +457,9 @@ module Phlex::Compiler
 	end
 
 	def self.method_visibility(mod, name)
-		if mod.private_method_defined?(name)
+		if MODULE_PRIVATE_METHOD_DEFINED.bind_call(mod, name)
 			:private
-		elsif mod.protected_method_defined?(name)
+		elsif MODULE_PROTECTED_METHOD_DEFINED.bind_call(mod, name)
 			:protected
 		else
 			:public
@@ -781,11 +813,11 @@ module Phlex::Compiler
 	# mixes in, to report what Phlex::SGML's own hooks would for a class.
 	module MixinHooks
 		def include(*modules, **kwargs)
-			Phlex::Compiler.mix_in(self, modules) { super }
+			Phlex::Compiler.mix_in(self, modules, watch: Phlex::Compiler.affects_inlined_code?(self)) { super }
 		end
 
 		def prepend(*modules, **kwargs)
-			Phlex::Compiler.mix_in(self, modules) { super }
+			Phlex::Compiler.mix_in(self, modules, watch: Phlex::Compiler.affects_inlined_code?(self)) { super }
 		end
 
 		private def method_added(method_name)

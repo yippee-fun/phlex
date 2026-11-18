@@ -505,8 +505,7 @@ class Phlex::SGML
 	private_class_method def self.__mix_in__(modules, &)
 		return yield if Phlex.__compiled_source_maps__.empty?
 
-		watch = [*Phlex::Compiler::MODULE_ANCESTORS.bind_call(self), *Phlex::Compiler.descendants_of(self)].any? { |klass| Phlex::Compiler.inlines?(klass) }
-		Phlex::Compiler.mix_in(self, modules, watch:, &)
+		Phlex::Compiler.mix_in(self, modules, watch: Phlex::Compiler.affects_inlined_code?(self), &)
 	end
 
 	private def singleton_method_added(method_name)
