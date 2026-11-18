@@ -45,7 +45,7 @@ class CompilationEquivalenceTest < Quickdraw::Test
 
 			problems = REFUSED.key?(name) ? expect_refusal(file, REFUSED[name]) : compile_and_compare(components, file)
 
-			if !NOTHING_TO_COMPILE.include?(name) && !REFUSED.key?(name) && Phlex::Compiler::MAP.values.none? { |generation| generation.path == file }
+			if !NOTHING_TO_COMPILE.include?(name) && !REFUSED.key?(name) && Phlex.__compiled_source_maps__.values.none? { |generation| generation.path == file }
 				problems << "nothing in #{name} was compiled, so the case doesn't exercise the compiler"
 			end
 

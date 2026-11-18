@@ -7,7 +7,7 @@ class Phlex::CSV
 		end
 	end.freeze
 
-	UNDEFINED = Object.new
+	UNDEFINED = Object.new.freeze
 
 	def initialize(collection)
 		@collection = collection

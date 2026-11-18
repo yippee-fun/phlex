@@ -630,6 +630,4 @@ module Phlex::HTML::StandardElements
 	# [MDN Docs](https://developer.mozilla.org/docs/Web/HTML/Element/wbr)
 	# [Spec](https://html.spec.whatwg.org/#the-wbr-element)
 	register_element def wbr(**attributes, &content) = nil
-
-	__freeze_registries__
 end

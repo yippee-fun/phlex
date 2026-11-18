@@ -10,20 +10,22 @@ module Phlex::Helpers
 					old + new
 				in [Array, Set]
 					old + new.to_a
-				in [Array, String]
+				in [Array, String | Symbol]
 					old + [new]
 				in [Hash, Hash]
 					mix(old, new)
 				in [Set, Array]
 					old.to_a + new
-				in [Set, String]
+				in [Set, String | Symbol]
 					old.to_a + [new]
-				in [String, Array]
+				in [String | Symbol, Array]
 					[old] + new
-				in [String, Set]
+				in [String | Symbol, Set]
 					[old] + new.to_a
 				in [String, String]
 					"#{old} #{new}"
+				in [String | Symbol, String | Symbol]
+					[old, new]
 				in [_, Hash]
 					{ _: old, **new }
 				in [Hash, _]

@@ -64,22 +64,19 @@ module Phlex::SGML::Elements
 		end
 	end
 
+	EMPTY_REGISTRY = {}.freeze
+
+	# Registries are frozen and replaced on each registration, so any Ractor can read them.
 	def __registered_elements__
-		@__registered_elements__ ||= {}
+		@__registered_elements__ || EMPTY_REGISTRY
 	end
 
 	def __registered_void_elements__
-		@__registered_void_elements__ ||= {}
+		@__registered_void_elements__ || EMPTY_REGISTRY
 	end
 
-	# The built-in element modules call this once their bodies have registered
-	# every element. It freezes both registries in place, without copying them,
-	# so `tag` can read them from any Ractor. A later registration on a frozen
-	# registry swaps in a frozen copy instead of mutating it.
-	def __freeze_registries__
-		__freeze_registry__(__registered_elements__)
-		__freeze_registry__(__registered_void_elements__)
-		nil
+	def __element_registered__?(name)
+		__registered_elements__.key?(name)
 	end
 
 	def register_element(method_name, tag: method_name.name.tr("_", "-"))
@@ -177,7 +174,8 @@ module Phlex::SGML::Elements
 			end
 		RUBY
 
-		__record_element__(method_name, tag, void: false)
+		@__registered_elements__ = __registered_elements__.merge(method_name => -tag.to_s).freeze
+		@__registered_void_elements__ = __registered_void_elements__.except(method_name).freeze
 
 		method_name
 	end
@@ -212,37 +210,10 @@ module Phlex::SGML::Elements
 			end
 		RUBY
 
-		__record_element__(method_name, tag, void: true)
+		tag = -tag.to_s
+		@__registered_elements__ = __registered_elements__.merge(method_name => tag).freeze
+		@__registered_void_elements__ = __registered_void_elements__.merge(method_name => tag).freeze
 
 		method_name
-	end
-
-	private def __record_element__(method_name, tag, void:)
-		elements = __registered_elements__
-		void_elements = __registered_void_elements__
-
-		if elements.frozen? || void_elements.frozen?
-			tag = -tag.to_s
-			@__registered_elements__ = __freeze_registry__(elements.merge(method_name => tag))
-			@__registered_void_elements__ = __freeze_registry__(
-				void ? void_elements.merge(method_name => tag) : void_elements.except(method_name)
-			)
-		else
-			elements[method_name] = tag
-
-			if void
-				void_elements[method_name] = tag
-			else
-				void_elements.delete(method_name)
-			end
-		end
-	end
-
-	private def __freeze_registry__(registry)
-		if defined?(::Ractor)
-			::Ractor.make_shareable(registry)
-		else
-			registry.each_value(&:freeze).freeze
-		end
 	end
 end

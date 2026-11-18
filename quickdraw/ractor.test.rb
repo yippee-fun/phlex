@@ -8,9 +8,8 @@ class RactorTest < Quickdraw::Test
 
 		def view_template
 			div(class: "card", id: "example") do
-				span(data: { count: 1 }) { "Hello" }
+				span(data: { count: 1 }) { "Hello & goodbye" }
 				img(src: "/a.png", alt: "a")
-				tag(:p, class: "dynamic") { "Dynamic" }
 				trix_editor(class: "custom") { "Custom" }
 				svg(viewBox: "0 0 1 1") { |s| s.path(d: "M0 0") }
 			end
@@ -18,23 +17,39 @@ class RactorTest < Quickdraw::Test
 	end
 
 	class TagExample < Phlex::HTML
+		register_element :trix_editor
+		__register_void_element__ :trix_break
+
 		def view_template
 			tag(:div, class: "a") { "x" }
 			tag(:img, src: "/a.png", srcset: ["/a.png 1x", "/b.png 2x"])
+			tag(:trix_editor, class: "b") { "registered" }
+			tag(:trix_break)
 			tag(:my_widget, data: { k: 1 }) { "w" }
 			tag(:svg, viewBox: "0 0 1 1") { |s| s.tag(:path, d: "M0 0") }
 			tag(:br)
 		end
 	end
 
+	class TagExampleChild < TagExample
+	end
+
 	class Cached < Phlex::HTML
-		# One store per Ractor: a FIFOCacheStore can't be shared between them.
-		def cache_store = Ractor.store_if_absent(:ractor_test_cache_store) { Phlex::FIFOCacheStore.new }
+		def cache_store = Ractor.current[:ractor_test_cache_store] ||= Phlex::FIFOCacheStore.new
 
 		def view_template = cache { div { "cached" } }
 	end
 
-	def self.run_in_ractor(&)
+	class Table < Phlex::CSV
+		def escape_csv_injection? = true
+
+		def row_template(number)
+			column("number", number)
+			column("text", "=#{number}")
+		end
+	end
+
+	def in_ractor(&)
 		experimental = Warning[:experimental]
 		Warning[:experimental] = false
 		ractor = Ractor.new(&)
@@ -43,131 +58,126 @@ class RactorTest < Quickdraw::Test
 		Warning[:experimental] = experimental
 	end
 
-	def run_in_ractor(&) = self.class.run_in_ractor(&)
-
-	# Ractor-local storage needs Ruby 3.4+; TruffleRuby and JRuby have no Ractors.
-	RACTORS = defined?(::Ractor) && ::Ractor.respond_to?(:store_if_absent)
-
-	# Phlex escapes text through ERB::Escape, whose html_escape is only marked
-	# Ractor-safe since erb 5.0.2 — whether the render test runs depends on the
-	# erb in the bundle (Ruby 4.0 ships a safe one; Ruby 3.3 and 3.4 do not).
-	ERB_ESCAPE_RACTOR_SAFE =
-		RACTORS && begin
-			report = Thread.report_on_exception
-			Thread.report_on_exception = false
-			run_in_ractor { ERB::Escape.html_escape("<") } == "&lt;"
-		rescue ::Ractor::Error
-			false
-		ensure
-			Thread.report_on_exception = report
+	def with_component_file(source)
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "component.rb")
+			File.write(path, source)
+			load path
+			yield
 		end
-
-	test "the main Ractor uses ATTRIBUTE_CACHE" do
-		assert_equal Phlex.attribute_cache.equal?(Phlex::ATTRIBUTE_CACHE), true
 	end
 
-	if RACTORS
-		test "the built-in element registries are shareable" do
-			[Phlex::HTML::StandardElements, Phlex::HTML::VoidElements, Phlex::SVG::StandardElements].each do |elements|
-				assert Ractor.shareable?(elements.__registered_elements__)
-				assert Ractor.shareable?(elements.__registered_void_elements__)
-			end
-		end
+	test "the main Ractor uses ATTRIBUTE_CACHE" do
+		assert Phlex.__attribute_cache__.equal?(Phlex::ATTRIBUTE_CACHE)
+	end
 
-		test "a non-main Ractor gets its own attribute cache" do
+	if defined?(::Ractor)
+		test "another Ractor gets one attribute cache of its own" do
 			main_cache_id = Phlex::ATTRIBUTE_CACHE.object_id
-			ractor_cache_ids = run_in_ractor { [Phlex.attribute_cache.object_id, Phlex.attribute_cache.object_id] }
+			cache_ids = in_ractor { [Phlex.__attribute_cache__.object_id, Phlex.__attribute_cache__.object_id] }
 
-			assert_equal ractor_cache_ids.uniq.size, 1
-			assert_equal ractor_cache_ids.include?(main_cache_id), false
+			assert_equal cache_ids.uniq.size, 1
+			refute cache_ids.include?(main_cache_id)
 		end
 
-		test "a non-main Ractor's cache is as large as the main one" do
-			assert_equal run_in_ractor { Phlex.attribute_cache.max_bytesize }, Phlex::ATTRIBUTE_CACHE.max_bytesize
+		test "another Ractor's attribute cache is as large as the main one" do
+			assert_equal in_ractor { Phlex.__attribute_cache__.max_bytesize }, Phlex::ATTRIBUTE_CACHE.max_bytesize
 		end
 
-		test "a non-main Ractor's cache grows with templates defined after it was created" do
+		test "another Ractor's attribute cache grows with templates defined after it was created" do
 			experimental = Warning[:experimental]
 			Warning[:experimental] = false
+
 			ractor = Ractor.new do
-				Ractor.main << Phlex.attribute_cache.max_bytesize # before
+				Ractor.main << begin
+					Phlex.__attribute_cache__.max_bytesize
+				rescue Exception => e
+					e
+				end
+
 				Ractor.receive
-				Phlex.attribute_cache.max_bytesize # after
+				Phlex.__attribute_cache__.max_bytesize
 			end
 
 			before = Ractor.receive
-			Phlex.__expand_attribute_cache__(File.expand_path("../bench.rb", __dir__))
-			expected = Phlex::ATTRIBUTE_CACHE.max_bytesize
+			raise before if Exception === before
 
-			ractor << :go
+			Dir.mktmpdir do |dir|
+				path = File.join(dir, "template.rb")
+				File.write(path, "#" * 100)
+				Phlex.__expand_attribute_cache__(path)
+			end
+
+			ractor << :expanded
 			after = ractor.respond_to?(:value) ? ractor.value : ractor.take
 
-			assert_equal after, expected
-			assert_equal after > before, true
+			assert_equal after, before + 100
+			assert_equal after, Phlex::ATTRIBUTE_CACHE.max_bytesize
 		ensure
 			Warning[:experimental] = experimental
 		end
-	end
 
-	if ERB_ESCAPE_RACTOR_SAFE
-		test "renders inside a non-main Ractor with the same output" do
-			assert_equal run_in_ractor { Example.call }, Example.call
+		test "renders the same in another Ractor" do
+			expected = Example.call
+
+			assert_equal in_ractor { Example.call }, expected
 		end
 
-		test "tag renders inside a non-main Ractor" do
-			assert_equal run_in_ractor { TagExample.call }, TagExample.call
+		test "tag finds built-in and registered elements in another Ractor" do
+			expected = [TagExample.call, TagExampleChild.call]
+
+			assert_equal in_ractor { [TagExample.call, TagExampleChild.call] }, expected
 		end
 
-		test "caches a fragment inside a non-main Ractor" do
-			assert_equal run_in_ractor { [Cached.call, Cached.call] }, [%(<div>cached</div>)] * 2
+		test "renders CSV in another Ractor" do
+			expected = Table.new([1, 2]).call
+
+			assert_equal in_ractor { Table.new([1, 2]).call }, expected
 		end
 
-		test "a compiled component's error keeps its class inside a non-main Ractor" do
-			Dir.mktmpdir do |dir|
-				path = File.join(dir, "ractor_raising.rb")
-				File.write(path, <<~RUBY)
-					# frozen_string_literal: true
-					class RactorRaising < Phlex::HTML
-						def view_template
-							div { raise ArgumentError, "boom" }
-						end
+		test "caches a fragment in another Ractor" do
+			assert_equal in_ractor { [Cached.call, Cached.call] }, [%(<div>cached</div>)] * 2
+		end
+
+		test "a compiled component's error keeps its class and maps to the source in another Ractor" do
+			with_component_file(<<~RUBY) do
+				# frozen_string_literal: true
+				class RactorRaising < Phlex::HTML
+					def view_template
+						div { raise ArgumentError, "boom" }
 					end
-				RUBY
-				load path
+				end
+			RUBY
 				Phlex::Compiler.compile(RactorRaising)
+				source_path = Phlex.__compiled_source_maps__.fetch(RactorRaising.instance_method(:view_template).source_location[0]).path
 
-				error = begin
-					run_in_ractor { RactorRaising.call }
-					nil
-				rescue Ractor::RemoteError => e
-					e.cause
+				error_class, message, location = in_ractor do
+					Thread.current.report_on_exception = false
+					RactorRaising.call
+				rescue ArgumentError => e
+					[e.class, e.message, e.backtrace.first]
 				end
 
-				assert_equal [error.class, error.message], [ArgumentError, "boom"]
+				assert_equal [error_class, message], [ArgumentError, "boom"]
+				assert location.start_with?("#{source_path}:4:")
 			end
 		end
 
-		test "renders inside a non-main Ractor with lazy compilation enabled" do
-			Dir.mktmpdir do |dir|
-				path = File.join(dir, "ractor_lazy.rb")
-				File.write(path, <<~RUBY)
-					# frozen_string_literal: true
-					class RactorLazyCompiled < Phlex::HTML
-						def view_template = div(class: "compiled") { "compiled" }
-					end
-
-					class RactorLazyUncompiled < Phlex::HTML
-						def view_template = div(class: "uncompiled") { "uncompiled" }
-					end
-				RUBY
-				load path
-
+		test "only the main Ractor compiles on first render" do
+			with_component_file(<<~RUBY) do
+				# frozen_string_literal: true
+				class RactorLazy < Phlex::HTML
+					def view_template = div(class: "lazy") { "lazy" }
+				end
+			RUBY
 				Phlex::Compiler.enable!
 				begin
-					expected = RactorLazyCompiled.call # the main Ractor compiles it
+					assert_equal in_ractor { RactorLazy.call }, %(<div class="lazy">lazy</div>)
+					refute Phlex::Compiler.compiled?(RactorLazy)
 
-					assert_equal run_in_ractor { RactorLazyCompiled.call }, expected
-					assert_equal run_in_ractor { RactorLazyUncompiled.call }, %(<div class="uncompiled">uncompiled</div>)
+					RactorLazy.call
+					assert Phlex::Compiler.compiled?(RactorLazy)
+					assert_equal in_ractor { RactorLazy.call }, %(<div class="lazy">lazy</div>)
 				ensure
 					Phlex::Compiler.disable!
 				end

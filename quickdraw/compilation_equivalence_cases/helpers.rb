@@ -22,6 +22,18 @@ module EquivalenceCases
 			end
 		end
 
+		class Mix < Phlex::HTML
+			def initialize
+				@symbol = :baz_qux
+			end
+
+			def view_template
+				div(**mix({ class: "foo_bar" }, { class: @symbol }))
+				div(**mix({ class: :foo_bar }, { class: [@symbol] }))
+				div(**mix({ class: Set[:foo_bar] }, { class: @symbol }))
+			end
+		end
+
 		class RawUnsafe < Phlex::HTML
 			def view_template
 				div { raw "unsafe" }

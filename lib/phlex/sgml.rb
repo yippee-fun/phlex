@@ -118,7 +118,11 @@ class Phlex::SGML
 	# Output a single space character. If a block is given, a space will be output before and after the block.
 	def whitespace(&)
 		state = @_state
-		return unless state.should_render?
+
+		unless state.should_render?
+			yield(self) if block_given?
+			return nil
+		end
 
 		buffer = state.buffer
 
@@ -137,7 +141,11 @@ class Phlex::SGML
 	# [MDN Docs](https://developer.mozilla.org/en-US/docs/Web/HTML/Comments)
 	def comment(&)
 		state = @_state
-		return unless state.should_render?
+
+		unless state.should_render?
+			yield(self) if block_given?
+			return nil
+		end
 
 		buffer = state.buffer
 
@@ -350,6 +358,11 @@ class Phlex::SGML
 		nil
 	end
 
+	# The class or module that registered the element `tag` renders for `name`.
+	private def __element_registrar__(name)
+		self.class.ancestors.find { |ancestor| Phlex::SGML::Elements === ancestor && ancestor.__element_registered__?(name) }
+	end
+
 	private def __yield_content__
 		return unless block_given?
 
@@ -475,7 +488,7 @@ class Phlex::SGML
 	# A frozen class can't be recompiled when an element or helper it inlined
 	# changes, so its original definitions are put back first.
 	def self.freeze
-		Phlex::Compiler.decompile(self) if !Phlex::COMPILED_SOURCE_MAPS.empty? && Phlex::Compiler.compiled?(self) && !frozen?
+		Phlex::Compiler.decompile(self) if !Phlex.__compiled_source_maps__.empty? && Phlex::Compiler.compiled?(self) && !frozen?
 
 		super
 	end
@@ -484,7 +497,7 @@ class Phlex::SGML
 	# time, so a change to one has to be seen. Nothing to do until something
 	# has been compiled.
 	private_class_method def self.__inlining_changed__(target, names)
-		Phlex::Compiler.inlining_changed(target, names) unless Phlex::COMPILED_SOURCE_MAPS.empty?
+		Phlex::Compiler.inlining_changed(target, names) unless Phlex.__compiled_source_maps__.empty?
 	end
 
 	private def singleton_method_added(method_name)

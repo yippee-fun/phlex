@@ -51,8 +51,6 @@ module Phlex::Compiler
 	# What reopening a definition's class and module statements reached.
 	Probe = Data.define(:component, :set, :method_resolver)
 
-	# compiled path => Generation
-	MAP = Phlex::COMPILED_SOURCE_MAPS
 	MUTEX = Mutex.new
 
 	# component => the exception that stopped it compiling on first render
@@ -77,6 +75,10 @@ module Phlex::Compiler
 	# Compile each component on its first render. A component that fails to
 	# compile is reported to `on_failure` once and keeps rendering uncompiled,
 	# so a compiler bug costs speed, never a page.
+	#
+	# Only the main Ractor compiles. Other Ractors render a component as they
+	# find it, without waiting for a compilation in progress, so compile with
+	# `Phlex::Compiler.compile` before starting them.
 	def self.enable!(on_failure: DEFAULT_FAILURE_HANDLER)
 		Phlex::SGML.prepend(LazyCompilation) unless Phlex::SGML < LazyCompilation
 		@on_failure = on_failure
@@ -91,23 +93,12 @@ module Phlex::Compiler
 		component.instance_variable_get(:@__phlex_compiled__) == true
 	end
 
-	# Only the main Ractor compiles: compiling redefines methods and needs MUTEX,
-	# neither of which a non-main Ractor can touch. Those render whatever is
-	# defined, compiled or not.
-	if !defined?(::Ractor)
-		def self.main_ractor? = true
-	elsif ::Ractor.respond_to?(:main?)
-		def self.main_ractor? = ::Ractor.main?
-	else
-		def self.main_ractor? = ::Ractor.current == ::Ractor.main
-	end
-
 	# The failure check and the compilation share the lock, so two first
 	# renders racing each other still compile and report once, and a render
 	# that starts while a recompilation holds it waits for the new methods.
 	# The handler runs outside it, since it may well render something.
 	def self.compile_on_first_render(component)
-		return unless main_ractor?
+		return unless Phlex.__main_ractor__?
 
 		error = MUTEX.synchronize do
 			return if compiled?(component) || FAILURES.key?(component)
@@ -182,7 +173,15 @@ module Phlex::Compiler
 		)
 		formatting_result = Refract::Formatter.new(starting_line: 2).format_node(program)
 
-		compiled_path = "#{path} (compiled #{@generations += 1})"
+		compiled_path = -"#{path} (compiled #{@generations += 1})"
+
+		lines = {}
+		formatting_result.source_map.each_with_index do |original_line, generated_line|
+			lines[generated_line] = original_line if original_line
+		end
+
+		# Added before the methods exist, so nothing running them finds a line unmapped.
+		Phlex.__add_compiled_source_map__(compiled_path, Generation.new(path: -path, lines: lines.freeze))
 
 		without_redefinition_warnings do
 			eval(
@@ -192,15 +191,6 @@ module Phlex::Compiler
 				1
 			)
 		end
-
-		lines = {}
-		formatting_result.source_map.each_with_index do |original_line, generated_line|
-			lines[generated_line] = original_line if original_line
-		end
-		generation = Generation.new(path: -path, lines: lines.freeze)
-		generation = ::Ractor.make_shareable(generation) if defined?(::Ractor)
-		MAP[compiled_path] = generation
-		Phlex.__publish_compiled_source_map__(-compiled_path, generation)
 
 		results.each do |result|
 			result.visibilities.each do |name, visibility|
@@ -322,7 +312,7 @@ module Phlex::Compiler
 
 				source_path, line = location
 
-				if (generation = MAP[source_path])
+				if (generation = Phlex.__compiled_source_maps__[source_path])
 					next unless generation.path == path && (line = generation.lines[line])
 
 					targets[line] = Target.new(component:, name:, line:, compiled: !recompile)
@@ -356,7 +346,7 @@ module Phlex::Compiler
 	def self.defining_files(component)
 		paths = own_methods(component).filter_map do |name|
 			source_path = component.instance_method(name).source_location&.first
-			MAP[source_path]&.path || source_path
+			Phlex.__compiled_source_maps__[source_path]&.path || source_path
 		end
 		paths << constant_source_path(component)
 		paths.compact.uniq.select { |path| File.exist?(path) }

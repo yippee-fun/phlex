@@ -43,17 +43,60 @@ class Phlex::SVG < Phlex::SGML
 			raise Phlex::ArgumentError.new("Expected the tag name to be a Symbol.")
 		end
 
-		if (tag = StandardElements.__registered_elements__[name]) || ((tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z][a-z0-9-]*\z/))
+		if (tag = StandardElements.__registered_elements__[name])
+			void = false
+		elsif (registrar = __element_registrar__(name))
+			tag = registrar.__registered_elements__[name]
+			void = registrar.__registered_void_elements__.key?(name)
+		elsif (tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z][a-z0-9-]*\z/)
+			void = false
+		else
+			raise Phlex::ArgumentError.new("Invalid SVG tag: #{name}")
+		end
+
+		if void
+			if block_given
+				raise Phlex::ArgumentError.new("Void elements cannot have content blocks.")
+			end
+
+			if attributes.length > 0 # with attributes
+				buffer << "<#{tag}"
+				begin
+					if (normalizer = Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS[name])
+						Phlex::SGML::Elements.public_send(normalizer, attributes)
+					end
+
+					buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+				ensure
+					buffer << ">"
+				end
+			else # without attributes
+				buffer << "<#{tag}>"
+			end
+
+			nil
+		else
 			if attributes.length > 0 # with attributes
 				if block_given # with content block
-					buffer << "<#{tag}" << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << ">"
+					buffer << "<#{tag}"
+					begin
+						buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					ensure
+						buffer << ">"
+					end
+
 					begin
 						__yield_content__(&)
 					ensure
 						buffer << "</#{tag}>"
 					end
 				else # without content
-					buffer << "<#{tag}" << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << "></#{tag}>"
+					buffer << "<#{tag}"
+					begin
+						buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					ensure
+						buffer << "></#{tag}>"
+					end
 				end
 			else # without attributes
 				if block_given # with content block
@@ -67,8 +110,10 @@ class Phlex::SVG < Phlex::SGML
 					buffer << "<#{tag}></#{tag}>"
 				end
 			end
-		else
-			raise Phlex::ArgumentError.new("Invalid SVG tag: #{name}")
+
+			flush if "head" == tag
+
+			nil
 		end
 	end
 end

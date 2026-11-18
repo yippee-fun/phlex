@@ -6,7 +6,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 	Phlex::Compiler
 
 	def compiled_method?(component, name)
-		Phlex::Compiler::MAP.key?(component.instance_method(name).source_location[0])
+		Phlex.__compiled_source_maps__.key?(component.instance_method(name).source_location[0])
 	end
 
 	def with_component_files(files)
@@ -117,6 +117,28 @@ class CompilerLifecycleTest < Quickdraw::Test
 				release&.<< true
 				Phlex::Compiler.disable!
 			end
+		end
+	end
+
+	test "a compiled method's source map exists by the time the method does" do
+		with_component_files(
+			"mapped.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleMapped < Phlex::HTML
+					MAPPED = []
+
+					def self.method_added(name)
+						MAPPED << Phlex.__compiled_source_maps__.key?(instance_method(name).source_location[0])
+						super
+					end
+
+					def view_template = div { "mapped" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleMapped)
+
+			assert_equal LifecycleMapped::MAPPED, [false, true]
 		end
 	end
 

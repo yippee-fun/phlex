@@ -12,7 +12,7 @@ class Phlex::SGML::State
 		@cache_stack = []
 		@halt_signal = nil
 		@output_buffer = output_buffer
-		@attribute_cache = Phlex.attribute_cache
+		@attribute_cache = Phlex.__attribute_cache__
 	end
 
 	attr_accessor :capturing, :user_context

@@ -72,7 +72,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 
 			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(EditedCase) }
 			assert_equal error.message, "#{path}:3: no live method is defined at this line, so the file has changed since it was loaded"
-			refute Phlex::Compiler::MAP.key?(EditedCase.instance_method(:view_template).source_location[0])
+			refute Phlex.__compiled_source_maps__.key?(EditedCase.instance_method(:view_template).source_location[0])
 		ensure
 			Object.__send__(:remove_const, :EditedCase)
 		end

@@ -9,6 +9,7 @@ group :test do
 	gem "quickdraw", github: "joeldrapper/quickdraw"
 	gem "simplecov", require: false
 	gem "selenium-webdriver"
+	gem "erb", ">= 5.0.2" # ERB::Escape is Ractor-safe from here
 end
 
 gem "nokogiri"

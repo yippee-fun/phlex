@@ -120,6 +120,16 @@ class SelectiveRenderingTest < Quickdraw::Test
 		assert_equal output, "<span>hello</span>"
 	end
 
+	test "fragments inside whitespace and comment blocks" do
+		[:whitespace, :comment].each do |wrapper|
+			output = Phlex::HTML.new.call(fragments: [:x]) do |view|
+				view.div { view.public_send(wrapper) { view.fragment(:x) { view.span { "hi" } } } }
+			end
+
+			assert_equal output, "<span>hi</span>"
+		end
+	end
+
 	test "rescued fragment exceptions stop rendering outside the selected fragment" do
 		error = RuntimeError.new("example")
 		rescued = nil
