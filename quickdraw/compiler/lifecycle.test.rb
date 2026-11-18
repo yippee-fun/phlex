@@ -1100,6 +1100,129 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a module equal to one already included is still seen as added" do
+		with_component_files(
+			"equal_modules.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleEqualFirst
+					def self.hash = 0
+					def self.eql?(other) = other.respond_to?(:equal_module?)
+					def self.equal_module? = true
+				end
+
+				module LifecycleEqualSecond
+					def self.hash = 0
+					def self.eql?(other) = other.respond_to?(:equal_module?)
+					def self.equal_module? = true
+
+					def div(**) = plain("second div")
+				end
+
+				class LifecycleEqualModules < Phlex::HTML
+					include LifecycleEqualFirst
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleEqualModules)
+			assert_equal LifecycleEqualModules.new.call, "<div>x</div>"
+
+			LifecycleEqualModules.include(LifecycleEqualSecond)
+			assert_equal LifecycleEqualModules.new.call, "second div"
+		end
+	end
+
+	test "an element a method_added callback defines is still handled when compiling then fails" do
+		with_component_files(
+			"failing_callback.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleFailingCallbackHelpers
+				end
+
+				class LifecycleFailingCallbackOther < Phlex::HTML
+					include LifecycleFailingCallbackHelpers
+
+					def view_template = div { "x" }
+				end
+
+				class LifecycleFailingCallback < Phlex::HTML
+					def self.method_added(name)
+						super
+
+						if name == :view_template && @armed
+							@armed = false
+							LifecycleFailingCallbackHelpers.define_method(:div) { |**| plain("helper div") }
+							raise "callback failed"
+						end
+					end
+
+					def self.arm
+						@armed = true
+					end
+
+					def view_template = span { "y" }
+				end
+			RUBY
+		) do |(path)|
+			Phlex::Compiler.compile_file(path, components: [LifecycleFailingCallbackOther])
+			assert_equal LifecycleFailingCallbackOther.new.call, "<div>x</div>"
+
+			LifecycleFailingCallback.arm
+			error = assert_raises(RuntimeError) { Phlex::Compiler.compile_file(path, components: [LifecycleFailingCallback]) }
+			assert_equal error.message, "callback failed"
+			assert_equal LifecycleFailingCallbackOther.new.call, "helper div"
+		end
+	end
+
+	test "a module mixed into a watched module while something compiles it inline is watched" do
+		with_component_files(
+			"mixed_meanwhile.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleMixedMeanwhileEmpty
+				end
+
+				module LifecycleMixedMeanwhileHelpers
+					def self.include(*)
+						if (armed = @armed)
+							@armed = nil
+							armed.call
+						end
+
+						super
+					end
+
+					def self.arm(&block)
+						@armed = block
+					end
+				end
+
+				class LifecycleMixedMeanwhileWatcher < Phlex::HTML
+					include LifecycleMixedMeanwhileHelpers
+
+					def view_template = nil
+				end
+
+				class LifecycleMixedMeanwhile < Phlex::HTML
+					include LifecycleMixedMeanwhileHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do |(path)|
+			Phlex::Compiler.compile_file(path, components: [LifecycleMixedMeanwhileWatcher])
+			assert LifecycleMixedMeanwhileHelpers.singleton_class < Phlex::Compiler::MixinHooks
+			refute Phlex::Compiler.inlines?(LifecycleMixedMeanwhile)
+
+			LifecycleMixedMeanwhileHelpers.arm { Phlex::Compiler.compile_file(path, components: [LifecycleMixedMeanwhile]) }
+			LifecycleMixedMeanwhileHelpers.include(LifecycleMixedMeanwhileEmpty)
+			assert Phlex::Compiler.inlines?(LifecycleMixedMeanwhile)
+
+			LifecycleMixedMeanwhileEmpty.define_method(:div) { |**| plain("empty div") }
+			assert_equal LifecycleMixedMeanwhile.new.call, "empty div"
+		end
+	end
+
 	test "a watched module nothing inlines from any more mixes in a module with a frozen singleton class" do
 		with_component_files(
 			"abandoned.rb" => <<~RUBY

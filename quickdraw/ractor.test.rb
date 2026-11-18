@@ -175,6 +175,38 @@ class RactorTest < Quickdraw::Test
 			end
 		end
 
+		test "mixing into a watched module or a component in another Ractor is refused" do
+			with_component_file(<<~RUBY) do
+				# frozen_string_literal: true
+				module RactorWatchedHelpers
+				end
+
+				class RactorWatching < Phlex::HTML
+					include RactorWatchedHelpers
+
+					def view_template = div { "x" }
+				end
+			RUBY
+				Phlex::Compiler.compile(RactorWatching)
+
+				refusals = in_ractor do
+					Thread.current.report_on_exception = false
+
+					[RactorWatchedHelpers, RactorWatching].map do |target|
+						target.include(Module.new)
+						nil
+					rescue Phlex::Compiler::Error => e
+						e.message
+					end
+				end
+
+				assert_equal refusals, [
+					"RactorWatchedHelpers can't have modules mixed in outside the main Ractor once something is compiled.",
+					"RactorWatching can't have modules mixed in outside the main Ractor once something is compiled.",
+				]
+			end
+		end
+
 		test "extending an instance in another Ractor is checked against what was compiled inline" do
 			with_component_file(<<~RUBY) do
 				# frozen_string_literal: true

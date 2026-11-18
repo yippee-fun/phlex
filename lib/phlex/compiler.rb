@@ -136,8 +136,11 @@ module Phlex::Compiler
 			return if compiled?(component) || FAILURES.key?(component)
 
 			begin
-				compile_ancestry(component)
-				invalidate_deferred
+				begin
+					compile_ancestry(component)
+				ensure
+					invalidate_deferred
+				end
 				nil
 			rescue StandardError, ScriptError => e
 				FAILURES[component] = e
@@ -155,15 +158,16 @@ module Phlex::Compiler
 		synchronize { compile_ancestry(component) }
 	end
 
-	# Holds the lock, then handles the changes made meanwhile on this thread.
-	# A failed compilation drops them rather than hiding its own exception.
+	# Holds the lock, then handles the changes made meanwhile on this thread,
+	# even when compiling failed. Failing to handle them raises that failure,
+	# with the compilation's own as its cause.
 	def self.synchronize
 		return yield if MUTEX.owned?
 
 		MUTEX.synchronize do
-			yield.tap { invalidate_deferred }
+			yield
 		ensure
-			@deferred.clear
+			invalidate_deferred
 		end
 	end
 
@@ -495,15 +499,25 @@ module Phlex::Compiler
 	# module added in place of those given that can't be watched is already
 	# mixed in, so what it could affect is decompiled before it's refused.
 	# Whatever was added is handled even when `include` or `prepend` raises,
-	# say from an `included` callback.
-	def self.mix_in(target, modules, watch: true)
-		unwatched_mixins(target, modules.grep(Module).flat_map { |mod| MODULE_ANCESTORS.bind_call(mod) }) if watch
+	# say from an `included` callback. Only the main Ractor can watch modules.
+	def self.mix_in(target, modules)
+		unless Phlex.__main_ractor__?
+			raise Error, "#{target} can't have modules mixed in outside the main Ractor once something is compiled."
+		end
+
+		if affects_inlined_code?(target)
+			unwatched_mixins(target, modules.grep(Module).flat_map { |mod| MODULE_ANCESTORS.bind_call(mod) })
+		end
 
 		before = MODULE_ANCESTORS.bind_call(target)
 		begin
 			yield
 		ensure
-			mixed_in(target, added_ancestors(before, MODULE_ANCESTORS.bind_call(target)), watch:)
+			# A compilation may have published what it inlined since the check
+			# above. If it's still going, the report makes it watch again; if
+			# not, the check below sees what it inlined.
+			@reported << [target, []] if MUTEX.locked? && !MUTEX.owned?
+			mixed_in(target, added_ancestors(before, MODULE_ANCESTORS.bind_call(target)), watch: affects_inlined_code?(target))
 		end
 	end
 
@@ -545,8 +559,8 @@ module Phlex::Compiler
 	# The ancestors in `after` that aren't in `before`, counting each
 	# occurrence, since `prepend` can add a module already further up.
 	def self.added_ancestors(before, after)
-		remaining = before.tally
-		after.reject { |mod| remaining[mod].to_i > 0 && (remaining[mod] -= 1) }
+		remaining = before.each_with_object(Hash.new(0).compare_by_identity) { |mod, counts| counts[mod] += 1 }
+		after.reject { |mod| remaining[mod] > 0 && (remaining[mod] -= 1) }
 	end
 
 	# The names a module defines, read without dispatching to the module.
@@ -821,11 +835,11 @@ module Phlex::Compiler
 	# mixes in, to report what Phlex::SGML's own hooks would for a class.
 	module MixinHooks
 		def include(*modules, **kwargs)
-			Phlex::Compiler.mix_in(self, modules, watch: Phlex::Compiler.affects_inlined_code?(self)) { super }
+			Phlex::Compiler.mix_in(self, modules) { super }
 		end
 
 		def prepend(*modules, **kwargs)
-			Phlex::Compiler.mix_in(self, modules, watch: Phlex::Compiler.affects_inlined_code?(self)) { super }
+			Phlex::Compiler.mix_in(self, modules) { super }
 		end
 
 		private def method_added(method_name)
