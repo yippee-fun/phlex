@@ -171,7 +171,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 			end
 
 			Phlex::Compiler.compile(ReflectiveCase)
-			assert Phlex::Compiler::MAP.key?(ReflectiveCase.instance_method(:view_template).source_location[0])
+			assert Phlex.__compiled_source_maps__.key?(ReflectiveCase.instance_method(:view_template).source_location[0])
 		ensure
 			# The class outlives the test, so it mustn't break other compiles.
 			%i[instance_method instance_methods private_instance_methods subclasses].each do |name|
@@ -288,7 +288,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 
 			Phlex::Compiler.compile(SupersededCase)
 			assert_equal SupersededCase.new.call, "<h1>live</h1>"
-			assert Phlex::Compiler::MAP.key?(SupersededCase.instance_method(:view_template).source_location[0])
+			assert Phlex.__compiled_source_maps__.key?(SupersededCase.instance_method(:view_template).source_location[0])
 		ensure
 			Object.__send__(:remove_const, :SupersededCase)
 			Object.__send__(:remove_const, :SupersededUnrelated)
