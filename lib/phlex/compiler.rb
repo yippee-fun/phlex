@@ -398,25 +398,26 @@ module Phlex::Compiler
 		affected = related_on_another_ractor(target).select { |klass| inlines_any?(klass, names) }
 		return if affected.empty?
 
-		raise single_instance_error(names, affected) if target.singleton_class?
+		raise single_instance_error(names, affected) if Module.instance_method(:singleton_class?).bind_call(target)
 
 		raise Error, "#{names.join(', ')} can't be redefined on #{target} outside the main Ractor: #{affected.join(', ')} compiled it inline."
 	end
 
-	# What `related` finds, with plain calls: the methods bound above can't be
-	# shared between Ractors before Ruby 4.0.
+	# What `related` finds. The methods bound above can't be shared between
+	# Ractors before Ruby 4.0, so this Ractor binds its own.
 	def self.related_on_another_ractor(target)
-		if target.singleton_class?
-			target.ancestors
-		elsif Class === target
-			target.ancestors + descendants_on_another_ractor(target)
-		else
-			descendants_on_another_ractor(Phlex::SGML).select { |klass| klass.ancestors.include?(target) }.flat_map(&:ancestors).uniq
-		end
-	end
+		ancestors = Module.instance_method(:ancestors)
+		subclasses = Class.instance_method(:subclasses)
+		descendants = -> (klass) { subclasses.bind_call(klass).flat_map { |subclass| [subclass, *descendants.(subclass)] } }
 
-	def self.descendants_on_another_ractor(klass)
-		klass.subclasses.flat_map { |subclass| [subclass, *descendants_on_another_ractor(subclass)] }
+		if Module.instance_method(:singleton_class?).bind_call(target)
+			ancestors.bind_call(target)
+		elsif Class === target
+			ancestors.bind_call(target) + descendants.(target)
+		else
+			including = descendants.(Phlex::SGML).map { |klass| ancestors.bind_call(klass) }.select { |list| list.include?(target) }
+			uniq_by_identity(including.flatten(1))
+		end
 	end
 
 	def self.single_instance_error(names, affected)

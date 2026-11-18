@@ -196,12 +196,13 @@ class RactorTest < Quickdraw::Test
 			RUBY
 				Phlex::Compiler.compile(RactorWatching)
 
+				# Called directly, since newer Rubies stop another Ractor changing
+				# shared classes before the compiler is reached.
 				refusals = in_ractor do
 					Thread.current.report_on_exception = false
 
 					[RactorWatchedHelpers, RactorWatching, RactorUnrelated].map do |target|
-						target.include(RactorMixedIn)
-						target.include?(RactorMixedIn)
+						Phlex::Compiler.mix_in(target, [RactorMixedIn]) { :mixed_in }
 					rescue Phlex::Compiler::Error => e
 						e.message
 					end
@@ -210,7 +211,7 @@ class RactorTest < Quickdraw::Test
 				assert_equal refusals, [
 					"RactorWatchedHelpers can't have modules mixed in outside the main Ractor: RactorWatching compiled code inline.",
 					"RactorWatching can't have modules mixed in outside the main Ractor: RactorWatching compiled code inline.",
-					true,
+					:mixed_in,
 				]
 			end
 		end
@@ -232,14 +233,40 @@ class RactorTest < Quickdraw::Test
 					Thread.current.report_on_exception = false
 
 					[RactorRedefined, RactorInlining].map do |target|
-						target.define_method(:div) { |**| plain("redefined") }
-						:redefined
+						Phlex::Compiler.inlining_changed(target, [:div])
 					rescue Phlex::Compiler::Error => e
 						e.message
 					end
 				end
 
-				assert_equal results, [:redefined, "div can't be redefined on RactorInlining outside the main Ractor: RactorInlining compiled it inline."]
+				assert_equal results, [nil, "div can't be redefined on RactorInlining outside the main Ractor: RactorInlining compiled it inline."]
+			end
+		end
+
+		test "another Ractor finds what includes a module through Module's own ancestors" do
+			with_component_file(<<~RUBY) do
+				# frozen_string_literal: true
+				module RactorHiddenHelpers
+				end
+
+				class RactorHiding < Phlex::HTML
+					include RactorHiddenHelpers
+
+					def self.ancestors = [self]
+
+					def view_template = div { "x" }
+				end
+			RUBY
+				Phlex::Compiler.compile(RactorHiding)
+
+				refusal = in_ractor do
+					Thread.current.report_on_exception = false
+					Phlex::Compiler.inlining_changed(RactorHiddenHelpers, [:div])
+				rescue Phlex::Compiler::Error => e
+					e.message
+				end
+
+				assert_equal refusal, "div can't be redefined on RactorHiddenHelpers outside the main Ractor: RactorHiding compiled it inline."
 			end
 		end
 
