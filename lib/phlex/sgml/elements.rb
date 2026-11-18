@@ -58,6 +58,12 @@ module Phlex::SGML::Elements
 		attributes
 	end
 
+	# Normalizers rewrite the attributes in place, so elements that have one keep
+	# a keyword splat, which is always a fresh Hash.
+	def self.attributes_parameter(method_name)
+		ATTRIBUTE_NORMALIZERS.key?(method_name) ? "**attributes" : "attributes = nil"
+	end
+
 	def self.normalizer_call(method_name)
 		if (normalizer = ATTRIBUTE_NORMALIZERS[method_name])
 			"Phlex::SGML::Elements.#{normalizer}(attributes)"
@@ -79,7 +85,7 @@ module Phlex::SGML::Elements
 		class_eval(<<~RUBY, __FILE__, __LINE__ + 1)
 			# frozen_string_literal: true
 
-			def #{method_name}(attributes = nil)
+			def #{method_name}(#{Phlex::SGML::Elements.attributes_parameter(method_name)})
 				state = @_state
 				buffer = state.buffer
 				block_given = block_given?
@@ -184,7 +190,7 @@ module Phlex::SGML::Elements
 		class_eval(<<~RUBY, __FILE__, __LINE__ + 1)
 			# frozen_string_literal: true
 
-			def #{method_name}(attributes = nil)
+			def #{method_name}(#{Phlex::SGML::Elements.attributes_parameter(method_name)})
 				state = @_state
 
 				return unless state.should_render?
