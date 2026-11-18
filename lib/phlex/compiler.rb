@@ -58,6 +58,7 @@ module Phlex::Compiler
 	MODULE_ANCESTORS = Module.instance_method(:ancestors)
 	MODULE_SINGLETON_CLASS = Module.instance_method(:singleton_class?)
 	MODULE_LE = Module.instance_method(:<=)
+	MODULE_LT = Module.instance_method(:<)
 	KERNEL_SINGLETON_CLASS = Kernel.instance_method(:singleton_class)
 	KERNEL_FROZEN = Kernel.instance_method(:frozen?)
 	MODULE_INSTANCE_METHODS = Module.instance_method(:instance_methods)
@@ -65,22 +66,6 @@ module Phlex::Compiler
 	MODULE_PREPEND = Module.instance_method(:prepend)
 	MODULE_PRIVATE_METHOD_DEFINED = Module.instance_method(:private_method_defined?)
 	MODULE_PROTECTED_METHOD_DEFINED = Module.instance_method(:protected_method_defined?)
-
-	# Another Ractor checks an instance's extends with these.
-	if defined?(::Ractor)
-		::Ractor.make_shareable([
-			MODULE_ANCESTORS,
-			MODULE_SINGLETON_CLASS,
-			MODULE_LE,
-			KERNEL_SINGLETON_CLASS,
-			KERNEL_FROZEN,
-			MODULE_INSTANCE_METHODS,
-			MODULE_PRIVATE_INSTANCE_METHODS,
-			MODULE_PREPEND,
-			MODULE_PRIVATE_METHOD_DEFINED,
-			MODULE_PROTECTED_METHOD_DEFINED,
-		])
-	end
 
 	MUTEX = Mutex.new
 
@@ -193,7 +178,7 @@ module Phlex::Compiler
 			deferred = @deferred
 			@deferred = []
 			affected = deferred.flat_map { |target, names| affected_by(target, names | hidden_names(target)) }
-			affected.uniq.each { |component| recompile(component) }
+			uniq_by_identity(affected).each { |component| recompile(component) }
 		end
 	rescue Exception
 		@deferred.clear
@@ -254,12 +239,12 @@ module Phlex::Compiler
 		# reported. A change between here and recording what was inlined is
 		# compiled again below.
 		reported = @reported.size
-		components = targets.each_value.map(&:component).uniq
+		components = uniq_by_identity(targets.each_value.map(&:component))
 
 		# Subclasses inherit what's inlined, so their modules are watched too. A
 		# module that can't be watched only matters if something is inlined.
 		if inline
-			components.flat_map { |component| [component, *descendants_of(component)] }.uniq.each do |component|
+			uniq_by_identity(components.flat_map { |component| [component, *descendants_of(component)] }).each do |component|
 				watch_mixins(component, strict: false)
 			end
 		end
@@ -322,15 +307,18 @@ module Phlex::Compiler
 
 		if inline
 			# A module mixed in since the last watch, here or on another thread,
-			# saw nothing inlined yet, so it wasn’t watched.
+			# saw nothing inlined yet, so it wasn’t watched. What it defined
+			# before its hooks were installed wasn’t reported either.
 			begin
-				watch_inlining_mixins(results) if missed.any? || @deferred.any?
+				if missed.any? || @deferred.any?
+					missed += watch_inlining_mixins(results).map { |mod| [mod, method_names(mod)] }
+				end
 			rescue Error
-				results.map(&:component).uniq.each { |component| decompile(component) }
+				uniq_by_identity(results.map(&:component)).each { |component| decompile(component) }
 				raise
 			end
 
-			results.map(&:component).uniq.each do |component|
+			uniq_by_identity(results.map(&:component)).each do |component|
 				recompile_unlocked(component) if missed.any? { |target, names| inlines_any?(component, names | hidden_names(target)) && related(target).include?(component) }
 			end
 		end
@@ -340,7 +328,8 @@ module Phlex::Compiler
 
 	# The modules of anything running inlined code must be watched.
 	def self.watch_inlining_mixins(results)
-		results.reject { |result| result.inlined.empty? }.map(&:component).uniq.flat_map { |component| [component, *descendants_of(component)] }.uniq.each do |component|
+		inlining = uniq_by_identity(results.reject { |result| result.inlined.empty? }.map(&:component))
+		uniq_by_identity(inlining.flat_map { |component| [component, *descendants_of(component)] }).flat_map do |component|
 			watch_mixins(component)
 		end
 	end
@@ -385,18 +374,34 @@ module Phlex::Compiler
 	# so it's refused. A change made on the compiling thread itself is handled
 	# once that compilation is done.
 	def self.inlining_changed(target, names)
-		if Phlex.__main_ractor__?
-			if MUTEX.owned?
-				@deferred << [target, names] unless installed_by_compiler?(target, names)
-				return
-			end
+		return changed_on_another_ractor(target, names) unless Phlex.__main_ractor__?
 
-			# A compilation on another thread may have resolved these names without
-			# having recorded what it inlined yet, so it checks them when it has.
-			@reported << [target, names] if MUTEX.locked?
+		if MUTEX.owned?
+			@deferred << [target, names] unless installed_by_compiler?(target, names)
+			return
 		end
 
+		# A compilation on another thread may have resolved these names without
+		# having recorded what it inlined yet, so it checks them when it has.
+		@reported << [target, names] if MUTEX.locked?
+
 		affected_by(target, names).each { |component| recompile(component) }
+	end
+
+	# Only the main Ractor can compile again, and the methods bound above
+	# can't be shared before Ruby 4.0, so another Ractor checks an override
+	# on a single instance with plain calls and refuses anything else.
+	def self.changed_on_another_ractor(target, names)
+		unless target.singleton_class?
+			raise Error, "#{names.join(', ')} can't be redefined on #{target} outside the main Ractor once something is compiled."
+		end
+
+		affected = target.ancestors.select { |klass| inlines_any?(klass, names) }
+		raise single_instance_error(names, affected) unless affected.empty?
+	end
+
+	def self.single_instance_error(names, affected)
+		Error.new("#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling.")
 	end
 
 	# The compiled classes to recompile for a change, refusing one that can't be.
@@ -404,9 +409,7 @@ module Phlex::Compiler
 		affected = related(target).select { |klass| inlines_any?(klass, names) }
 		return affected if affected.empty?
 
-		if MODULE_SINGLETON_CLASS.bind_call(target)
-			raise Error, "#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling."
-		end
+		raise single_instance_error(names, affected) if MODULE_SINGLETON_CLASS.bind_call(target)
 
 		if (frozen = affected.select(&:frozen?)).any?
 			raise Error, "#{names.join(', ')} can't be redefined: #{frozen.join(', ')} compiled it inline and was frozen without Phlex::SGML.freeze restoring it."
@@ -422,7 +425,7 @@ module Phlex::Compiler
 		elsif Class === target
 			MODULE_ANCESTORS.bind_call(target) + descendants_of(target)
 		else
-			descendants_of(Phlex::SGML).map { |klass| MODULE_ANCESTORS.bind_call(klass) }.select { |ancestors| ancestors.include?(target) }.flatten(1).uniq
+			uniq_by_identity(descendants_of(Phlex::SGML).map { |klass| MODULE_ANCESTORS.bind_call(klass) }.select { |ancestors| ancestors.include?(target) }.flatten(1))
 		end
 	end
 
@@ -430,12 +433,17 @@ module Phlex::Compiler
 	# those modules, and any mixed in later, report their changes too. That
 	# includes modules mixed into Phlex::SGML, but not Object's.
 	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Object }, strict: true)
-		unwatched_mixins(component, modules, strict:).each do |mod|
+		unwatched_mixins(component, modules, strict:).filter_map do |mod|
 			MODULE_PREPEND.bind_call(KERNEL_SINGLETON_CLASS.bind_call(mod), mixin_hooks_for(mod))
+			mod
 		rescue FrozenError
 			# Frozen by another thread since it was checked.
 			raise if unwatched_mixins(component, [mod], strict:).any?
 		end
+	end
+
+	def self.uniq_by_identity(objects)
+		objects.each_with_object({}.compare_by_identity) { |object, seen| seen[object] = true }.keys
 	end
 
 	# MixinHooks, or a copy keeping each hook as public, protected or private
@@ -470,7 +478,7 @@ module Phlex::Compiler
 	# can't be, so it's refused, or when not `strict`, skipped.
 	def self.unwatched_mixins(component, modules, strict: true)
 		unwatched = modules.reject do |mod|
-			Class === mod || KERNEL_FROZEN.bind_call(mod) || KERNEL_SINGLETON_CLASS.bind_call(mod) < MixinHooks
+			Class === mod || KERNEL_FROZEN.bind_call(mod) || MODULE_LT.bind_call(KERNEL_SINGLETON_CLASS.bind_call(mod), MixinHooks)
 		end
 
 		unwatched.reject do |mod|

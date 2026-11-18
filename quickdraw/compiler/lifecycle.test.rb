@@ -923,25 +923,28 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
-	module FreezeWhileWatching
-		def self.arm(mod, calls)
+	# Runs a block on another thread once a module has been checked the given
+	# number of times, before its hooks are installed.
+	module WhileWatching
+		def self.arm(mod, calls, &block)
 			@mod = mod
 			@calls = calls
+			@block = block
 		end
 
 		def self.called(modules)
 			return unless @mod && modules.include?(@mod) && (@calls -= 1).zero?
 
-			@mod.singleton_class.freeze
 			@mod = nil
+			Thread.new(&@block).join
 		end
 
 		def unwatched_mixins(component, modules, **)
-			super.tap { FreezeWhileWatching.called(modules) }
+			super.tap { WhileWatching.called(modules) }
 		end
 	end
 
-	Phlex::Compiler.singleton_class.prepend(FreezeWhileWatching)
+	Phlex::Compiler.singleton_class.prepend(WhileWatching)
 
 	# Runs a block on another thread once a component's modules must be
 	# watched, just before compiled methods are installed.
@@ -1025,6 +1028,78 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "an element defined on another thread just before a late module's hooks are installed takes effect" do
+		with_component_files(
+			"before_hooks.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleBeforeHooksHelpers
+				end
+
+				class LifecycleBeforeHooksParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class LifecycleBeforeHooksChild < LifecycleBeforeHooksParent
+				end
+			RUBY
+		) do |(path)|
+			AfterWatching.arm(LifecycleBeforeHooksChild) { LifecycleBeforeHooksChild.include(LifecycleBeforeHooksHelpers) }
+			WhileWatching.arm(LifecycleBeforeHooksHelpers, 1) { LifecycleBeforeHooksHelpers.define_method(:div) { |**| plain("helper div") } }
+			Phlex::Compiler.compile_file(path, components: [LifecycleBeforeHooksParent])
+
+			assert_equal LifecycleBeforeHooksChild.new.call, "helper div"
+			assert_equal LifecycleBeforeHooksParent.new.call, "<div>x</div>"
+		end
+	end
+
+	test "a module whose singleton class claims to be watched is still watched" do
+		with_component_files(
+			"claims_hooks.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleClaimsHooks
+				end
+				LifecycleClaimsHooks.singleton_class.define_singleton_method(:<) { |*| true }
+
+				class LifecycleClaimsHooksComponent < Phlex::HTML
+					include LifecycleClaimsHooks
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleClaimsHooksComponent)
+
+			LifecycleClaimsHooks.define_method(:div) { |**| plain("module div") }
+			assert_equal LifecycleClaimsHooksComponent.new.call, "module div"
+		end
+	end
+
+	test "a subclass its parent claims to equal still has its modules watched" do
+		with_component_files(
+			"same.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSameHelpers
+				end
+
+				class LifecycleSameParent < Phlex::HTML
+					def self.hash = 0
+					def self.eql?(other) = Class === other && other <= LifecycleSameParent
+
+					def view_template = div { "x" }
+				end
+
+				class LifecycleSameChild < LifecycleSameParent
+					include LifecycleSameHelpers
+				end
+			RUBY
+		) do |(path)|
+			Phlex::Compiler.compile_file(path, components: [LifecycleSameParent])
+
+			LifecycleSameHelpers.define_method(:div) { |**| plain("helper div") }
+			assert_equal LifecycleSameChild.new.call, "helper div"
+		end
+	end
+
 	test "a watched module nothing inlines from any more mixes in a module with a frozen singleton class" do
 		with_component_files(
 			"abandoned.rb" => <<~RUBY
@@ -1095,7 +1170,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			frozen = Module.new
 			# Frozen between the check before watching and installing the hooks.
-			FreezeWhileWatching.arm(frozen, 2)
+			WhileWatching.arm(frozen, 2) { frozen.singleton_class.freeze }
 			assert_raises(Phlex::Compiler::Error) { LifecycleFrozenMeanwhileHelpers.include(frozen) }
 			refute Phlex::Compiler.inlines?(LifecycleFrozenMeanwhile)
 
