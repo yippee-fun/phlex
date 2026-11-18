@@ -115,7 +115,11 @@ class Phlex::SGML
 	# Output a single space character. If a block is given, a space will be output before and after the block.
 	def whitespace(&)
 		state = @_state
-		return unless state.should_render?
+
+		unless state.should_render?
+			yield(self) if block_given?
+			return nil
+		end
 
 		buffer = state.buffer
 
@@ -134,7 +138,11 @@ class Phlex::SGML
 	# [MDN Docs](https://developer.mozilla.org/en-US/docs/Web/HTML/Comments)
 	def comment(&)
 		state = @_state
-		return unless state.should_render?
+
+		unless state.should_render?
+			yield(self) if block_given?
+			return nil
+		end
 
 		buffer = state.buffer
 
@@ -345,6 +353,13 @@ class Phlex::SGML
 
 	private def after_template(&)
 		nil
+	end
+
+	# The class or module that registered the element `tag` renders for `name`.
+	private def __element_registrar__(name)
+		return unless Phlex::SGML::Elements.registered_name?(name)
+
+		self.class.ancestors.find { |ancestor| Phlex::SGML::Elements === ancestor && ancestor.__element_registered__?(name) }
 	end
 
 	private def __yield_content__

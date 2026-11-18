@@ -287,4 +287,131 @@ HTML
 		assert_equal HTMLComponent.call(:my_element, id: "a") { "hi" }, %(<my-element id="a">hi</my-element>)
 		assert_equal SVGComponent.call(:my_element, id: "a") { "hi" }, %(<my-element id="a">hi</my-element>)
 	end
+
+	class HTMLWithRegisteredElements < HTMLComponent
+		register_element :foo
+		register_element :bar, tag: "custom-bar"
+		__register_void_element__ :baz
+	end
+
+	class HTMLInheritingRegisteredElements < HTMLWithRegisteredElements
+	end
+
+	module SVGElements
+		extend Phlex::SGML::Elements
+
+		register_element :foo
+		register_element :bar, tag: "custom-bar"
+		__register_void_element__ :baz
+	end
+
+	class SVGWithRegisteredElements < SVGComponent
+		include SVGElements
+	end
+
+	[HTMLWithRegisteredElements, HTMLInheritingRegisteredElements, SVGWithRegisteredElements].each do |component|
+		test "#{component.name} renders elements registered on the class like their methods" do
+			assert_equal component.call(:foo) { "x" }, "<foo>x</foo>"
+			assert_equal component.call(:foo, id: "a"), %(<foo id="a"></foo>)
+			assert_equal component.call(:bar) { "x" }, "<custom-bar>x</custom-bar>"
+			assert_equal component.call(:baz), "<baz>"
+			assert_equal component.call(:baz, id: "a"), %(<baz id="a">)
+		end
+
+		test "#{component.name} rejects content for void elements registered on the class" do
+			error = assert_raises(Phlex::ArgumentError) { component.call(:baz) { "x" } }
+			assert_equal error.message, "Void elements cannot have content blocks."
+		end
+	end
+
+	test "elements registered on a parent class after the subclass is defined" do
+		parent = Class.new(HTMLComponent)
+		child = Class.new(parent)
+		parent.register_element :late
+
+		assert_equal child.call(:late) { "x" }, "<late>x</late>"
+	end
+
+	test "registered names that are also valid custom tags use their registration" do
+		component = Class.new(HTMLComponent) do
+			register_element :my_widget, tag: "x-widget"
+			__register_void_element__ :my_void
+		end
+
+		assert_equal component.call(:my_widget) { "x" }, "<x-widget>x</x-widget>"
+		assert_equal component.call(:my_void), "<my-void>"
+		assert_raises(Phlex::ArgumentError) { component.call(:my_void) { "x" } }
+		assert_equal HTMLComponent.call(:my_widget), "<my-widget></my-widget>"
+	end
+
+	test "registration on a parent after a subclass has rendered the name" do
+		parent = Class.new(HTMLComponent)
+		child = Class.new(parent)
+
+		assert_equal child.call(:late_widget), "<late-widget></late-widget>"
+		parent.register_element :late_widget, tag: "x-late"
+		assert_equal child.call(:late_widget), "<x-late></x-late>"
+		parent.__register_void_element__ :late_widget
+		assert_equal child.call(:late_widget), "<late-widget>"
+	end
+
+	test "elements registered on another class are still invalid" do
+		error = assert_raises(Phlex::ArgumentError) { HTMLComponent.call(:foo) }
+		assert_equal error.message, "Invalid HTML tag: foo"
+
+		error = assert_raises(Phlex::ArgumentError) { SVGComponent.call(:foo) }
+		assert_equal error.message, "Invalid SVG tag: foo"
+	end
+
+	test "head flushes like its registered method" do
+		[:head, :page_head].each do |name|
+			component = Class.new(Phlex::HTML) do
+				register_element :page_head, tag: "head"
+				define_method(:view_template) do
+					tag(name) { "x" }
+					body
+				end
+			end
+
+			chunks = []
+			component.new.call(chunks)
+
+			assert_equal chunks, ["<head>x</head>", "<body></body>"]
+		end
+	end
+
+	test "an element registered as svg yields to the component like its method" do
+		component = Class.new(Phlex::HTML) do
+			register_element :svg_root, tag: "svg"
+			def view_template = tag(:svg_root) { div }
+		end
+
+		assert_equal component.call, "<svg><div></div></svg>"
+	end
+
+	[[Phlex::HTML, :div], [Phlex::HTML, :custom_tag], [Phlex::SVG, :g], [Phlex::SVG, :custom_tag]].each do |component_class, name|
+		[false, true].each do |with_block|
+			test "#{component_class} #{name} closes its opening tag when attributes are invalid (block: #{with_block})" do
+				output = component_class.call do |component|
+					assert_raises(Phlex::ArgumentError) do
+						if with_block
+							component.tag(name, invalid: Object.new) { "x" }
+						else
+							component.tag(name, invalid: Object.new)
+						end
+					end
+				end
+
+				tag = name.name.tr("_", "-")
+				assert_equal output, with_block ? "<#{tag}>" : "<#{tag}></#{tag}>"
+			end
+		end
+	end
+
+	test "elements registered on a frozen class" do
+		component = Class.new(HTMLComponent) { register_element :foo }.freeze
+
+		assert_equal component.call(:foo), "<foo></foo>"
+		assert_equal component.call(:div), "<div></div>"
+	end
 end

@@ -55,39 +55,20 @@ class Phlex::HTML < Phlex::SGML
 			raise Phlex::ArgumentError.new("Expected the tag name to be a Symbol.")
 		end
 
-		if (tag = StandardElements.__registered_elements__[name]) || ((tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z][a-z0-9-]*\z/))
-			if attributes.length > 0 # with attributes
-				if block_given # with content block
-					buffer << "<#{tag}" << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << ">"
-					begin
-						if tag == "svg"
-							render Phlex::SVG.new(&)
-						else
-							__yield_content__(&)
-						end
-					ensure
-						buffer << "</#{tag}>"
-					end
-				else # without content
-					buffer << "<#{tag}" << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) } << "></#{tag}>"
-				end
-			else # without attributes
-				if block_given # with content block
-					buffer << ("<#{tag}>")
-					begin
-						if tag == "svg"
-							render Phlex::SVG.new(&)
-						else
-							__yield_content__(&)
-						end
-					ensure
-						buffer << "</#{tag}>"
-					end
-				else # without content
-					buffer << "<#{tag}></#{tag}>"
-				end
-			end
+		if (tag = StandardElements.__registered_elements__[name])
+			void = false
 		elsif (tag = VoidElements.__registered_elements__[name])
+			void = true
+		elsif (registrar = __element_registrar__(name))
+			tag = registrar.__registered_elements__[name]
+			void = registrar.__registered_void_elements__.key?(name)
+		elsif (tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z][a-z0-9-]*\z/)
+			void = false
+		else
+			raise Phlex::ArgumentError.new("Invalid HTML tag: #{name}")
+		end
+
+		if void
 			if block_given
 				raise Phlex::ArgumentError.new("Void elements cannot have content blocks.")
 			end
@@ -109,7 +90,52 @@ class Phlex::HTML < Phlex::SGML
 
 			nil
 		else
-			raise Phlex::ArgumentError.new("Invalid HTML tag: #{name}")
+			if attributes.length > 0 # with attributes
+				if block_given # with content block
+					buffer << "<#{tag}"
+					begin
+						buffer << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					ensure
+						buffer << ">"
+					end
+
+					begin
+						if :svg == name
+							render Phlex::SVG.new(&)
+						else
+							__yield_content__(&)
+						end
+					ensure
+						buffer << "</#{tag}>"
+					end
+				else # without content
+					buffer << "<#{tag}"
+					begin
+						buffer << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					ensure
+						buffer << "></#{tag}>"
+					end
+				end
+			else # without attributes
+				if block_given # with content block
+					buffer << ("<#{tag}>")
+					begin
+						if :svg == name
+							render Phlex::SVG.new(&)
+						else
+							__yield_content__(&)
+						end
+					ensure
+						buffer << "</#{tag}>"
+					end
+				else # without content
+					buffer << "<#{tag}></#{tag}>"
+				end
+			end
+
+			flush if "head" == tag
+
+			nil
 		end
 	end
 end
