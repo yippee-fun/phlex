@@ -287,4 +287,63 @@ HTML
 		assert_equal HTMLComponent.call(:my_element, id: "a") { "hi" }, %(<my-element id="a">hi</my-element>)
 		assert_equal SVGComponent.call(:my_element, id: "a") { "hi" }, %(<my-element id="a">hi</my-element>)
 	end
+
+	class HTMLWithRegisteredElements < HTMLComponent
+		register_element :foo
+		register_element :bar, tag: "custom-bar"
+		__register_void_element__ :baz
+	end
+
+	class HTMLInheritingRegisteredElements < HTMLWithRegisteredElements
+	end
+
+	module SVGElements
+		extend Phlex::SGML::Elements
+
+		register_element :foo
+		register_element :bar, tag: "custom-bar"
+		__register_void_element__ :baz
+	end
+
+	class SVGWithRegisteredElements < SVGComponent
+		include SVGElements
+	end
+
+	[HTMLWithRegisteredElements, HTMLInheritingRegisteredElements, SVGWithRegisteredElements].each do |component|
+		test "#{component.name} renders elements registered on the class like their methods" do
+			assert_equal component.call(:foo) { "x" }, "<foo>x</foo>"
+			assert_equal component.call(:foo, id: "a"), %(<foo id="a"></foo>)
+			assert_equal component.call(:bar) { "x" }, "<custom-bar>x</custom-bar>"
+			assert_equal component.call(:baz), "<baz>"
+			assert_equal component.call(:baz, id: "a"), %(<baz id="a">)
+		end
+
+		test "#{component.name} rejects content for void elements registered on the class" do
+			error = assert_raises(Phlex::ArgumentError) { component.call(:baz) { "x" } }
+			assert_equal error.message, "Void elements cannot have content blocks."
+		end
+	end
+
+	test "elements registered on a parent class after the subclass is defined" do
+		parent = Class.new(HTMLComponent)
+		child = Class.new(parent)
+		parent.register_element :late
+
+		assert_equal child.call(:late) { "x" }, "<late>x</late>"
+	end
+
+	test "elements registered on another class are still invalid" do
+		error = assert_raises(Phlex::ArgumentError) { HTMLComponent.call(:foo) }
+		assert_equal error.message, "Invalid HTML tag: foo"
+
+		error = assert_raises(Phlex::ArgumentError) { SVGComponent.call(:foo) }
+		assert_equal error.message, "Invalid SVG tag: foo"
+	end
+
+	test "elements registered on a frozen class" do
+		component = Class.new(HTMLComponent) { register_element :foo }.freeze
+
+		assert_equal component.call(:foo), "<foo></foo>"
+		assert_equal component.call(:div), "<div></div>"
+	end
 end

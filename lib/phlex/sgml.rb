@@ -350,6 +350,11 @@ class Phlex::SGML
 		nil
 	end
 
+	# The class or module that registered the element `tag` renders for `name`.
+	private def __element_registrar__(name)
+		self.class.ancestors.find { |ancestor| Phlex::SGML::Elements === ancestor && ancestor.__element_registered__?(name) }
+	end
+
 	private def __yield_content__
 		return unless block_given?
 
