@@ -46,7 +46,7 @@ module Phlex::Compiler
 	Generation = Data.define(:path, :lines)
 
 	# A live method and the line in the file being compiled that defines it.
-	Target = Data.define(:component, :name, :line, :compiled)
+	Target = Data.define(:component, :name, :line, :compiled, :replaced)
 
 	# What reopening a definition's class and module statements reached.
 	Probe = Data.define(:component, :set, :method_resolver)
@@ -163,9 +163,9 @@ module Phlex::Compiler
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
-		source = File.read(path)
+		parse_result = Prism.parse(without_byte_order_mark(File.read(path)), filepath: path)
 		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
-		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
+		results = file_compiler.compile(Refract::Converter.new.visit(parse_result.value)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
 		program = Refract::StatementsNode.new(
@@ -185,7 +185,7 @@ module Phlex::Compiler
 
 		without_redefinition_warnings do
 			eval(
-				"#{magic_comments(source)}#{formatting_result.source}",
+				"#{magic_comments(parse_result)}#{formatting_result.source}",
 				scope,
 				compiled_path,
 				1
@@ -296,29 +296,73 @@ module Phlex::Compiler
 		descendants_of(Phlex::SGML).select { |component| live?(component) }
 	end
 
+	# Class#subclasses is called directly, so a class overriding it can't hide
+	# or invent descendants.
+	SUBCLASSES = Class.instance_method(:subclasses)
+
 	def self.descendants_of(component)
-		component.subclasses.flat_map { |subclass| [subclass, *descendants_of(subclass)] }
+		SUBCLASSES.bind_call(component).flat_map { |subclass| [subclass, *descendants_of(subclass)] }
 	end
 
 	# The lines in the file that define the components' live methods. A method
 	# that's already compiled is traced back through its generation's map, and
-	# is a target again only when recompiling.
+	# is a target again only when recompiling. An alias has the source location
+	# of the method it copied, and a method made by `attr_reader` or
+	# `define_method` has none of a `def`'s source to compile, so neither is a
+	# target.
 	def self.targets(path, components, recompile: false)
 		components.each_with_object({}) do |component, targets|
 			next if component.frozen? || !live?(component)
 
 			own_methods(component).each do |name|
-				next unless (location = component.instance_method(name).source_location)
+				method = component.instance_method(name)
+				next unless method.original_name == name && (location = method.source_location)
 
 				source_path, line = location
 
 				if (generation = Phlex.__compiled_source_maps__[source_path])
 					next unless generation.path == path && (line = generation.lines[line])
 
-					targets[line] = Target.new(component:, name:, line:, compiled: !recompile)
-				elsif source_path == path
-					targets[line] = Target.new(component:, name:, line:, compiled: false)
+					targets[line] = Target.new(component:, name:, line:, compiled: !recompile, replaced: true)
+				elsif source_path == path && defined_by_def?(method)
+					targets[line] = Target.new(component:, name:, line:, compiled: false, replaced: false)
 				end
+			end
+		end
+	end
+
+	# Whether the method was made by `def`. Only CRuby can tell: a method from
+	# `attr_reader` has no instruction sequence, and one from `define_method`
+	# has a block's. Anything else, or any method elsewhere, is assumed to be,
+	# so a change in how Ruby labels them makes a `def` that an `attr_reader`
+	# or `define_method` replaced refused, rather than stopping compilation.
+	def self.defined_by_def?(method)
+		return true unless defined?(RubyVM::InstructionSequence)
+
+		iseq = RubyVM::InstructionSequence.of(method)
+		!iseq.nil? && !iseq.label.start_with?("block ")
+	end
+
+	# Module's own method listings, called directly so a class overriding them
+	# can't change what the compiler sees.
+	METHOD_LISTS = [:instance_methods, :private_instance_methods, :protected_instance_methods].map { |list| Module.instance_method(list) }.freeze
+
+	# The aliases, in the component or a descendant, that share a body with
+	# the component's method, as [owner, name] pairs. A descendant isn't being
+	# compiled, so it's reflected on without calling its own methods, which it
+	# may have overridden. A copy made by `define_method` shares the body too
+	# but isn't equal to the method, so they're matched by source location.
+	def self.aliases_sharing(component, name)
+		method = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
+
+		[component, *descendants_of(component)].flat_map do |owner|
+			names = METHOD_LISTS.flat_map { |list| list.bind_call(owner, false) }
+
+			names.filter_map do |alias_name|
+				next if alias_name == name
+
+				candidate = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(owner, alias_name)
+				[owner, alias_name] if candidate.original_name == name && candidate.source_location == method.source_location
 			end
 		end
 	end
@@ -379,14 +423,51 @@ module Phlex::Compiler
 		$VERBOSE = verbose
 	end
 
+	BYTE_ORDER_MARK = "\xEF\xBB\xBF".b.freeze
+
+	# Ruby drops a byte order mark before reading the encoding comment, but
+	# Prism reads the mark as the encoding and ignores the comment.
+	def self.without_byte_order_mark(source)
+		source.b.start_with?(BYTE_ORDER_MARK) ? source.byteslice((BYTE_ORDER_MARK.bytesize)..) : source
+	end
+
 	# The generated source is always prefixed with exactly one line so the
-	# line arithmetic stays the same whether or not the file freezes strings.
-	def self.magic_comments(source)
-		if source.lines.first(2).any? { |line| line.match?(/\A#.*frozen_string_literal:\s*true/) }
-			"# frozen_string_literal: true\n"
-		else
-			"\n"
+	# line arithmetic stays the same whatever the file's magic comments are.
+	# Emacs-style syntax lets the encoding and frozen string literal comments
+	# share that line, which is the only place Ruby reads an encoding from.
+	def self.magic_comments(parse_result)
+		comments = ["coding: #{parse_result.encoding.name}"]
+		frozen_string_literal = frozen_string_literal(parse_result)
+		comments << "frozen_string_literal: #{frozen_string_literal}" unless frozen_string_literal.nil?
+		"# -*- #{comments.join('; ')} -*-\n"
+	end
+
+	# Ruby only reads a frozen string literal comment from the comment block
+	# before the first token, with the last valid one there winning. An
+	# explicit false is forwarded too, since it isn't the same as no comment:
+	# it overrides `--enable-frozen-string-literal` and unchills the strings.
+	def self.frozen_string_literal(parse_result)
+		first_token = first_token_offset(parse_result)
+
+		comment = parse_result.magic_comments.reverse_each.find do |magic_comment|
+			magic_comment.key_loc.start_offset < first_token &&
+				magic_comment.key.tr("-", "_").casecmp?("frozen_string_literal") &&
+				(magic_comment.value.casecmp?("true") || magic_comment.value.casecmp?("false"))
 		end
+
+		comment&.value&.casecmp?("true")
+	end
+
+	# The AST can't tell us where the first token is because it leaves out
+	# tokens such as a lone semicolon, so the lexer's tokens are read instead.
+	def self.first_token_offset(parse_result)
+		Prism.lex(parse_result.source.source).value.each do |token, _state|
+			next if token.type in :COMMENT | :NEWLINE | :IGNORED_NEWLINE | :EMBDOC_BEGIN | :EMBDOC_LINE | :EMBDOC_END
+
+			return token.location.start_offset
+		end
+
+		raise Phlex::Compiler::Error, "Prism lexed #{parse_result.source.source.bytesize} bytes without an end of file token"
 	end
 
 	def self.wrap_in_namespace(namespace, body)

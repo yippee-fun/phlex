@@ -98,6 +98,203 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
+	test "a definition naming a moved method in another class doesn't hide the edit" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "moved.rb")
+			File.write(path, <<~RUBY)
+				class MovedCase < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+			load path
+
+			File.write(path, <<~RUBY)
+				# The call below is at the line view_template was loaded from.
+				class MovedRegistry; attr_reader :view_template; end
+				class MovedCase < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(MovedCase) }
+			assert_equal error.message, "#{path}:4: no live method is defined at this line, so the file has changed since it was loaded"
+		ensure
+			Object.__send__(:remove_const, :MovedCase)
+		end
+	end
+
+	test "a definition that a later `def` replaces doesn't hide the edit" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "replaced.rb")
+			File.write(path, <<~RUBY)
+				class ReplacedCase < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+			load path
+
+			File.write(path, <<~RUBY)
+				class ReplacedCase < Phlex::HTML
+					attr_reader :view_template
+					def view_template = div { "x" }
+				end
+			RUBY
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(ReplacedCase) }
+			assert_equal error.message, "#{path}:3: no live method is defined at this line, so the file has changed since it was loaded"
+		ensure
+			Object.__send__(:remove_const, :ReplacedCase)
+		end
+	end
+
+	test "a descendant overriding instance_method doesn't stop its ancestor compiling" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "reflective.rb")
+			File.write(path, <<~RUBY)
+				class ReflectiveCase < Phlex::HTML
+					def view_template = div { "x" }
+					alias_method :other, :view_template
+				end
+
+				class ReflectiveLegacy
+					ruby2_keywords def unrelated(*args) = args
+				end
+			RUBY
+			load path
+
+			descendant = Class.new(ReflectiveCase) do
+				def self.instance_method(*) = raise("overridden")
+				def self.instance_methods(*) = raise("overridden")
+				def self.private_instance_methods(*) = raise("overridden")
+				def self.subclasses = raise("overridden")
+				def own = nil
+			end
+
+			Phlex::Compiler.compile(ReflectiveCase)
+			assert Phlex::Compiler::MAP.key?(ReflectiveCase.instance_method(:view_template).source_location[0])
+		ensure
+			# The class outlives the test, so it mustn't break other compiles.
+			%i[instance_method instance_methods private_instance_methods subclasses].each do |name|
+				descendant&.singleton_class&.__send__(:remove_method, name)
+			end
+
+			Object.__send__(:remove_const, :ReflectiveCase)
+			Object.__send__(:remove_const, :ReflectiveLegacy)
+		end
+	end
+
+	test "a call that doesn't define methods doesn't hide the edit" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "registered.rb")
+			File.write(path, <<~RUBY)
+				class RegisteredCase < Phlex::HTML
+					def view_template = div { "x" }
+					def self.register(*) = nil
+				end
+			RUBY
+			load path
+
+			File.write(path, <<~RUBY)
+				class RegisteredCase < Phlex::HTML
+					register(:view_template)
+					def view_template = div { "x" }
+					def self.register(*) = nil
+				end
+			RUBY
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(RegisteredCase) }
+			assert_equal error.message, "#{path}:3: no live method is defined at this line, so the file has changed since it was loaded"
+		ensure
+			Object.__send__(:remove_const, :RegisteredCase)
+		end
+	end
+
+	test "explain reports a `using` it can't reproduce rather than raising" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "dynamic_using.rb")
+			File.write(path, <<~RUBY)
+				module DynamicUsingRefinement
+					refine(String) { def shout = upcase }
+				end
+
+				refinement = DynamicUsingRefinement
+				using refinement
+
+				class DynamicUsingCase < Phlex::HTML
+					def view_template = div { "x".shout }
+				end
+			RUBY
+			load path
+
+			assert_equal Phlex::Compiler.explain(DynamicUsingCase).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, [
+				"6: this `using` isn't a plain top-level statement naming a constant, which the compiler can't reproduce",
+			]
+		ensure
+			Object.__send__(:remove_const, :DynamicUsingCase)
+			Object.__send__(:remove_const, :DynamicUsingRefinement)
+		end
+	end
+
+	test "a method-defining call at a compiled method's old line doesn't hide the edit" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "generated.rb")
+			File.write(path, <<~RUBY)
+				class GeneratedCase < Phlex::HTML
+					def view_template = div { "x" }
+					def self.attr_reader(*) = nil
+				end
+			RUBY
+			load path
+			Phlex::Compiler.compile(GeneratedCase)
+
+			File.write(path, <<~RUBY)
+				class GeneratedCase < Phlex::HTML
+					attr_reader :view_template
+					define_method(:view_template) { div { "x" } }
+					def self.attr_reader(*) = nil
+				end
+			RUBY
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.recompile(GeneratedCase) }
+			assert_equal error.message, "#{path}:2: view_template was compiled from this line, which no longer defines it, so the file has changed since it was loaded"
+		ensure
+			Object.__send__(:remove_const, :GeneratedCase)
+		end
+	end
+
+	# Only CRuby can tell a method made by `def` from one made otherwise.
+	test "definitions that aren't live, or aren't compiled, aren't refused" do
+		next unless defined?(RubyVM::InstructionSequence)
+
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "superseded.rb")
+			File.write(path, <<~RUBY)
+				class SupersededUnrelated; def x = 1; def y = 2; end
+
+				class SupersededCase < Phlex::HTML
+					def self.register(*) = nil
+					register("\\xFF")
+					def initialize = @title = "live"
+					def view_template = h1 { title }
+					def title = "default"
+					attr_reader :title
+					def subtitle = "default"
+					define_method(:subtitle) { "live" }
+				end
+			RUBY
+			load path
+
+			assert_equal Phlex::Compiler.explain(SupersededCase).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, []
+
+			Phlex::Compiler.compile(SupersededCase)
+			assert_equal SupersededCase.new.call, "<h1>live</h1>"
+			assert Phlex::Compiler::MAP.key?(SupersededCase.instance_method(:view_template).source_location[0])
+		ensure
+			Object.__send__(:remove_const, :SupersededCase)
+			Object.__send__(:remove_const, :SupersededUnrelated)
+		end
+	end
+
 	test "explain lists every call and method left to the runtime, with a reason" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "component.rb")
