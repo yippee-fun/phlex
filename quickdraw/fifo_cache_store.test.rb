@@ -50,4 +50,37 @@ class FIFOCacheStoreTest < Quickdraw::Test
 
 		assert_equal component.new.call, "<div>x</div>"
 	end
+
+	test "fetch preserves invalid UTF-8 content" do
+		store = Phlex::FIFOCacheStore.new
+		value = "<p>\xFF</p>"
+
+		2.times do
+			result = store.fetch("a") { value }
+			assert_equal result.b, value.b
+			assert_equal result.encoding, Encoding::UTF_8
+		end
+	end
+
+	test "fetch preserves binary content" do
+		store = Phlex::FIFOCacheStore.new
+		value = "\x00\xFF\xFE".b
+
+		2.times do
+			result = store.fetch("a") { value }
+			assert_equal result, value
+			assert_equal result.encoding, Encoding::BINARY
+		end
+	end
+
+	test "a hit returns a value equal to the miss" do
+		store = Phlex::FIFOCacheStore.new
+		value = ["<div><span>x</span></div>", { "outer" => [0, 26, ["inner"]], "inner" => [5, 14, []] }]
+
+		miss = store.fetch("a") { value }
+		hit = store.fetch("a") { failure! { "This block should not have been called." } }
+
+		assert_equal miss, value
+		assert_equal hit, miss
+	end
 end

@@ -173,4 +173,33 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 			assert_equal output, '<div id="page"><section><ul><li>1</li><li>2</li><li>3</li></ul></section></div>'
 		end
 	end
+
+	class InvalidUTF8CacheTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(cache_store:)
+			@cache_store = cache_store
+		end
+
+		def view_template
+			cache("page") do
+				fragment("before") { span { "a" } }
+				raw(safe("\xFF"))
+				fragment("after") { span { "b" } }
+			end
+		end
+	end
+
+	test "invalid UTF-8 content renders identically on cache misses and hits" do
+		cache_store = Phlex::FIFOCacheStore.new
+		expected = "<span>a</span>\xFF<span>b</span>"
+
+		2.times do
+			output = InvalidUTF8CacheTest.new(cache_store:).call
+			assert_equal output.b, expected.b
+			assert_equal output.encoding, Encoding::UTF_8
+
+			assert_equal InvalidUTF8CacheTest.new(cache_store:).call(fragments: ["after"]), "<span>b</span>"
+		end
+	end
 end
