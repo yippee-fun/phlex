@@ -179,13 +179,16 @@ class NativeAttributesTest < Quickdraw::Test
 		assert_equal Phlex::SERIALIZED_ATTRIBUTES.fetch({ class: Set["a"] }) { "fallback" }, "fallback"
 	end
 
+	test "generate_attributes stays in Ruby so a fallback doesn't run the C twice" do
+		assert_equal Attributes.method(:generate_attributes).owner, Attributes
+	end
+
 	test "matches the Ruby implementation on random attributes" do
 		rng = Random.new(Integer(ENV.fetch("PHLEX_NATIVE_SEED", 0)))
 		mismatches = []
 
 		Integer(ENV.fetch("PHLEX_NATIVE_ITERATIONS", 20_000)).times do
 			attributes = NativeAttributesTest.random_hash(rng)
-			mismatches << NativeAttributesTest.compare(:generate_attributes, attributes)
 			mismatches << NativeAttributesTest.compare_fetch(attributes)
 
 			# The compiler only calls these with names that pass validation.
@@ -209,10 +212,9 @@ class NativeAttributesTest < Quickdraw::Test
 
 		KEYS.each do |k|
 			SCALARS.each do |v|
-				mismatches << NativeAttributesTest.compare(:generate_attributes, { k => v })
 				mismatches << NativeAttributesTest.compare_fetch({ k => v })
-				mismatches << NativeAttributesTest.compare(:generate_attributes, { data: { k => v } })
-				mismatches << NativeAttributesTest.compare(:generate_attributes, { k => [v, "a", [v]] })
+				mismatches << NativeAttributesTest.compare_fetch({ data: { k => v } })
+				mismatches << NativeAttributesTest.compare_fetch({ k => [v, "a", [v]] })
 			end
 		end
 

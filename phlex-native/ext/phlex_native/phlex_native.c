@@ -8,6 +8,7 @@
 
 #include <ruby.h>
 #include <ruby/encoding.h>
+#include <limits.h>
 #include <string.h>
 
 #define MAX_DEPTH 32
@@ -63,10 +64,14 @@ static VALUE output_finish(output_t *o) {
 	return o->string;
 }
 
+// Ruby raises the same error when a string would outgrow a long, which is 32 bits on Windows.
+#define RAISE_TOO_BIG() rb_raise(rb_eArgError, "string size too big")
+
 static void reserve(output_t *o, long n) {
+	if (n > LONG_MAX - o->length) RAISE_TOO_BIG();
 	if (o->length + n <= o->capacity) return;
 	rb_str_set_len(o->string, o->length);
-	rb_str_modify_expand(o->string, n > o->length ? n : o->length);
+	rb_str_modify_expand(o->string, (o->length > n && o->length <= LONG_MAX / 2) ? o->length : n);
 	o->ptr = RSTRING_PTR(o->string);
 	o->capacity = (long)rb_str_capacity(o->string);
 }
@@ -95,6 +100,7 @@ static void put_value(output_t *o, const char *p, long n, int dasherize) {
 		return;
 	}
 
+	if (quotes > (LONG_MAX - n) / 5) RAISE_TOO_BIG();
 	reserve(o, n + quotes * 5);
 	char *out = o->ptr + o->length;
 	for (long i = 0; i < n; i++) {
@@ -252,7 +258,7 @@ static int nested_each(VALUE k, VALUE v, VALUE arg) {
 		long n;
 		int dasherize;
 		if (!key_bytes(k, &p, &n, &dasherize)) goto fallback;
-		if (nested->prefix_length + n + 1 > PREFIX_CAPACITY) goto fallback;
+		if (n > PREFIX_CAPACITY - 1 - nested->prefix_length) goto fallback;
 		char *name = o->prefix + nested->prefix_length;
 		for (long i = 0; i < n; i++) {
 			if (unsafe_name_char_p(p[i])) goto fallback;
@@ -433,13 +439,8 @@ static VALUE generate(VALUE receiver, VALUE attributes) {
 	return top.fallback ? Qundef : output_finish(&o);
 }
 
-// Phlex::SGML::Attributes.generate_attributes(attributes)
-static VALUE native_generate_attributes(int argc, VALUE *argv, VALUE self) {
-	VALUE result = argc == 1 ? generate(self, argv[0]) : Qundef;
-	return result == Qundef ? rb_call_super(argc, argv) : result;
-}
-
 // Phlex::Native::SerializedAttributes.fetch(attributes) { generate in Ruby }
+// generate_attributes itself isn't prepended, so a fallback doesn't run the C twice.
 static VALUE native_fetch(VALUE self, VALUE attributes) {
 	VALUE result = generate(sgml_constant(&attributes_module, id_Attributes), attributes);
 	return result == Qundef ? rb_yield_values(0) : result;
@@ -497,7 +498,6 @@ void Init_phlex_native(void) {
 
 	// Prepended to Phlex::SGML::Attributes' singleton class.
 	VALUE mNativeAttributes = rb_define_module_under(mNative, "Attributes");
-	rb_define_method(mNativeAttributes, "generate_attributes", native_generate_attributes, -1);
 	rb_define_method(mNativeAttributes, "attribute", native_attribute, -1);
 	rb_define_method(mNativeAttributes, "reference_attribute", native_reference_attribute, -1);
 
