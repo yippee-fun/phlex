@@ -158,9 +158,9 @@ module Phlex::Compiler
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
-		source = File.read(path)
+		parse_result = Prism.parse(without_byte_order_mark(File.read(path)), filepath: path)
 		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
-		results = file_compiler.compile(parse(source, path)).reject { |result| result.compiled_snippets.empty? }
+		results = file_compiler.compile(Refract::Converter.new.visit(parse_result.value)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
 		program = Refract::StatementsNode.new(
@@ -172,7 +172,7 @@ module Phlex::Compiler
 
 		without_redefinition_warnings do
 			eval(
-				"#{magic_comments(source)}#{formatting_result.source}",
+				"#{magic_comments(parse_result)}#{formatting_result.source}",
 				scope,
 				compiled_path,
 				1
@@ -372,14 +372,51 @@ module Phlex::Compiler
 		$VERBOSE = verbose
 	end
 
+	BYTE_ORDER_MARK = "\xEF\xBB\xBF".b.freeze
+
+	# Ruby drops a byte order mark before reading the encoding comment, but
+	# Prism reads the mark as the encoding and ignores the comment.
+	def self.without_byte_order_mark(source)
+		source.b.start_with?(BYTE_ORDER_MARK) ? source.byteslice((BYTE_ORDER_MARK.bytesize)..) : source
+	end
+
 	# The generated source is always prefixed with exactly one line so the
-	# line arithmetic stays the same whether or not the file freezes strings.
-	def self.magic_comments(source)
-		if source.lines.first(2).any? { |line| line.match?(/\A#.*frozen_string_literal:\s*true/) }
-			"# frozen_string_literal: true\n"
-		else
-			"\n"
+	# line arithmetic stays the same whatever the file's magic comments are.
+	# Emacs-style syntax lets the encoding and frozen string literal comments
+	# share that line, which is the only place Ruby reads an encoding from.
+	def self.magic_comments(parse_result)
+		comments = ["coding: #{parse_result.encoding.name}"]
+		frozen_string_literal = frozen_string_literal(parse_result)
+		comments << "frozen_string_literal: #{frozen_string_literal}" unless frozen_string_literal.nil?
+		"# -*- #{comments.join('; ')} -*-\n"
+	end
+
+	# Ruby only reads a frozen string literal comment from the comment block
+	# before the first token, with the last valid one there winning. An
+	# explicit false is forwarded too, since it isn't the same as no comment:
+	# it overrides `--enable-frozen-string-literal` and unchills the strings.
+	def self.frozen_string_literal(parse_result)
+		first_token = first_token_offset(parse_result)
+
+		comment = parse_result.magic_comments.reverse_each.find do |magic_comment|
+			magic_comment.key_loc.start_offset < first_token &&
+				magic_comment.key.tr("-", "_").casecmp?("frozen_string_literal") &&
+				(magic_comment.value.casecmp?("true") || magic_comment.value.casecmp?("false"))
 		end
+
+		comment&.value&.casecmp?("true")
+	end
+
+	# The AST can't tell us where the first token is because it leaves out
+	# tokens such as a lone semicolon, so the lexer's tokens are read instead.
+	def self.first_token_offset(parse_result)
+		Prism.lex(parse_result.source.source).value.each do |token, _state|
+			next if token.type in :COMMENT | :NEWLINE | :IGNORED_NEWLINE | :EMBDOC_BEGIN | :EMBDOC_LINE | :EMBDOC_END
+
+			return token.location.start_offset
+		end
+
+		raise Phlex::Compiler::Error, "Prism lexed #{parse_result.source.source.bytesize} bytes without an end of file token"
 	end
 
 	def self.wrap_in_namespace(namespace, body)
