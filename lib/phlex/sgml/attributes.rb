@@ -13,11 +13,33 @@ module Phlex::SGML::Attributes
 	UNSAFE_ATTRIBUTE_NAME_CHARS = %r([<>&"'/=\s\x00])
 	SIMPLE_ATTRIBUTE_NAME = /\A[a-z-]+\z/
 
+	# Symbol keys whose names have passed every name check, mapped to their names.
+	# Values for these only need serialising. Reference attributes are kept apart
+	# because their values also need checking.
+	CHECKED_NAMES = {}
+	CHECKED_REFERENCE_NAMES = {}
+	CHECKED_NAMES_LIMIT = 1_000
+	CHECKED_NAMES_MUTEX = Mutex.new
+
 	def generate_attributes(attributes, buffer = +"")
 		attributes.each do |k, v|
 			next unless v
 
-			generate_attribute(k, attribute_name(k), v, buffer)
+			if (name = CHECKED_NAMES[k])
+				case v
+				when String
+					buffer << " " << name << '="' << (v.include?('"') ? v.gsub('"', "&quot;") : v) << '"'
+				when true
+					buffer << " " << name
+				else
+					generate_attribute(k, name, v, buffer)
+				end
+			elsif String === v && (name = CHECKED_REFERENCE_NAMES[k]) && !(Phlex::SGML::SafeObject === v)
+				value = v.include?('"') ? v.gsub('"', "&quot;") : v
+				buffer << " " << name << '="' << value << '"' unless unsafe_reference?(value)
+			else
+				generate_attribute(k, attribute_name(k), v, buffer)
+			end
 		end
 
 		buffer
@@ -44,17 +66,29 @@ module Phlex::SGML::Attributes
 			normalized_name = lower_name.delete("^a-z-")
 		end
 
-		unless Phlex::SGML::SafeObject === v
+		if Phlex::SGML::SafeObject === v
+			check_attribute_name(k, name, lower_name, simple_name)
+		else
 			if value != true && REF_ATTRIBUTES.include?(normalized_name) && drop_reference?(k, v, value)
 				# We just ignore these because they were likely not specified by the developer.
 				return buffer
 			end
 
 			check_unsafe_attribute_name(k, normalized_name)
+			check_attribute_name(k, name, lower_name, simple_name)
+			remember_checked_name(k, name) if simple_name && Symbol === k
 		end
 
-		check_attribute_name(k, name, lower_name, simple_name)
 		append_attribute(buffer, name, value)
+	end
+
+	private def remember_checked_name(k, name)
+		names = REF_ATTRIBUTES.include?(name) ? CHECKED_REFERENCE_NAMES : CHECKED_NAMES
+		return if names.key?(k)
+
+		CHECKED_NAMES_MUTEX.synchronize do
+			names[k] = -name if names.size < CHECKED_NAMES_LIMIT
+		end
 	end
 
 	# Raises if the name fails a check that doesn't depend on the value, so a
