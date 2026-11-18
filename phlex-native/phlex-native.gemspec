@@ -4,7 +4,7 @@ require_relative "../lib/phlex/version"
 
 Gem::Specification.new do |spec|
 	spec.name = "phlex-native"
-	spec.version = Phlex::VERSION
+	spec.version = "0.1.0"
 	spec.authors = ["Joel Drapper"]
 	spec.email = ["joel@drapper.me"]
 
@@ -12,7 +12,7 @@ Gem::Specification.new do |spec|
 	spec.description = "Serialises Phlex attributes in C, falling back to Ruby for anything uncommon."
 	spec.homepage = "https://www.phlex.fun"
 	spec.license = "MIT"
-	spec.required_ruby_version = ">= 3.2"
+	spec.required_ruby_version = ">= 4.0"
 
 	spec.metadata["source_code_uri"] = "https://github.com/phlex-ruby/phlex"
 	spec.metadata["rubygems_mfa_required"] = "true"
@@ -21,5 +21,6 @@ Gem::Specification.new do |spec|
 	spec.extensions = ["ext/phlex_native/extconf.rb"]
 	spec.require_paths = ["lib"]
 
+	# The C mirrors this version's Ruby exactly, so it can't be used with any other.
 	spec.add_dependency "phlex", Phlex::VERSION
 end

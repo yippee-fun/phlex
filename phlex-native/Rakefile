@@ -15,11 +15,10 @@ PLATFORMS = %w[
 	x86_64-linux-musl
 ].freeze
 
-MINIMUM_RUBY = Gem::Version.new("3.2")
-
-# The build containers set RUBY_CC_VERSION to every Ruby they can cross-compile for.
+# The build containers set RUBY_CC_VERSION to every Ruby they can cross-compile
+# for. Only the ones the gemspec supports are built.
 if (versions = ENV["RUBY_CC_VERSION"])
-	ENV["RUBY_CC_VERSION"] = versions.split(":").select { |version| Gem::Version.new(version) >= MINIMUM_RUBY }.join(":")
+	ENV["RUBY_CC_VERSION"] = versions.split(":").select { |version| SPEC.required_ruby_version.satisfied_by?(Gem::Version.new(version)) }.join(":")
 end
 
 Gem::PackageTask.new(SPEC).define
@@ -31,13 +30,14 @@ Rake::ExtensionTask.new("phlex_native", SPEC) do |ext|
 
 	ext.cross_compiling do |spec|
 		newest = ENV.fetch("RUBY_CC_VERSION").split(":").map { |version| Gem::Version.new(version).segments.first(2) }.max
-		spec.required_ruby_version = [">= #{MINIMUM_RUBY}", "< #{newest[0]}.#{newest[1] + 1}.dev"]
+		spec.required_ruby_version = [*SPEC.required_ruby_version.as_list, "< #{newest[0]}.#{newest[1] + 1}.dev"]
 	end
 end
 
 namespace :gem do
+	# One at a time: the gnu and musl builds for an architecture share a tmp directory.
 	desc "Build the precompiled gems for every platform in Docker"
-	multitask native: PLATFORMS.map { |platform| "gem:native:#{platform}" }
+	task native: PLATFORMS.map { |platform| "gem:native:#{platform}" }
 
 	PLATFORMS.each do |platform|
 		desc "Build the precompiled gem for #{platform} in Docker"

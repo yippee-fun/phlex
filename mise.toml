@@ -1,6 +1,6 @@
 [tasks.setup]
 description = "Install all project dependencies."
-run = ["mise install", "bundle install --jobs 4"]
+run = ["mise install", "bundle install --jobs 4", "bundle install --jobs 4 --gemfile phlex-native/Gemfile"]
 
 [tasks.test]
 description = "Run tests"
@@ -25,6 +25,27 @@ run = ["bundle exec ./bench.rb"]
 [tasks.browser_tests]
 description = "Run browser tests"
 run = ["bundle exec ./browser_tests.rb"]
+
+[tasks."native:compile"]
+description = "Compile phlex-native from source"
+dir = "phlex-native"
+run = "bundle exec rake compile"
+
+[tasks."native:test"]
+description = "Run tests with phlex-native loaded"
+depends = ["native:compile"]
+env = { PHLEX_NATIVE = "true" }
+run = "bundle exec qt"
+
+[tasks."native:package"]
+description = "Build the phlex-native source gem and a precompiled gem for every platform (needs Docker)"
+dir = "phlex-native"
+run = ["bundle exec rake clobber", "bundle exec rake gem gem:native"]
+
+[tasks."native:release"]
+description = "Push every phlex-native gem in phlex-native/pkg to RubyGems"
+dir = "phlex-native"
+run = "for gem in pkg/*.gem; do gem push \"$gem\"; done"
 
 [tools]
 ruby = "latest"

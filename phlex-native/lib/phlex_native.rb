@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Precompiled gems have a binary for each Ruby version; gems built from source have one.
+# A gem precompiled for several Ruby versions has a binary for each; otherwise there's just one.
 begin
 	require "phlex_native/#{RUBY_VERSION[/\A\d+\.\d+/]}/phlex_native"
 rescue LoadError

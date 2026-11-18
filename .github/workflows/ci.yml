@@ -41,10 +41,8 @@ jobs:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest", "macos-latest"]
+        # phlex-native supports the latest stable Ruby.
         ruby-version:
-          - "3.2"
-          - "3.3"
-          - "3.4"
           - "4.0"
           - "head"
 
