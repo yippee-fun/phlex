@@ -36,6 +36,42 @@ jobs:
       - name: Quickdraw Tests
         run: bundle exec qt
 
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest", "macos-latest"]
+        ruby-version:
+          - "3.2"
+          - "3.3"
+          - "3.4"
+          - "4.0"
+          - "head"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby-version }}
+          bundler-cache: false
+
+      - name: Install dependencies
+        run: |
+          bundle install --jobs 4
+
+      - name: Compile phlex-native
+        working-directory: phlex-native
+        run: rake compile
+
+      - name: Quickdraw Tests
+        env:
+          PHLEX_NATIVE: "true"
+          PHLEX_NATIVE_ITERATIONS: "200000"
+        run: bundle exec qt
+
   rubocop:
     runs-on: "ubuntu-latest"
     steps:

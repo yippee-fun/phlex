@@ -1,0 +1,20 @@
+# frozen_string_literal: true
+
+require "rbconfig"
+
+task :compile do
+	build = File.expand_path("tmp", __dir__)
+	mkdir_p build
+	Dir.chdir(build) do
+		ruby File.expand_path("ext/phlex_native/extconf.rb", __dir__)
+		sh "make"
+	end
+	mkdir_p "lib/phlex_native"
+	cp File.join(build, "phlex_native.#{RbConfig::CONFIG['DLEXT']}"), "lib/phlex_native/"
+end
+
+task :clean do
+	rm_rf ["tmp", "lib/phlex_native"]
+end
+
+task default: :compile

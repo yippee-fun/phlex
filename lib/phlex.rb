@@ -29,6 +29,15 @@ module Phlex
 	CACHED_FILES = Set.new
 	ATTRIBUTE_CACHE = FIFO.new(max_bytesize: 2 ** 20)
 
+	# The phlex-native gem serialises attributes faster than the cache can look them up.
+	begin
+		require "phlex_native/phlex_native"
+	rescue LoadError
+		nil
+	end
+
+	SERIALIZED_ATTRIBUTES = defined?(Native) ? Native::SerializedAttributes : ATTRIBUTE_CACHE
+
 	UNBOUND_INSTANCE_METHOD_METHOD = Module.instance_method(:instance_method)
 
 	# Filled by the compiler: compiled path => Phlex::Compiler::Generation.
