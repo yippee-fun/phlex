@@ -163,6 +163,42 @@ class RactorTest < Quickdraw::Test
 			end
 		end
 
+		test "extending an instance in another Ractor is checked against what was compiled inline" do
+			with_component_file(<<~RUBY) do
+				# frozen_string_literal: true
+				module RactorBold
+					def bold = strong { "bold" }
+				end
+
+				module RactorDiv
+					def div(**) = plain("overridden")
+				end
+
+				class RactorExtended < Phlex::HTML
+					def view_template = div { "inline" }
+				end
+			RUBY
+				Phlex::Compiler.compile(RactorExtended)
+
+				extended, refused = in_ractor do
+					Thread.current.report_on_exception = false
+
+					[
+						RactorExtended.new.extend(RactorBold).call,
+						begin
+							RactorExtended.new.extend(RactorDiv)
+							nil
+						rescue Phlex::Compiler::Error => e
+							e.message
+						end,
+					]
+				end
+
+				assert_equal extended, "<div>inline</div>"
+				assert refused.include?("can't be redefined on a single instance")
+			end
+		end
+
 		test "only the main Ractor compiles on first render" do
 			with_component_file(<<~RUBY) do
 				# frozen_string_literal: true

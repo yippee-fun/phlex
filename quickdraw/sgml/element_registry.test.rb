@@ -63,6 +63,17 @@ class ElementRegistryTest < Quickdraw::Test
 		assert_equal elements.__registered_elements__, { my_tag: "my-tag", other_tag: "other-tag" }
 	end
 
+	test "registrations racing each other are all recorded" do
+		names = Array.new(8) { |index| :"racing_#{index}" }
+
+		50.times do
+			elements = new_elements_module
+			names.map { |name| Thread.new { elements.register_element(name) } }.each(&:join)
+
+			assert_equal elements.__registered_elements__.keys.sort, names
+		end
+	end
+
 	test "a component's registry is frozen and separate from its superclass's" do
 		parent = Class.new(Phlex::HTML) { register_element :trix_editor }
 		child = Class.new(parent) do

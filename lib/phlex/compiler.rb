@@ -211,7 +211,7 @@ module Phlex::Compiler
 	# have uncompiled. An override on a single instance can't be compiled for,
 	# so it's refused.
 	def self.inlining_changed(target, names)
-		return if MUTEX.owned?
+		return if Phlex.__main_ractor__? && MUTEX.owned?
 
 		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
 		affected = related.select do |klass|

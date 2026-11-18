@@ -41,8 +41,12 @@ module Phlex
 
 	def self.__compiled_source_maps__ = @compiled_source_maps
 
+	COMPILED_SOURCE_MAPS_MUTEX = Mutex.new
+
 	def self.__add_compiled_source_map__(compiled_path, generation)
-		@compiled_source_maps = @compiled_source_maps.merge(compiled_path => generation).freeze
+		COMPILED_SOURCE_MAPS_MUTEX.synchronize do
+			@compiled_source_maps = @compiled_source_maps.merge(compiled_path => generation).freeze
+		end
 	end
 
 	# The original line for a location that may be in compiled code.
@@ -63,24 +67,24 @@ module Phlex
 		end
 	end
 
+	# __attribute_cache__ is called once per render, so the check is written out in each.
 	if !defined?(::Ractor)
 		def self.__main_ractor__? = true
+		def self.__attribute_cache__ = ATTRIBUTE_CACHE
 	elsif ::Ractor.respond_to?(:main?)
 		def self.__main_ractor__? = ::Ractor.main?
+		def self.__attribute_cache__ = ::Ractor.main? ? ATTRIBUTE_CACHE : __ractor_attribute_cache__
 	else
 		def self.__main_ractor__? = ::Ractor.current == ::Ractor.main
+		def self.__attribute_cache__ = (::Ractor.current == ::Ractor.main) ? ATTRIBUTE_CACHE : __ractor_attribute_cache__
 	end
 
-	# Called once per render. A Ractor’s own cache is kept as large as the main one.
-	def self.__attribute_cache__
-		if __main_ractor__?
-			ATTRIBUTE_CACHE
-		else
-			max_bytesize = @attribute_cache_max_bytesize
-			cache = (::Ractor.current[:__phlex_attribute_cache__] ||= FIFO.new(max_bytesize:))
-			cache.grow_to(max_bytesize) if cache.max_bytesize < max_bytesize
-			cache
-		end
+	# A Ractor’s own cache is kept as large as the main one.
+	def self.__ractor_attribute_cache__
+		max_bytesize = @attribute_cache_max_bytesize
+		cache = (::Ractor.current[:__phlex_attribute_cache__] ||= FIFO.new(max_bytesize:))
+		cache.grow_to(max_bytesize) if cache.max_bytesize < max_bytesize
+		cache
 	end
 
 	# Generate an HTML string using Phlex’ HTML DSL

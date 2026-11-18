@@ -65,6 +65,7 @@ module Phlex::SGML::Elements
 	end
 
 	EMPTY_REGISTRY = {}.freeze
+	REGISTRATION_MUTEX = Mutex.new
 
 	# Registries are frozen and replaced on each registration, so any Ractor can read them.
 	def __registered_elements__
@@ -174,8 +175,10 @@ module Phlex::SGML::Elements
 			end
 		RUBY
 
-		@__registered_elements__ = __registered_elements__.merge(method_name => -tag.to_s).freeze
-		@__registered_void_elements__ = __registered_void_elements__.except(method_name).freeze
+		REGISTRATION_MUTEX.synchronize do
+			@__registered_elements__ = __registered_elements__.merge(method_name => -tag.to_s).freeze
+			@__registered_void_elements__ = __registered_void_elements__.except(method_name).freeze
+		end
 
 		method_name
 	end
@@ -211,8 +214,11 @@ module Phlex::SGML::Elements
 		RUBY
 
 		tag = -tag.to_s
-		@__registered_elements__ = __registered_elements__.merge(method_name => tag).freeze
-		@__registered_void_elements__ = __registered_void_elements__.merge(method_name => tag).freeze
+
+		REGISTRATION_MUTEX.synchronize do
+			@__registered_elements__ = __registered_elements__.merge(method_name => tag).freeze
+			@__registered_void_elements__ = __registered_void_elements__.merge(method_name => tag).freeze
+		end
 
 		method_name
 	end
