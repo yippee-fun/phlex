@@ -67,8 +67,11 @@ class RactorTest < Quickdraw::Test
 		end
 	end
 
-	test "the main Ractor uses ATTRIBUTE_CACHE" do
-		assert Phlex.__attribute_cache__.equal?(Phlex::ATTRIBUTE_CACHE)
+	# phlex-native serialises attributes without a cache on every Ractor.
+	unless defined?(Phlex::Native)
+		test "the main Ractor uses ATTRIBUTE_CACHE" do
+			assert Phlex.__attribute_cache__.equal?(Phlex::ATTRIBUTE_CACHE)
+		end
 	end
 
 	test "expansions racing each other leave the limit other Ractors copy equal to the main cache's" do
@@ -83,7 +86,7 @@ class RactorTest < Quickdraw::Test
 		assert_equal Phlex.instance_variable_get(:@attribute_cache_max_bytesize), Phlex::ATTRIBUTE_CACHE.max_bytesize
 	end
 
-	if defined?(::Ractor)
+	if defined?(::Ractor) && !defined?(Phlex::Native)
 		test "another Ractor gets one attribute cache of its own" do
 			main_cache_id = Phlex::ATTRIBUTE_CACHE.object_id
 			cache_ids = in_ractor { [Phlex.__attribute_cache__.object_id, Phlex.__attribute_cache__.object_id] }
@@ -128,7 +131,9 @@ class RactorTest < Quickdraw::Test
 		ensure
 			Warning[:experimental] = experimental
 		end
+	end
 
+	if defined?(::Ractor)
 		test "renders the same in another Ractor" do
 			expected = Example.call
 

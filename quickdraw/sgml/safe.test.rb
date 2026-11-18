@@ -36,11 +36,14 @@ class SafeTest < Quickdraw::Test
 		assert_equal cache.size, 1
 	end
 
-	test "rendering safe attribute values hits the attribute cache" do
-		value = "safe-value-cache-#{object_id}"
-		2.times { phlex { div(class: safe(value)) } }
+	# phlex-native serialises attributes without the cache.
+	unless defined?(Phlex::Native)
+		test "rendering safe attribute values hits the attribute cache" do
+			value = "safe-value-cache-#{object_id}"
+			2.times { phlex { div(class: safe(value)) } }
 
-		assert_equal Phlex::ATTRIBUTE_CACHE[{ class: Phlex::SGML::SafeValue.new(value) }], %( class="#{value}")
+			assert_equal Phlex::ATTRIBUTE_CACHE[{ class: Phlex::SGML::SafeValue.new(value) }], %( class="#{value}")
+		end
 	end
 
 	test "safe values are not equal to strings" do

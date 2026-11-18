@@ -463,3 +463,5 @@ module Phlex::SGML::Attributes
 		end
 	end
 end
+
+Phlex::SGML::Attributes.singleton_class.prepend(Phlex::Native::Attributes) if defined?(Phlex::Native)

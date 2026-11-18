@@ -34,6 +34,12 @@ module Phlex
 	ATTRIBUTE_CACHE = FIFO.new(max_bytesize: 2 ** 20)
 	@attribute_cache_max_bytesize = ATTRIBUTE_CACHE.max_bytesize
 
+	begin
+		require "phlex_native"
+	rescue LoadError
+		nil
+	end
+
 	UNBOUND_INSTANCE_METHOD_METHOD = Module.instance_method(:instance_method)
 
 	# Filled by the compiler: compiled path => Phlex::Compiler::Generation.
@@ -73,15 +79,23 @@ module Phlex
 		end
 	end
 
-	# __attribute_cache__ is called once per render, so the check is written out in each.
 	if !defined?(::Ractor)
 		def self.__main_ractor__? = true
-		def self.__attribute_cache__ = ATTRIBUTE_CACHE
 	elsif ::Ractor.respond_to?(:main?)
 		def self.__main_ractor__? = ::Ractor.main?
-		def self.__attribute_cache__ = ::Ractor.main? ? ATTRIBUTE_CACHE : __ractor_attribute_cache__
 	else
 		def self.__main_ractor__? = ::Ractor.current == ::Ractor.main
+	end
+
+	# __attribute_cache__ is called once per render, so the check is written out in each.
+	if defined?(Native)
+		# phlex-native serialises attributes faster than a cache can look them up, on any Ractor.
+		def self.__attribute_cache__ = Native::SerializedAttributes
+	elsif !defined?(::Ractor)
+		def self.__attribute_cache__ = ATTRIBUTE_CACHE
+	elsif ::Ractor.respond_to?(:main?)
+		def self.__attribute_cache__ = ::Ractor.main? ? ATTRIBUTE_CACHE : __ractor_attribute_cache__
+	else
 		def self.__attribute_cache__ = (::Ractor.current == ::Ractor.main) ? ATTRIBUTE_CACHE : __ractor_attribute_cache__
 	end
 

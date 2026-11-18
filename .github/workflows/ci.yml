@@ -36,6 +36,69 @@ jobs:
       - name: Quickdraw Tests
         run: bundle exec qt
 
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest", "macos-latest"]
+        # phlex-native supports the latest stable Ruby.
+        ruby-version:
+          - "4.0"
+          - "head"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby-version }}
+          bundler-cache: false
+
+      - name: Install dependencies
+        run: |
+          bundle install --jobs 4
+
+      - name: Compile phlex-native
+        working-directory: phlex-native
+        run: bundle install --jobs 4 && bundle exec rake compile
+
+      - name: Quickdraw Tests
+        env:
+          PHLEX_NATIVE: "true"
+          PHLEX_NATIVE_ITERATIONS: "200000"
+        run: bundle exec qt
+
+  # A Ruby built with AddressSanitizer, since preloading it into a normal Ruby doesn't work.
+  native-sanitizers:
+    runs-on: "ubuntu-24.04"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "asan-release"
+          bundler-cache: false
+
+      - name: Install dependencies
+        run: |
+          bundle install --jobs 4
+
+      - name: Compile phlex-native with AddressSanitizer and UndefinedBehaviorSanitizer
+        working-directory: phlex-native
+        env:
+          PHLEX_NATIVE_SANITIZE: "true"
+        run: bundle install --jobs 4 && bundle exec rake compile
+
+      - name: Differential tests while the GC compacts and runs constantly
+        env:
+          PHLEX_NATIVE: "true"
+          PHLEX_NATIVE_STRESS: "true"
+          ASAN_OPTIONS: "detect_leaks=0"
+        run: bundle exec qt ./phlex-native/quickdraw/attributes.test.rb
+
   rubocop:
     runs-on: "ubuntu-latest"
     steps:

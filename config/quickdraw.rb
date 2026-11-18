@@ -21,7 +21,15 @@ end
 
 Bundler.require :test
 
+if ENV["PHLEX_NATIVE"] == "true"
+	$LOAD_PATH.unshift(File.expand_path("../phlex-native/lib", __dir__))
+end
+
 require "phlex"
+
+if ENV["PHLEX_NATIVE"] == "true" && !defined?(Phlex::Native)
+	raise "PHLEX_NATIVE is set but the extension didn't load. Run `rake compile` in phlex-native."
+end
 
 Phlex::Loader.eager_load
 
