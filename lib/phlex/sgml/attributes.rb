@@ -334,7 +334,7 @@ module Phlex::SGML::Attributes
 						buffer << sep << value
 					end
 				end
-			when nil
+			when nil, false
 				# Do nothing
 			else
 				raise Phlex::ArgumentError.new("Invalid token type: #{token.class}.")
@@ -367,7 +367,7 @@ module Phlex::SGML::Attributes
 					value.end_with?(";") ? value : "#{value};"
 				when Hash
 					next generate_styles(s)
-				when nil
+				when nil, false
 					next nil
 				else
 					raise Phlex::ArgumentError.new("Invalid style: #{s.inspect}.")
@@ -394,7 +394,7 @@ module Phlex::SGML::Attributes
 					v.name.tr("_", "-")
 				when Integer, Float, Phlex::SGML::SafeObject
 					v.to_s
-				when nil
+				when nil, false
 					nil
 				else
 					raise Phlex::ArgumentError.new("Invalid style value: #{v.inspect}")
