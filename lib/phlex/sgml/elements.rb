@@ -58,6 +58,22 @@ module Phlex::SGML::Elements
 		attributes
 	end
 
+	# Every name registered by any class or module, so `tag` only searches a
+	# component's ancestors for a name something has registered. Replaced rather
+	# than mutated, so it stays shareable between Ractors.
+	@registered_names = {}.freeze
+
+	def self.registered_name?(name)
+		@registered_names.key?(name)
+	end
+
+	def self.record_registered_name(name)
+		return if @registered_names.key?(name)
+
+		names = @registered_names.merge(name => true)
+		@registered_names = defined?(::Ractor) ? ::Ractor.make_shareable(names) : names.freeze
+	end
+
 	def self.normalizer_call(method_name)
 		if (normalizer = ATTRIBUTE_NORMALIZERS[method_name])
 			"Phlex::SGML::Elements.#{normalizer}(attributes)"
@@ -174,6 +190,7 @@ module Phlex::SGML::Elements
 
 		__registered_elements__[method_name] = tag
 		__registered_void_elements__.delete(method_name)
+		Phlex::SGML::Elements.record_registered_name(method_name)
 
 		method_name
 	end
@@ -210,6 +227,7 @@ module Phlex::SGML::Elements
 
 		__registered_elements__[method_name] = tag
 		__registered_void_elements__[method_name] = tag
+		Phlex::SGML::Elements.record_registered_name(method_name)
 
 		method_name
 	end
