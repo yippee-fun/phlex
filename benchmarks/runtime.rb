@@ -31,13 +31,19 @@ require_relative "../fixtures/page"
 require_relative "../fixtures/layout"
 require_relative "../fixtures/dynamic_list"
 
-if options[:yjit] && !RubyVM::YJIT.enabled?
-	if RubyVM::YJIT.respond_to?(:enable)
+yjit_available = defined?(RubyVM::YJIT)
+
+if options[:yjit] && !(yjit_available && RubyVM::YJIT.enabled?)
+	if yjit_available && RubyVM::YJIT.respond_to?(:enable)
 		RubyVM::YJIT.enable
-	else
+	elsif yjit_available
 		abort "This Ruby can only enable YJIT at startup. Run it with `ruby --yjit`."
+	else
+		abort "This Ruby doesn't have YJIT."
 	end
 end
+
+yjit_enabled = !!(yjit_available && RubyVM::YJIT.enabled?)
 
 module RuntimeBenchmark
 	Item = Struct.new(:id, :title, :summary, :tag, :path, :dom_id)
@@ -387,7 +393,7 @@ results = report.entries.to_h do |entry|
 end
 
 if options[:json]
-	File.write(options[:json], JSON.pretty_generate(yjit: RubyVM::YJIT.enabled?, ruby: RUBY_DESCRIPTION, results:))
+	File.write(options[:json], JSON.pretty_generate(yjit: yjit_enabled, ruby: RUBY_DESCRIPTION, results:))
 else
 	puts
 	puts "#{'scenario'.ljust(28)} #{'i/s'.rjust(10)} #{'µs/i'.rjust(10)} #{'objects/i'.rjust(10)}"
