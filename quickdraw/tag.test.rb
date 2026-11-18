@@ -332,6 +332,29 @@ HTML
 		assert_equal child.call(:late) { "x" }, "<late>x</late>"
 	end
 
+	test "registered names that are also valid custom tags use their registration" do
+		component = Class.new(HTMLComponent) do
+			register_element :my_widget, tag: "x-widget"
+			__register_void_element__ :my_void
+		end
+
+		assert_equal component.call(:my_widget) { "x" }, "<x-widget>x</x-widget>"
+		assert_equal component.call(:my_void), "<my-void>"
+		assert_raises(Phlex::ArgumentError) { component.call(:my_void) { "x" } }
+		assert_equal HTMLComponent.call(:my_widget), "<my-widget></my-widget>"
+	end
+
+	test "registration on a parent after a subclass has rendered the name" do
+		parent = Class.new(HTMLComponent)
+		child = Class.new(parent)
+
+		assert_equal child.call(:late_widget), "<late-widget></late-widget>"
+		parent.register_element :late_widget, tag: "x-late"
+		assert_equal child.call(:late_widget), "<x-late></x-late>"
+		parent.__register_void_element__ :late_widget
+		assert_equal child.call(:late_widget), "<late-widget>"
+	end
+
 	test "elements registered on another class are still invalid" do
 		error = assert_raises(Phlex::ArgumentError) { HTMLComponent.call(:foo) }
 		assert_equal error.message, "Invalid HTML tag: foo"

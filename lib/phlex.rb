@@ -6,6 +6,8 @@ require "set"
 require "zeitwerk"
 
 module Phlex
+	# Ruby 3.2 and 3.3 can’t autoload in a non-main Ractor, so call
+	# `Phlex::Loader.eager_load` before rendering in one.
 	Loader = Zeitwerk::Loader.for_gem.tap do |loader|
 		loader.ignore("#{__dir__}/ruby_lsp")
 		loader.ignore("#{__dir__}/phlex/compiler/scope.rb")
