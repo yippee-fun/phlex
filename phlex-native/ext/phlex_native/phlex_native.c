@@ -304,6 +304,93 @@ static int put_nested(output_t *o, VALUE hash, long prefix_length) {
 	return !nested.fallback;
 }
 
+typedef struct {
+	output_t *output;
+	long start;
+	int fallback;
+} styles_t;
+
+// One `property: value;` from generate_styles with a Hash. Ruby checks the
+// key before it skips a nil value, so the key is checked first here too.
+static int style_each(VALUE k, VALUE v, VALUE arg) {
+	styles_t *styles = (styles_t *)arg;
+	output_t *o = styles->output;
+
+	VALUE property;
+	int dasherize;
+	if (SYMBOL_P(k)) {
+		property = rb_sym2str(k);
+		dasherize = 1;
+	} else if (plain_string_p(k)) {
+		property = k;
+		dasherize = 0;
+	} else {
+		goto fallback;
+	}
+	if (!compatible_string(property)) goto fallback;
+
+	if (!RTEST(v)) return ST_CONTINUE;
+
+	if (o->length > styles->start) put_char(o, ' ');
+	put_value(o, RSTRING_PTR(property), RSTRING_LEN(property), dasherize);
+	RB_GC_GUARD(property);
+	PUT_LITERAL(o, ": ");
+	if (!put_scalar(o, v)) goto fallback;
+	put_char(o, ';');
+	return ST_CONTINUE;
+
+fallback:
+	styles->fallback = 1;
+	return ST_STOP;
+}
+
+// generate_styles with a Hash, written from `start`.
+static int put_style_hash(output_t *o, VALUE hash, long start) {
+	styles_t styles = { o, start, 0 };
+	rb_hash_foreach(hash, style_each, (VALUE)&styles);
+	return !styles.fallback;
+}
+
+// A String or safe value from a style Array, with `;` added unless it ends with one.
+static void put_declaration(output_t *o, VALUE declaration, long start) {
+	const char *p = RSTRING_PTR(declaration);
+	long n = RSTRING_LEN(declaration);
+	int terminated = n > 0 && p[n - 1] == ';';
+
+	if (o->length > start) put_char(o, ' ');
+	put_value(o, p, n, 0);
+	RB_GC_GUARD(declaration);
+	if (!terminated) put_char(o, ';');
+}
+
+// generate_styles with an Array, written from `start`. Like Array#each, the
+// length is read on every iteration.
+static int put_style_array(output_t *o, VALUE declarations, long start) {
+	for (long i = 0; i < RARRAY_LEN(declarations); i++) {
+		VALUE declaration = RARRAY_AREF(declarations, i);
+		if (!RTEST(declaration)) continue;
+
+		if (plain_string_p(declaration)) {
+			if (!compatible_string(declaration)) return 0;
+			if (RSTRING_LEN(declaration) == 0) continue;
+			put_declaration(o, declaration, start);
+		} else if (safe_value_p(declaration)) {
+			VALUE value = rb_funcall(declaration, id_to_s, 0);
+			if (!plain_string_p(value) || !compatible_string(value)) return 0;
+			put_declaration(o, value, start);
+		} else if (plain_hash_p(declaration)) {
+			long mark = o->length;
+			if (mark > start) put_char(o, ' ');
+			long inner = o->length;
+			if (!put_style_hash(o, declaration, inner)) return 0;
+			if (o->length == inner) o->length = mark;
+		} else {
+			return 0;
+		}
+	}
+	return 1;
+}
+
 static int ref_attribute_p(const char *p, long n) {
 	switch (n) {
 		case 3: return memcmp(p, "src", 3) == 0;
@@ -343,7 +430,22 @@ static int put_attribute(output_t *o, VALUE k, const char *name, long name_lengt
 		return 1;
 	}
 
-	if (plain_hash_p(v)) {
+	int hash = plain_hash_p(v);
+
+	if (k == sym_style && !reference && (hash || plain_array_p(v))) {
+		long mark = o->length;
+		put_char(o, ' ');
+		put(o, name, name_length);
+		PUT_LITERAL(o, "=\"");
+		long start = o->length;
+		if (!(hash ? put_style_hash(o, v, start) : put_style_array(o, v, start))) return 0;
+		// generate_styles returns nil when there are no declarations.
+		if (o->length == start) o->length = mark;
+		else put_char(o, '"');
+		return 1;
+	}
+
+	if (hash) {
 		if (k == sym_style || reference || name_length + 1 > PREFIX_CAPACITY) return 0;
 		memcpy(o->prefix, name, name_length);
 		o->prefix[name_length] = '-';

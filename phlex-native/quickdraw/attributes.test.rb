@@ -125,6 +125,12 @@ class NativeAttributesTest < Quickdraw::Test
 		Phlex::SGML::SafeValue.new("javascript:alert(1)"),
 		Phlex::SGML::SafeValue.new("on_click_\xff"),
 		Phlex::SGML::SafeValue.new(1),
+		Phlex::SGML::SafeValue.new(""),
+		Phlex::SGML::SafeValue.new("color: red;"),
+		"color: red",
+		"color: red;",
+		";",
+		:z_index,
 		safe_object_string,
 		StringSubclass.new("sub\"class"),
 		HashSubclass[a: 1],
@@ -181,6 +187,36 @@ class NativeAttributesTest < Quickdraw::Test
 
 	test "generate_attributes stays in Ruby so a fallback doesn't run the C twice" do
 		assert_equal Attributes.method(:generate_attributes).owner, Attributes
+	end
+
+	test "serialises styles without falling back" do
+		attributes = { style: { color: "red", z_index: 1, font_family: :sans_serif }, data: { style: ["a", "b"] } }
+
+		assert_equal(
+			Phlex::SERIALIZED_ATTRIBUTES.fetch(attributes) { raise },
+			Attributes.generate_attributes(attributes),
+		)
+
+		assert_equal(
+			Phlex::SERIALIZED_ATTRIBUTES.fetch({ style: ["color: red", "", nil, { margin: 0 }] }) { raise },
+			%( style="color: red; margin: 0;"),
+		)
+	end
+
+	test "matches the Ruby implementation on styles" do
+		mismatches = []
+
+		KEYS.each do |k|
+			SCALARS.each do |v|
+				[{ k => v }, [v], [v, "a", { k => v }, nil, {}]].each do |styles|
+					mismatches << NativeAttributesTest.compare_fetch({ style: styles })
+					mismatches << NativeAttributesTest.compare(:attribute, :style, "style", styles)
+				end
+			end
+		end
+
+		mismatches.compact!
+		assert_equal mismatches.first(3), []
 	end
 
 	test "matches the Ruby implementation on random attributes" do
