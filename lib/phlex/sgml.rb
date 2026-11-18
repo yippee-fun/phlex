@@ -12,14 +12,11 @@ class Phlex::SGML
 
 		# Create a new instance of the component.
 		# @note The block will not be delegated to {#initialize}. Instead, it will be sent to {#view_template} when rendering.
-		def new(*a, **k, &block)
-			if block
-				object = super(*a, **k, &nil)
-				object.instance_exec { @_content_block = block }
-				object
-			else
-				super
-			end
+		def new(*, **, &block)
+			object = allocate
+			object.__send__(:initialize, *, **)
+			object.instance_variable_set(:@_content_block, block) if block
+			object
 		end
 	end
 
