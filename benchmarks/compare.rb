@@ -40,8 +40,9 @@ options[:modes].each do |yjit|
 		options[:rounds].times do |round|
 			runs.each_key do |lib|
 				path = File.join(directory, "#{round}-#{runs.keys.index(lib)}.json")
-				command = [RbConfig.ruby, runner, "--json", path, "--time", options[:time].to_s]
+				command = [RbConfig.ruby]
 				command << "--yjit" if yjit
+				command.push(runner, "--json", path, "--time", options[:time].to_s)
 				command.push("--only", options[:only]) if options[:only]
 				system({ "PHLEX_LIB" => lib }, *command, exception: true)
 				runs[lib] << JSON.parse(File.read(path)).fetch("results")
