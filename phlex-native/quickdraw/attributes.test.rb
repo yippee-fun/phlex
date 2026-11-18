@@ -158,7 +158,8 @@ class NativeAttributesTest < Quickdraw::Test
 		result = yield
 		[:returned, result.b, result.encoding, result.frozen?]
 	rescue Exception => e
-		[:raised, e.class, e.message]
+		# Messages can include an object's address, which changes when the GC compacts.
+		[:raised, e.class, e.message.b.gsub(/0x\h+/, "0x")]
 	end
 
 	def self.compare(method_name, *args)
@@ -247,6 +248,43 @@ class NativeAttributesTest < Quickdraw::Test
 
 		mismatches.compact!
 		assert_equal mismatches.first(3), []
+	end
+
+	# Slow, so CI runs it in its own job, with the extension built under sanitizers.
+	# GC settings are process-wide, so it runs in a fork to keep other tests out of it.
+	if ENV["PHLEX_NATIVE_STRESS"] == "true"
+		test "matches the Ruby implementation while the GC compacts and runs constantly" do
+			reader, writer = IO.pipe
+
+			pid = fork do
+				reader.close
+				rng = Random.new(0)
+				mismatches = []
+				GC.auto_compact = true
+
+				5_000.times do |i|
+					GC.compact if i % 100 == 0
+					attributes = NativeAttributesTest.random_hash(rng)
+					mismatches << NativeAttributesTest.compare_fetch(attributes)
+					mismatches << NativeAttributesTest.compare(:attribute, :style, "style", attributes)
+				end
+
+				GC.stress = true
+				30.times { mismatches << NativeAttributesTest.compare_fetch(NativeAttributesTest.random_hash(rng)) }
+				GC.stress = false
+
+				writer.write(Marshal.dump(mismatches.compact.first(3).map(&:inspect)))
+				writer.close
+				exit!(0)
+			end
+
+			writer.close
+			mismatches = Marshal.load(reader.read)
+			Process.wait(pid)
+
+			assert_equal $?.exitstatus, 0
+			assert_equal mismatches, []
+		end
 	end
 
 	test "matches the Ruby implementation on random attributes" do

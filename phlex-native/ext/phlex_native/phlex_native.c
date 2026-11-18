@@ -8,6 +8,7 @@
 
 #include <ruby.h>
 #include <ruby/encoding.h>
+#include <ruby/ractor.h>
 #include <limits.h>
 #include <string.h>
 
@@ -20,16 +21,7 @@ static VALUE sym_style, sym_id, sym_underscore;
 static VALUE empty_string;
 static int utf8_index, usascii_index;
 
-// Resolved on first use, since Phlex::SGML is autoloaded after this extension.
-static VALUE sgml_constant(VALUE *slot, ID name) {
-	if (NIL_P(*slot)) {
-		VALUE sgml = rb_const_get(rb_const_get(rb_cObject, id_Phlex), id_SGML);
-		*slot = rb_const_get(sgml, name);
-		rb_gc_register_mark_object(*slot);
-	}
-	return *slot;
-}
-
+// Set once by native_prepended, before any of them are read.
 static VALUE attributes_module = Qnil, safe_object_module = Qnil, safe_value_class = Qnil;
 
 typedef struct {
@@ -48,9 +40,12 @@ typedef struct {
 	int fallback;
 } nested_t;
 
+// The string is hidden from ObjectSpace until it's finished, so nothing can
+// change it behind the cached pointer while unsafe_reference? runs.
 static void output_init(output_t *o, VALUE receiver) {
 	o->receiver = receiver;
 	o->string = rb_str_buf_new(128);
+	rb_obj_hide(o->string);
 	rb_enc_associate_index(o->string, utf8_index);
 	o->ptr = RSTRING_PTR(o->string);
 	o->length = 0;
@@ -61,7 +56,7 @@ static void output_init(output_t *o, VALUE receiver) {
 static VALUE output_finish(output_t *o) {
 	rb_str_set_len(o->string, o->length);
 	ENC_CODERANGE_CLEAR(o->string);
-	return o->string;
+	return rb_obj_reveal(o->string, rb_cString);
 }
 
 // Ruby raises the same error when a string would outgrow a long, which is 32 bits on Windows.
@@ -190,7 +185,7 @@ static int put_number(output_t *o, VALUE v) {
 }
 
 static inline int safe_value_p(VALUE v) {
-	return RB_TYPE_P(v, T_OBJECT) && RBASIC_CLASS(v) == sgml_constant(&safe_value_class, id_SafeValue);
+	return RB_TYPE_P(v, T_OBJECT) && RBASIC_CLASS(v) == safe_value_class;
 }
 
 static int put_scalar(output_t *o, VALUE v) {
@@ -472,7 +467,7 @@ static int put_attribute(output_t *o, VALUE k, const char *name, long name_lengt
 
 	if (reference && unsafe_reference_p(o, start)) {
 		// Safe objects are never dropped, and anything can be made one.
-		if (RTEST(rb_obj_is_kind_of(v, sgml_constant(&safe_object_module, id_SafeObject)))) return 0;
+		if (RTEST(rb_obj_is_kind_of(v, safe_object_module))) return 0;
 		o->length = mark;
 		return 1;
 	}
@@ -544,8 +539,28 @@ static VALUE generate(VALUE receiver, VALUE attributes) {
 // Phlex::Native::SerializedAttributes.fetch(attributes) { generate in Ruby }
 // generate_attributes itself isn't prepended, so a fallback doesn't run the C twice.
 static VALUE native_fetch(VALUE self, VALUE attributes) {
-	VALUE result = generate(sgml_constant(&attributes_module, id_Attributes), attributes);
+	// The block loads Phlex::SGML::Attributes, which prepends Phlex::Native::Attributes.
+	if (NIL_P(attributes_module)) return rb_yield_values(0);
+
+	VALUE result = generate(attributes_module, attributes);
 	return result == Qundef ? rb_yield_values(0) : result;
+}
+
+// Phlex::Native::Attributes.prepended(base), called once when attributes.rb
+// loads, so the constants are set before anything reads them and no Ractor
+// ever writes them.
+static VALUE native_prepended(VALUE self, VALUE base) {
+	VALUE sgml = rb_const_get(rb_const_get(rb_cObject, id_Phlex), id_SGML);
+	safe_object_module = rb_const_get(sgml, id_SafeObject);
+	safe_value_class = rb_const_get(sgml, id_SafeValue);
+	rb_gc_register_mark_object(safe_object_module);
+	rb_gc_register_mark_object(safe_value_class);
+
+	VALUE attributes = rb_const_get(sgml, id_Attributes);
+	rb_gc_register_mark_object(attributes);
+	attributes_module = attributes;
+
+	return rb_call_super(1, &base);
 }
 
 static VALUE serialize_validated(VALUE self, int argc, VALUE *argv, int reference) {
@@ -593,7 +608,7 @@ void Init_phlex_native(void) {
 	utf8_index = rb_utf8_encindex();
 	usascii_index = rb_usascii_encindex();
 
-	empty_string = rb_obj_freeze(rb_utf8_str_new("", 0));
+	empty_string = rb_ractor_make_shareable(rb_utf8_str_new("", 0));
 	rb_gc_register_mark_object(empty_string);
 
 	VALUE mNative = rb_define_module_under(rb_define_module("Phlex"), "Native");
@@ -602,6 +617,7 @@ void Init_phlex_native(void) {
 	VALUE mNativeAttributes = rb_define_module_under(mNative, "Attributes");
 	rb_define_method(mNativeAttributes, "attribute", native_attribute, -1);
 	rb_define_method(mNativeAttributes, "reference_attribute", native_reference_attribute, -1);
+	rb_define_singleton_method(mNativeAttributes, "prepended", native_prepended, 1);
 
 	VALUE mSerializedAttributes = rb_define_module_under(mNative, "SerializedAttributes");
 	rb_define_singleton_method(mSerializedAttributes, "fetch", native_fetch, 1);

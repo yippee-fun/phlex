@@ -35,7 +35,7 @@ module Phlex
 	@attribute_cache_max_bytesize = ATTRIBUTE_CACHE.max_bytesize
 
 	begin
-		require "phlex_native/phlex_native"
+		require "phlex_native"
 	rescue LoadError
 		nil
 	end

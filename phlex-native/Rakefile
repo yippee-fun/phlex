@@ -1,20 +1,58 @@
 # frozen_string_literal: true
 
-require "rbconfig"
+require "rake/extensiontask"
+require "rubygems/package_task"
 
-task :compile do
-	build = File.expand_path("tmp", __dir__)
-	mkdir_p build
-	Dir.chdir(build) do
-		ruby File.expand_path("ext/phlex_native/extconf.rb", __dir__)
-		sh "make"
-	end
-	mkdir_p "lib/phlex_native"
-	cp File.join(build, "phlex_native.#{RbConfig::CONFIG['DLEXT']}"), "lib/phlex_native/"
+SPEC = Gem::Specification.load(File.expand_path("phlex-native.gemspec", __dir__))
+
+PLATFORMS = %w[
+	aarch64-linux-gnu
+	aarch64-linux-musl
+	arm64-darwin
+	x64-mingw-ucrt
+	x86_64-darwin
+	x86_64-linux-gnu
+	x86_64-linux-musl
+].freeze
+
+MINIMUM_RUBY = Gem::Version.new("3.2")
+
+# The build containers set RUBY_CC_VERSION to every Ruby they can cross-compile for.
+if (versions = ENV["RUBY_CC_VERSION"])
+	ENV["RUBY_CC_VERSION"] = versions.split(":").select { |version| Gem::Version.new(version) >= MINIMUM_RUBY }.join(":")
 end
 
-task :clean do
-	rm_rf ["tmp", "lib/phlex_native"]
+Gem::PackageTask.new(SPEC).define
+
+Rake::ExtensionTask.new("phlex_native", SPEC) do |ext|
+	ext.lib_dir = "lib/phlex_native"
+	ext.cross_compile = true
+	ext.cross_platform = PLATFORMS
+
+	ext.cross_compiling do |spec|
+		newest = ENV.fetch("RUBY_CC_VERSION").split(":").map { |version| Gem::Version.new(version).segments.first(2) }.max
+		spec.required_ruby_version = [">= #{MINIMUM_RUBY}", "< #{newest[0]}.#{newest[1] + 1}.dev"]
+	end
+end
+
+namespace :gem do
+	desc "Build the precompiled gems for every platform in Docker"
+	multitask native: PLATFORMS.map { |platform| "gem:native:#{platform}" }
+
+	PLATFORMS.each do |platform|
+		desc "Build the precompiled gem for #{platform} in Docker"
+		task "native:#{platform}" do
+			require "rake_compiler_dock"
+
+			# The gemspec reads Phlex's version from the parent directory.
+			RakeCompilerDock.sh(
+				"rake native:#{platform} pkg/#{SPEC.full_name}-#{Gem::Platform.new(platform)}.gem",
+				platform:,
+				mountdir: File.expand_path("..", __dir__),
+				workdir: __dir__,
+			)
+		end
+	end
 end
 
 task default: :compile
