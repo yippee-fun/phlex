@@ -72,6 +72,11 @@ module Phlex::SGML::Elements
 		@__registered_void_elements__ ||= {}
 	end
 
+	# Unlike `__registered_elements__`, this doesn't write to the class, so it works when the class is frozen.
+	def __element_registered__?(name)
+		!!@__registered_elements__&.key?(name)
+	end
+
 	def register_element(method_name, tag: method_name.name.tr("_", "-"))
 		# Aliasing the method to itself suppresses Ruby's method redefinition warning.
 		alias_method(method_name, method_name) if method_defined?(method_name)
