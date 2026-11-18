@@ -79,7 +79,7 @@ module Phlex::SGML::Elements
 		class_eval(<<~RUBY, __FILE__, __LINE__ + 1)
 			# frozen_string_literal: true
 
-			def #{method_name}(**attributes)
+			def #{method_name}(attributes = nil)
 				state = @_state
 				buffer = state.buffer
 				block_given = block_given?
@@ -89,7 +89,11 @@ module Phlex::SGML::Elements
 					return nil
 				end
 
-				if attributes.length > 0 # with attributes
+				if attributes && !(Hash === attributes)
+					raise ::Phlex::ArgumentError.new("Expected attributes to be keyword arguments or a Hash.")
+				end
+
+				if attributes && attributes.length > 0 # with attributes
 					if block_given # with content block
 						buffer << "<#{tag}"
 						begin
@@ -180,14 +184,18 @@ module Phlex::SGML::Elements
 		class_eval(<<~RUBY, __FILE__, __LINE__ + 1)
 			# frozen_string_literal: true
 
-			def #{method_name}(**attributes)
+			def #{method_name}(attributes = nil)
 				state = @_state
 
 				return unless state.should_render?
 
 				buffer = state.buffer
 
-				if attributes.length > 0 # with attributes
+				if attributes && !(Hash === attributes)
+					raise ::Phlex::ArgumentError.new("Expected attributes to be keyword arguments or a Hash.")
+				end
+
+				if attributes && attributes.length > 0 # with attributes
 					buffer << "<#{tag}"
 					begin
 						#{Phlex::SGML::Elements.normalizer_call(method_name)}
