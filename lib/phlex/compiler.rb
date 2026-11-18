@@ -392,16 +392,31 @@ module Phlex::Compiler
 		affected_by(target, names).each { |component| recompile(component) }
 	end
 
-	# Only the main Ractor can compile again, and the methods bound above
-	# can't be shared before Ruby 4.0, so another Ractor checks an override
-	# on a single instance with plain calls and refuses anything else.
+	# Only the main Ractor can compile again, so another Ractor refuses a
+	# change to what was inlined.
 	def self.changed_on_another_ractor(target, names)
-		unless target.singleton_class?
-			raise Error, "#{names.join(', ')} can't be redefined on #{target} outside the main Ractor once something is compiled."
-		end
+		affected = related_on_another_ractor(target).select { |klass| inlines_any?(klass, names) }
+		return if affected.empty?
 
-		affected = target.ancestors.select { |klass| inlines_any?(klass, names) }
-		raise single_instance_error(names, affected) unless affected.empty?
+		raise single_instance_error(names, affected) if target.singleton_class?
+
+		raise Error, "#{names.join(', ')} can't be redefined on #{target} outside the main Ractor: #{affected.join(', ')} compiled it inline."
+	end
+
+	# What `related` finds, with plain calls: the methods bound above can't be
+	# shared between Ractors before Ruby 4.0.
+	def self.related_on_another_ractor(target)
+		if target.singleton_class?
+			target.ancestors
+		elsif Class === target
+			target.ancestors + descendants_on_another_ractor(target)
+		else
+			descendants_on_another_ractor(Phlex::SGML).select { |klass| klass.ancestors.include?(target) }.flat_map(&:ancestors).uniq
+		end
+	end
+
+	def self.descendants_on_another_ractor(klass)
+		klass.subclasses.flat_map { |subclass| [subclass, *descendants_on_another_ractor(subclass)] }
 	end
 
 	def self.single_instance_error(names, affected)
@@ -436,7 +451,7 @@ module Phlex::Compiler
 	# A compiled component inlines elements and helpers its modules define, so
 	# those modules, and any mixed in later, report their changes too. That
 	# includes modules mixed into Phlex::SGML, but not Object's.
-	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Object }, strict: true)
+	def self.watch_mixins(component, modules = MODULE_ANCESTORS.bind_call(component).take_while { |ancestor| !Object.equal?(ancestor) }, strict: true)
 		unwatched_mixins(component, modules, strict:).filter_map do |mod|
 			MODULE_PREPEND.bind_call(KERNEL_SINGLETON_CLASS.bind_call(mod), mixin_hooks_for(mod))
 			mod
@@ -499,10 +514,15 @@ module Phlex::Compiler
 	# module added in place of those given that can't be watched is already
 	# mixed in, so what it could affect is decompiled before it's refused.
 	# Whatever was added is handled even when `include` or `prepend` raises,
-	# say from an `included` callback. Only the main Ractor can watch modules.
+	# say from an `included` callback. Another Ractor can't watch modules, so it
+	# refuses a mixin that could change what was inlined.
 	def self.mix_in(target, modules)
 		unless Phlex.__main_ractor__?
-			raise Error, "#{target} can't have modules mixed in outside the main Ractor once something is compiled."
+			if (affected = related_on_another_ractor(target).select { |klass| inlines?(klass) }).any?
+				raise Error, "#{target} can't have modules mixed in outside the main Ractor: #{affected.join(', ')} compiled code inline."
+			end
+
+			return yield
 		end
 
 		if affects_inlined_code?(target)

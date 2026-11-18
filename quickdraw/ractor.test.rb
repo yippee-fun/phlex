@@ -175,10 +175,13 @@ class RactorTest < Quickdraw::Test
 			end
 		end
 
-		test "mixing into a watched module or a component in another Ractor is refused" do
+		test "mixing into what could change inlined code in another Ractor is refused" do
 			with_component_file(<<~RUBY) do
 				# frozen_string_literal: true
 				module RactorWatchedHelpers
+				end
+
+				module RactorMixedIn
 				end
 
 				class RactorWatching < Phlex::HTML
@@ -186,24 +189,57 @@ class RactorTest < Quickdraw::Test
 
 					def view_template = div { "x" }
 				end
+
+				class RactorUnrelated < Phlex::HTML
+					def view_template = plain("unrelated")
+				end
 			RUBY
 				Phlex::Compiler.compile(RactorWatching)
 
 				refusals = in_ractor do
 					Thread.current.report_on_exception = false
 
-					[RactorWatchedHelpers, RactorWatching].map do |target|
-						target.include(Module.new)
-						nil
+					[RactorWatchedHelpers, RactorWatching, RactorUnrelated].map do |target|
+						target.include(RactorMixedIn)
+						target.include?(RactorMixedIn)
 					rescue Phlex::Compiler::Error => e
 						e.message
 					end
 				end
 
 				assert_equal refusals, [
-					"RactorWatchedHelpers can't have modules mixed in outside the main Ractor once something is compiled.",
-					"RactorWatching can't have modules mixed in outside the main Ractor once something is compiled.",
+					"RactorWatchedHelpers can't have modules mixed in outside the main Ractor: RactorWatching compiled code inline.",
+					"RactorWatching can't have modules mixed in outside the main Ractor: RactorWatching compiled code inline.",
+					true,
 				]
+			end
+		end
+
+		test "redefining a method nothing inlined in another Ractor is left alone" do
+			with_component_file(<<~RUBY) do
+				# frozen_string_literal: true
+				class RactorInlining < Phlex::HTML
+					def view_template = div { "x" }
+				end
+
+				class RactorRedefined < Phlex::HTML
+					def view_template = plain("before")
+				end
+			RUBY
+				Phlex::Compiler.compile(RactorInlining)
+
+				results = in_ractor do
+					Thread.current.report_on_exception = false
+
+					[RactorRedefined, RactorInlining].map do |target|
+						target.define_method(:div) { |**| plain("redefined") }
+						:redefined
+					rescue Phlex::Compiler::Error => e
+						e.message
+					end
+				end
+
+				assert_equal results, [:redefined, "div can't be redefined on RactorInlining outside the main Ractor: RactorInlining compiled it inline."]
 			end
 		end
 

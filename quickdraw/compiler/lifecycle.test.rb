@@ -1052,6 +1052,28 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a module that claims to equal Object is still watched" do
+		with_component_files(
+			"claims_object.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleClaimsObject
+					def self.!=(other) = false
+				end
+
+				class LifecycleClaimsObjectComponent < Phlex::HTML
+					include LifecycleClaimsObject
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleClaimsObjectComponent)
+
+			LifecycleClaimsObject.define_method(:div) { |**| plain("module div") }
+			assert_equal LifecycleClaimsObjectComponent.new.call, "module div"
+		end
+	end
+
 	test "a module whose singleton class claims to be watched is still watched" do
 		with_component_files(
 			"claims_hooks.rb" => <<~RUBY
