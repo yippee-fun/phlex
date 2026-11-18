@@ -158,9 +158,10 @@ module Phlex::Compiler
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
-		parse_result = Prism.parse(File.read(path), filepath: path)
+		parse_result = Prism.parse_lex(File.read(path), filepath: path)
+		program, _tokens = parse_result.value
 		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
-		results = file_compiler.compile(convert(parse_result)).reject { |result| result.compiled_snippets.empty? }
+		results = file_compiler.compile(Refract::Converter.new.visit(program)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
 		program = Refract::StatementsNode.new(
@@ -360,11 +361,7 @@ module Phlex::Compiler
 	end
 
 	def self.parse(source, path)
-		convert(Prism.parse(source, filepath: path))
-	end
-
-	def self.convert(parse_result)
-		Refract::Converter.new.visit(parse_result.value)
+		Refract::Converter.new.visit(Prism.parse(source, filepath: path).value)
 	end
 
 	# Replacing a method is the whole point, so the warning for it is noise.
@@ -382,13 +379,16 @@ module Phlex::Compiler
 	# share that line, which is the only place Ruby reads an encoding from.
 	def self.magic_comments(parse_result)
 		comments = ["coding: #{parse_result.encoding.name}"]
-		comments << "frozen_string_literal: true" if frozen_string_literal?(parse_result)
+		frozen_string_literal = frozen_string_literal(parse_result)
+		comments << "frozen_string_literal: #{frozen_string_literal}" unless frozen_string_literal.nil?
 		"# -*- #{comments.join('; ')} -*-\n"
 	end
 
 	# Ruby only reads a frozen string literal comment from the comment block
-	# before the first token, with the last valid one there winning.
-	def self.frozen_string_literal?(parse_result)
+	# before the first token, with the last valid one there winning. An
+	# explicit false is forwarded too, since it isn't the same as no comment:
+	# it overrides `--enable-frozen-string-literal` and unchills the strings.
+	def self.frozen_string_literal(parse_result)
 		first_token = first_token_offset(parse_result)
 
 		comment = parse_result.magic_comments.reverse_each.find do |magic_comment|
@@ -397,23 +397,21 @@ module Phlex::Compiler
 				(magic_comment.value.casecmp?("true") || magic_comment.value.casecmp?("false"))
 		end
 
-		comment&.value&.casecmp?("true") || false
+		comment&.value&.casecmp?("true")
 	end
 
-	# The byte offset of the first token, found by skipping the byte order
-	# mark, whitespace and comments. The AST can't tell us this because it
-	# leaves out tokens such as a lone semicolon.
+	# The AST can't tell us where the first token is because it leaves out
+	# tokens such as a lone semicolon, so the lexer's tokens are read instead.
 	def self.first_token_offset(parse_result)
-		source = parse_result.source.source.b
-		comments = parse_result.comments.to_h { |comment| [comment.location.start_offset, comment.location.end_offset] }
-		offset = source.start_with?("\xEF\xBB\xBF".b) ? 3 : 0
+		_program, tokens = parse_result.value
 
-		loop do
-			offset = source.index(/[^ \t\r\n\f\v]/n, offset) || source.bytesize
-			break offset unless (comment_end = comments[offset])
+		tokens.each do |token, _state|
+			next if token.type in :COMMENT | :NEWLINE | :IGNORED_NEWLINE | :EMBDOC_BEGIN | :EMBDOC_LINE | :EMBDOC_END
 
-			offset = comment_end
+			return token.location.start_offset
 		end
+
+		raise Phlex::Compiler::Error, "Prism lexed #{parse_result.source.source.bytesize} bytes without an end of file token"
 	end
 
 	def self.wrap_in_namespace(namespace, body)

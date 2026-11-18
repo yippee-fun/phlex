@@ -141,4 +141,64 @@ class CompilerMagicCommentsTest < Quickdraw::Test
 
 		assert_equal results, ["<div>x</div>UTF-8", "<div>x</div>UTF-8"]
 	end
+
+	test "an encoding comment after a byte order mark is forwarded" do
+		results = render_before_and_after_compiling("MagicCommentsByteOrderMark", <<~RUBY)
+			\xEF\xBB\xBF# encoding: ascii-8bit
+			# frozen_string_literal: true
+			class MagicCommentsByteOrderMark < Phlex::HTML
+				def view_template
+					div { "x" }
+					plain "\#{__ENCODING__} \#{'abc'.frozen?}"
+				end
+			end
+		RUBY
+
+		assert_equal results, ["<div>x</div>ASCII-8BIT true", "<div>x</div>ASCII-8BIT true"]
+	end
+
+	test "a frozen string literal comment after a line continuation is forwarded" do
+		results = render_before_and_after_compiling("MagicCommentsLineContinuation", <<~RUBY)
+			\\
+			# frozen_string_literal: true
+			class MagicCommentsLineContinuation < Phlex::HTML
+				def view_template
+					div { "x" }
+					plain "abc".frozen?.to_s
+				end
+			end
+		RUBY
+
+		assert_equal results, ["<div>x</div>true", "<div>x</div>true"]
+	end
+
+	test "an explicit false overrides --enable-frozen-string-literal after compiling too" do
+		Dir.mktmpdir do |dir|
+			component_path = File.join(dir, "component.rb")
+			script_path = File.join(dir, "script.rb")
+
+			File.write(component_path, <<~RUBY)
+				# frozen_string_literal: false
+				class MagicCommentsExplicitFalse < Phlex::HTML
+					def view_template
+						div { "x" }
+						plain "abc".frozen?.to_s
+					end
+				end
+			RUBY
+
+			File.write(script_path, <<~RUBY)
+				require "phlex"
+				require "phlex/compiler"
+				load #{component_path.inspect}
+				puts MagicCommentsExplicitFalse.new.call
+				Phlex::Compiler.compile(MagicCommentsExplicitFalse)
+				puts MagicCommentsExplicitFalse.new.call
+			RUBY
+
+			output = IO.popen([RbConfig.ruby, "--enable-frozen-string-literal", "-I", File.expand_path("../../lib", __dir__), script_path], err: [:child, :out], &:read)
+
+			assert_equal output, "<div>x</div>false\n<div>x</div>false\n"
+		end
+	end
 end
