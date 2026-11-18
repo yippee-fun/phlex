@@ -292,10 +292,13 @@ module Phlex::SGML::Attributes
 	# references, whitespace or case. The full check has to decode and normalise
 	# the value, which allocates several strings, so it's skipped when the value
 	# can't possibly normalise to `javascript:`. Character references are the only
-	# way to introduce a `j` or a `:` that isn't already present in the value.
+	# way to introduce a `j` or a `:` that isn't already present in the value,
+	# and without an `&` there's nothing to decode.
 	def unsafe_reference?(value)
-		if value.include?("&") || (value.include?(":") && (value.include?("j") || value.include?("J")))
+		if value.include?("&")
 			decode_html_character_references(value).downcase.delete("^a-z:").start_with?("javascript:")
+		elsif value.include?(":") && (value.include?("j") || value.include?("J"))
+			value.downcase.delete("^a-z:").start_with?("javascript:")
 		else
 			false
 		end

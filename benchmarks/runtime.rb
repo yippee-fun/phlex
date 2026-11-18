@@ -149,6 +149,16 @@ module RuntimeBenchmark
 		end
 	end
 
+	class UniqueURLs < Phlex::HTML
+		def view_template
+			n = (COUNTER[0] += 1)
+
+			ITEMS.each do |item|
+				a(href: "https://example.com/journal/#{n}/#{item.id}") { item.title }
+			end
+		end
+	end
+
 	class ComplexAttributes < Phlex::HTML
 		def initialize(unique: false)
 			@unique = unique
@@ -312,6 +322,7 @@ module RuntimeBenchmark
 		"attributes_static" => -> { StaticAttributes.new.call },
 		"attributes_repeating" => -> { RepeatingAttributes.new.call },
 		"attributes_unique" => -> { UniqueAttributes.new.call },
+		"attributes_unique_urls" => -> { UniqueURLs.new.call },
 		"attributes_complex" => -> { ComplexAttributes.new.call },
 		"attributes_complex_unique" => -> { ComplexAttributes.new(unique: true).call },
 		"capture" => -> { Capture.new.call },
