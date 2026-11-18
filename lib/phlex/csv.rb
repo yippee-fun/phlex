@@ -8,6 +8,8 @@ class Phlex::CSV
 	end.freeze
 
 	UNDEFINED = Object.new.freeze
+	NO_VALUE = Object.new.freeze
+	private_constant :NO_VALUE
 
 	def initialize(collection)
 		@collection = collection
@@ -54,30 +56,27 @@ class Phlex::CSV
 		end
 
 		row_appender = -> {
+			# Headers are at even indexes and values at odd indexes.
 			row = row_buffer
-			number_of_columns = row.length
+			row_length = row.length
+			number_of_columns = row_length / 2
 
 			if first_row
 				first_row = false
 				expected_number_of_columns = number_of_columns
 
 				i = 0
-				first_col = true
 
-				while i < number_of_columns
-					header, = row[i]
-					headers[i] = header
+				while i < row_length
+					header = row[i]
+					headers << header
 
 					if render_headers
-						if first_col
-							first_col = false
-						else
-							buffer << delimiter
-						end
-
-						__escape__(buffer, header, escape_csv_injection:, strip_whitespace:, escape_regex:)
+						buffer << delimiter if i > 0
+						__escape__(buffer, header, escape_csv_injection, strip_whitespace, escape_regex)
 					end
-					i += 1
+
+					i += 2
 				end
 
 				buffer << "\n" if render_headers
@@ -88,33 +87,27 @@ class Phlex::CSV
 				end
 
 				i = 0
+				column_index = 0
 
-				while i < number_of_columns
-					header, = row[i]
+				while i < row_length
+					header = row[i]
 
-					unless headers[i] == header
+					unless headers[column_index] == header
 						row_buffer.clear
-						raise Phlex::RuntimeError.new("Header mismatch at index #{i}: expected #{headers[i]}, got #{header}.")
+						raise Phlex::RuntimeError.new("Header mismatch at index #{column_index}: expected #{headers[column_index]}, got #{header}.")
 					end
 
-					i += 1
+					i += 2
+					column_index += 1
 				end
 			end
 
-			i = 0
-			first_col = true
+			i = 1
 
-			while i < number_of_columns
-				_, value = row[i]
-
-				if first_col
-					first_col = false
-				else
-					buffer << delimiter
-				end
-
-				__escape__(buffer, value, escape_csv_injection:, strip_whitespace:, escape_regex:)
-				i += 1
+			while i < row_length
+				buffer << delimiter if i > 1
+				__escape__(buffer, row[i], escape_csv_injection, strip_whitespace, escape_regex)
+				i += 2
 			end
 
 			buffer << "\n"
@@ -156,8 +149,13 @@ class Phlex::CSV
 		","
 	end
 
-	private def column(header = nil, value)
-		@_row_buffer << [header, value]
+	# An optional parameter before a required one makes Ruby allocate an Array per call.
+	private def column(header, value = NO_VALUE)
+		if NO_VALUE.equal?(value)
+			@_row_buffer.push(nil, header)
+		else
+			@_row_buffer.push(header, value)
+		end
 	end
 
 	private def each_item(&)
@@ -179,7 +177,7 @@ class Phlex::CSV
 		UNDEFINED
 	end
 
-	private def __escape__(buffer, value, escape_csv_injection:, strip_whitespace:, escape_regex:)
+	private def __escape__(buffer, value, escape_csv_injection, strip_whitespace, escape_regex)
 		value = case value
 		when String
 			value

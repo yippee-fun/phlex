@@ -58,6 +58,12 @@ module Phlex::SGML::Elements
 		attributes
 	end
 
+	# Normalizers rewrite the attributes in place, so elements that have one keep
+	# a keyword splat, which is always a fresh Hash.
+	def self.attributes_parameter(method_name)
+		ATTRIBUTE_NORMALIZERS.key?(method_name) ? "**attributes" : "attributes = nil"
+	end
+
 	# Every name registered by any class or module, so `tag` only searches a
 	# component's ancestors for a name something has registered. Replaced rather
 	# than mutated, so it stays shareable between Ractors.
@@ -112,7 +118,7 @@ module Phlex::SGML::Elements
 		class_eval(<<~RUBY, __FILE__, __LINE__ + 1)
 			# frozen_string_literal: true
 
-			def #{method_name}(**attributes)
+			def #{method_name}(#{Phlex::SGML::Elements.attributes_parameter(method_name)})
 				state = @_state
 				buffer = state.buffer
 				block_given = block_given?
@@ -122,7 +128,11 @@ module Phlex::SGML::Elements
 					return nil
 				end
 
-				if attributes.length > 0 # with attributes
+				unless Hash === attributes || attributes.nil?
+					raise ::Phlex::ArgumentError.new("Expected attributes to be keyword arguments or a Hash.")
+				end
+
+				if attributes && attributes.length > 0 # with attributes
 					if block_given # with content block
 						buffer << "<#{tag}"
 						begin
@@ -223,14 +233,18 @@ module Phlex::SGML::Elements
 		class_eval(<<~RUBY, __FILE__, __LINE__ + 1)
 			# frozen_string_literal: true
 
-			def #{method_name}(**attributes)
+			def #{method_name}(#{Phlex::SGML::Elements.attributes_parameter(method_name)})
 				state = @_state
 
 				return unless state.should_render?
 
 				buffer = state.buffer
 
-				if attributes.length > 0 # with attributes
+				unless Hash === attributes || attributes.nil?
+					raise ::Phlex::ArgumentError.new("Expected attributes to be keyword arguments or a Hash.")
+				end
+
+				if attributes && attributes.length > 0 # with attributes
 					buffer << "<#{tag}"
 					begin
 						#{Phlex::SGML::Elements.normalizer_call(method_name)}

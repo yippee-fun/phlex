@@ -13,11 +13,37 @@ module Phlex::SGML::Attributes
 	UNSAFE_ATTRIBUTE_NAME_CHARS = %r([<>&"'/=\s\x00])
 	SIMPLE_ATTRIBUTE_NAME = /\A[a-z-]+\z/
 
+	# Symbol keys whose names have passed every name check, mapped to their names.
+	# Values for these only need serialising. Reference attributes are kept apart
+	# because their values also need checking. Replaced rather than mutated, so
+	# they stay shareable between Ractors.
+	@checked_names = {}.freeze
+	@checked_reference_names = {}.freeze
+	@checked_names_mutex = Mutex.new
+	CHECKED_NAMES_LIMIT = 1_000
+
 	def generate_attributes(attributes, buffer = +"")
+		checked_names = @checked_names
+		checked_reference_names = @checked_reference_names
+
 		attributes.each do |k, v|
 			next unless v
 
-			generate_attribute(k, attribute_name(k), v, buffer)
+			if (name = checked_names[k])
+				case v
+				when String
+					buffer << " " << name << '="' << (v.include?('"') ? v.gsub('"', "&quot;") : v) << '"'
+				when true
+					buffer << " " << name
+				else
+					generate_attribute(k, name, v, buffer)
+				end
+			elsif String === v && (name = checked_reference_names[k]) && !(Phlex::SGML::SafeObject === v)
+				value = v.include?('"') ? v.gsub('"', "&quot;") : v
+				buffer << " " << name << '="' << value << '"' unless unsafe_reference?(value)
+			else
+				generate_attribute(k, attribute_name(k), v, buffer)
+			end
 		end
 
 		buffer
@@ -44,17 +70,40 @@ module Phlex::SGML::Attributes
 			normalized_name = lower_name.delete("^a-z-")
 		end
 
-		unless Phlex::SGML::SafeObject === v
+		if Phlex::SGML::SafeObject === v
+			check_attribute_name(k, name, lower_name, simple_name)
+		else
 			if value != true && REF_ATTRIBUTES.include?(normalized_name) && drop_reference?(k, v, value)
 				# We just ignore these because they were likely not specified by the developer.
 				return buffer
 			end
 
 			check_unsafe_attribute_name(k, normalized_name)
+			check_attribute_name(k, name, lower_name, simple_name)
+			remember_checked_name(k, name) if simple_name && Symbol === k
 		end
 
-		check_attribute_name(k, name, lower_name, simple_name)
 		append_attribute(buffer, name, value)
+	end
+
+	private def remember_checked_name(k, name)
+		reference = REF_ATTRIBUTES.include?(name)
+		names = reference ? @checked_reference_names : @checked_names
+		return if names.key?(k) || names.size >= CHECKED_NAMES_LIMIT || !Phlex.__main_ractor__?
+
+		@checked_names_mutex.synchronize do
+			names = reference ? @checked_reference_names : @checked_names
+			next if names.key?(k) || names.size >= CHECKED_NAMES_LIMIT
+
+			names = names.merge(k => -name)
+			names = defined?(::Ractor) ? ::Ractor.make_shareable(names) : names.freeze
+
+			if reference
+				@checked_reference_names = names
+			else
+				@checked_names = names
+			end
+		end
 	end
 
 	# Raises if the name fails a check that doesn't depend on the value, so a
@@ -258,10 +307,14 @@ module Phlex::SGML::Attributes
 	# references, whitespace or case. The full check has to decode and normalise
 	# the value, which allocates several strings, so it's skipped when the value
 	# can't possibly normalise to `javascript:`. Character references are the only
-	# way to introduce a `j` or a `:` that isn't already present in the value.
+	# way to introduce a `j` or a `:` that isn't already present in the value,
+	# and without an `&` there's nothing to decode.
 	def unsafe_reference?(value)
-		if value.include?("&") || (value.include?(":") && (value.include?("j") || value.include?("J")))
+		if value.include?("&")
 			decode_html_character_references(value).downcase.delete("^a-z:").start_with?("javascript:")
+		elsif value.include?(":") && (value.include?("j") || value.include?("J"))
+			# A subclass could override `downcase`; decoding returned a plain String.
+			(String.equal?(value.class) ? value : String.new(value)).downcase.delete("^a-z:").start_with?("javascript:")
 		else
 			false
 		end
