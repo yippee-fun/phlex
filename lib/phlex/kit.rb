@@ -57,10 +57,14 @@ module Phlex::Kit
 
 				constant = nil
 
-				define_method(name) do |*args, **kwargs, &block|
-					constant = me.const_get(name)
-					render(constant.new(*args, **kwargs), &block)
-				end
+				# The constant is looked up lexically in the kit on each call, so reloading still works.
+				module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
+					# frozen_string_literal: true
+
+					def #{name}(*, **, &)
+						render(#{name}.new(*, **), &)
+					end
+				RUBY
 
 				define_singleton_method(name) do |*args, **kwargs, &block|
 					component = Thread.current[:__phlex_component__]
