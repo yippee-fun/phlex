@@ -62,6 +62,7 @@ module Phlex::SGML::Elements
 	# component's ancestors for a name something has registered. Replaced rather
 	# than mutated, so it stays shareable between Ractors.
 	@registered_names = {}.freeze
+	@registered_names_mutex = Mutex.new
 
 	def self.registered_name?(name)
 		@registered_names.key?(name)
@@ -70,8 +71,10 @@ module Phlex::SGML::Elements
 	def self.record_registered_name(name)
 		return if @registered_names.key?(name)
 
-		names = @registered_names.merge(name => true)
-		@registered_names = defined?(::Ractor) ? ::Ractor.make_shareable(names) : names.freeze
+		@registered_names_mutex.synchronize do
+			names = @registered_names.merge(name => true)
+			@registered_names = defined?(::Ractor) ? ::Ractor.make_shareable(names) : names.freeze
+		end
 	end
 
 	def self.normalizer_call(method_name)
