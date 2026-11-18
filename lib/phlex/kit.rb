@@ -58,8 +58,8 @@ module Phlex::Kit
 				reference = (name in :BEGIN | :END) ? "::Module.nesting.first.const_get(:#{name})" : name
 
 				module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
-					def #{name}(*args, **kwargs, &block)
-						render(#{reference}.new(*args, **kwargs), &block)
+					def #{name}(*, **, &)
+						render(#{reference}.new(*, **), &)
 					end
 
 					def self.#{name}(*args, **kwargs, &block)
