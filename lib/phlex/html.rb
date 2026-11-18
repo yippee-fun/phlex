@@ -60,8 +60,9 @@ class Phlex::HTML < Phlex::SGML
 		elsif (tag = VoidElements.__registered_elements__[name])
 			void = true
 		elsif (registrar = __element_registrar__(name))
-			tag = registrar.__registered_elements__[name]
-			void = registrar.__registered_void_elements__.key?(name)
+			registry = registrar.__element_registry__
+			tag = registry.elements[name]
+			void = registry.void_elements.key?(name)
 		elsif (tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z][a-z0-9-]*\z/)
 			void = false
 		else

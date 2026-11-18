@@ -18,7 +18,7 @@ class ElementRegistryTest < Quickdraw::Test
 
 		assert_equal elements.__registered_elements__, {}
 		assert_equal elements.__registered_void_elements__, {}
-		refute elements.instance_variable_defined?(:@__registered_elements__)
+		refute elements.instance_variable_defined?(:@__element_registry__)
 	end
 
 	test "registering replaces the registry rather than mutating it" do
@@ -50,6 +50,18 @@ class ElementRegistryTest < Quickdraw::Test
 
 		assert_equal elements.__registered_elements__, { foo_bar: "foo-bar" }
 		assert_equal elements.__registered_void_elements__, {}
+	end
+
+	test "an element's tag and void status are replaced together" do
+		elements = new_elements_module
+		elements.__register_void_element__ :foo_bar
+		before = elements.__element_registry__
+
+		elements.register_element :foo_bar, tag: "new-tag"
+		after = elements.__element_registry__
+
+		assert_equal [before.elements, before.void_elements], [{ foo_bar: "foo-bar" }, { foo_bar: "foo-bar" }]
+		assert_equal [after.elements, after.void_elements], [{ foo_bar: "new-tag" }, {}]
 	end
 
 	test "registering never freezes the caller's tag" do
@@ -93,9 +105,21 @@ class ElementRegistryTest < Quickdraw::Test
 			component = Class.new(Phlex::HTML) { register_element :trix_editor }
 
 			[Phlex::HTML::StandardElements, Phlex::HTML::VoidElements, Phlex::SVG::StandardElements, component, new_elements_module].each do |elements|
-				assert Ractor.shareable?(elements.__registered_elements__)
-				assert Ractor.shareable?(elements.__registered_void_elements__)
+				assert Ractor.shareable?(elements.__element_registry__)
 			end
+		end
+
+		test "a frozen tag carrying unshareable state is copied" do
+			tag = +"my-tag"
+			tag.instance_variable_set(:@state, +"mutable")
+			tag.freeze
+
+			elements = new_elements_module
+			elements.register_element(:my_tag, tag:)
+			elements.__register_void_element__(:my_void, tag:)
+
+			assert Ractor.shareable?(elements.__element_registry__)
+			assert_equal elements.__registered_elements__, { my_tag: "my-tag", my_void: "my-tag" }
 		end
 	end
 end

@@ -71,6 +71,18 @@ class RactorTest < Quickdraw::Test
 		assert Phlex.__attribute_cache__.equal?(Phlex::ATTRIBUTE_CACHE)
 	end
 
+	test "expansions racing each other leave the limit other Ractors copy equal to the main cache's" do
+		Dir.mktmpdir do |dir|
+			paths = Array.new(50) do |index|
+				File.join(dir, "template_#{index}.rb").tap { |path| File.write(path, "#" * (index + 1)) }
+			end
+
+			paths.map { |path| Thread.new { Phlex.__expand_attribute_cache__(path) } }.each(&:join)
+		end
+
+		assert_equal Phlex.instance_variable_get(:@attribute_cache_max_bytesize), Phlex::ATTRIBUTE_CACHE.max_bytesize
+	end
+
 	if defined?(::Ractor)
 		test "another Ractor gets one attribute cache of its own" do
 			main_cache_id = Phlex::ATTRIBUTE_CACHE.object_id

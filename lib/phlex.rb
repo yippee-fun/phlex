@@ -60,12 +60,16 @@ module Phlex
 		end
 	end
 
+	ATTRIBUTE_CACHE_EXPANSION_MUTEX = Mutex.new
+
 	def self.__expand_attribute_cache__(file_path)
 		return unless File.exist?(file_path)
 
-		unless CACHED_FILES.include?(file_path)
-			CACHED_FILES << file_path
-			@attribute_cache_max_bytesize = Phlex::ATTRIBUTE_CACHE.expand(File.size(file_path))
+		ATTRIBUTE_CACHE_EXPANSION_MUTEX.synchronize do
+			unless CACHED_FILES.include?(file_path)
+				CACHED_FILES << file_path
+				@attribute_cache_max_bytesize = Phlex::ATTRIBUTE_CACHE.expand(File.size(file_path))
+			end
 		end
 	end
 
