@@ -360,11 +360,13 @@ report = Benchmark.ips(quiet: !!options[:json]) do |x|
 end
 
 results = report.entries.to_h do |entry|
-	[entry.label, {
+	result = {
 		ips: entry.stats.central_tendency.round(1),
 		error_percent: (100.0 * entry.stats.error / entry.stats.central_tendency).round(2),
 		allocations: RuntimeBenchmark.allocations(scenarios.fetch(entry.label)),
-	}]
+	}
+
+	[entry.label, result]
 end
 
 if options[:json]
