@@ -45,6 +45,7 @@ run = ["bundle exec rake clobber", "bundle exec rake gem gem:native"]
 [tasks."native:release"]
 description = "Push every phlex-native gem in phlex-native/pkg to RubyGems"
 dir = "phlex-native"
+raw = true
 run = "for gem in pkg/*.gem; do gem push \"$gem\"; done"
 
 [tools]
