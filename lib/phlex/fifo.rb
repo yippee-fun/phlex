@@ -19,6 +19,12 @@ class Phlex::FIFO
 		end
 	end
 
+	def grow_to(bytes)
+		@mutex.synchronize do
+			@max_bytesize = bytes if bytes > @max_bytesize
+		end
+	end
+
 	def [](key)
 		k, v = @store[key.hash]
 		v if k.eql?(key)

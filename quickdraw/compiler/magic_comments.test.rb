@@ -12,7 +12,7 @@ class CompilerMagicCommentsTest < Quickdraw::Test
 			component = Object.const_get(name)
 			before = component.new.call
 			Phlex::Compiler.compile(component)
-			assert Phlex::Compiler::MAP.key?(component.instance_method(:view_template).source_location[0])
+			assert Phlex.__compiled_source_maps__.key?(component.instance_method(:view_template).source_location[0])
 
 			[before, component.new.call]
 		end

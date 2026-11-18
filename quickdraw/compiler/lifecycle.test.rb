@@ -6,7 +6,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 	Phlex::Compiler
 
 	def compiled_method?(component, name)
-		Phlex::Compiler::MAP.key?(component.instance_method(name).source_location[0])
+		Phlex.__compiled_source_maps__.key?(component.instance_method(name).source_location[0])
 	end
 
 	def with_component_files(files)
@@ -78,6 +78,67 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert Phlex::Compiler.compiled?(LifecycleChild)
 			assert Phlex::Compiler.compiled?(LifecycleParent)
 			assert_equal LifecycleChild.new.call, "<h1>Parent</h1><p>Child</p>"
+		end
+	end
+
+	test "a lazy render of a compiled component waits for a recompilation in progress" do
+		with_component_files(
+			"waits.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleWaits < Phlex::HTML
+					def view_template = div { "waits" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.enable!
+			begin
+				LifecycleWaits.call
+				assert Phlex::Compiler.compiled?(LifecycleWaits)
+
+				locked = Queue.new
+				release = Queue.new
+				recompiling = Thread.new do
+					Phlex::Compiler::MUTEX.synchronize do
+						locked << true
+						release.pop
+					end
+				end
+				locked.pop
+
+				render = Thread.new { LifecycleWaits.call }
+				deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+				Thread.pass until render.status == "sleep" || !render.alive? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+				assert render.alive?
+				release << true
+				assert_equal render.value, "<div>waits</div>"
+				recompiling.join
+			ensure
+				release&.<< true
+				Phlex::Compiler.disable!
+			end
+		end
+	end
+
+	test "a compiled method's source map exists by the time the method does" do
+		with_component_files(
+			"mapped.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleMapped < Phlex::HTML
+					MAPPED = []
+
+					def self.method_added(name)
+						MAPPED << Phlex.__compiled_source_maps__.key?(instance_method(name).source_location[0])
+						super
+					end
+
+					def view_template = div { "mapped" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleMapped)
+
+			assert_equal LifecycleMapped::MAPPED, [false, true]
 		end
 	end
 

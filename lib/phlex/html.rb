@@ -60,8 +60,9 @@ class Phlex::HTML < Phlex::SGML
 		elsif (tag = VoidElements.__registered_elements__[name])
 			void = true
 		elsif (registrar = __element_registrar__(name))
-			tag = registrar.__registered_elements__[name]
-			void = registrar.__registered_void_elements__.key?(name)
+			registry = registrar.__element_registry__
+			tag = registry.elements[name]
+			void = registry.void_elements.key?(name)
 		elsif (tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z][a-z0-9-]*\z/)
 			void = false
 		else
@@ -80,7 +81,7 @@ class Phlex::HTML < Phlex::SGML
 						Phlex::SGML::Elements.public_send(normalizer, attributes)
 					end
 
-					buffer << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 				ensure
 					buffer << ">"
 				end
@@ -94,7 +95,7 @@ class Phlex::HTML < Phlex::SGML
 				if block_given # with content block
 					buffer << "<#{tag}"
 					begin
-						buffer << Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+						buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 					ensure
 						buffer << ">"
 					end
@@ -111,7 +112,7 @@ class Phlex::HTML < Phlex::SGML
 				else # without content
 					buffer << "<#{tag}"
 					begin
-						buffer << ::Phlex::ATTRIBUTE_CACHE.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+						buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 					ensure
 						buffer << "></#{tag}>"
 					end
