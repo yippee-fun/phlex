@@ -114,4 +114,70 @@ class MixTest < Quickdraw::Test
 		output = mix({ class: Set["foo"] }, { class: "bar" })
 		assert_equal output, { class: ["foo", "bar"] }
 	end
+
+	test "string + symbol" do
+		output = mix({ class: "foo" }, { class: :bar })
+		assert_equal output, { class: ["foo", :bar] }
+	end
+
+	test "symbol + string" do
+		output = mix({ class: :foo }, { class: "bar" })
+		assert_equal output, { class: [:foo, "bar"] }
+	end
+
+	test "symbol + symbol" do
+		output = mix({ class: :foo }, { class: :bar })
+		assert_equal output, { class: [:foo, :bar] }
+	end
+
+	test "array + symbol" do
+		output = mix({ class: ["foo"] }, { class: :bar })
+		assert_equal output, { class: ["foo", :bar] }
+	end
+
+	test "symbol + array" do
+		output = mix({ class: :foo }, { class: ["bar"] })
+		assert_equal output, { class: [:foo, "bar"] }
+	end
+
+	test "set + symbol" do
+		output = mix({ class: Set["foo"] }, { class: :bar })
+		assert_equal output, { class: ["foo", :bar] }
+	end
+
+	test "symbol + set" do
+		output = mix({ class: :foo }, { class: Set["bar"] })
+		assert_equal output, { class: [:foo, "bar"] }
+	end
+
+	test "symbol + nil" do
+		output = mix({ class: :foo }, { class: nil })
+		assert_equal output, { class: :foo }
+	end
+
+	test "nil + symbol" do
+		output = mix({ class: nil }, { class: :foo })
+		assert_equal output, { class: :foo }
+	end
+
+	test "symbol + hash" do
+		output = mix({ data: :foo }, { data: { controller: "bar" } })
+		assert_equal output, { data: { _: :foo, controller: "bar" } }
+	end
+
+	test "symbol override" do
+		output = mix({ class: "foo" }, { class!: :bar })
+		assert_equal output, { class: :bar }
+	end
+
+	test "mixed symbols render with dashes" do
+		component = Class.new(Phlex::HTML) do
+			def view_template
+				div(**mix({ class: "foo_bar" }, { class: :baz_qux }, { class: [:a_b] }))
+				div(**mix({ class: :foo_bar }, { class: :baz_qux }))
+			end
+		end
+
+		assert_equal component.call, %(<div class="foo_bar baz-qux a-b"></div><div class="foo-bar baz-qux"></div>)
+	end
 end
