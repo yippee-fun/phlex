@@ -343,7 +343,8 @@ module Phlex::Compiler
 	# The aliases, in the component or a descendant, that share a body with
 	# the component's method, as [owner, name] pairs. A descendant isn't being
 	# compiled, so it's reflected on without calling its own methods, which it
-	# may have overridden.
+	# may have overridden. A copy made by `define_method` shares the body too
+	# but isn't equal to the method, so they're matched by source location.
 	def self.aliases_sharing(component, name)
 		method = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
 
@@ -354,7 +355,7 @@ module Phlex::Compiler
 				next if alias_name == name
 
 				candidate = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(owner, alias_name)
-				[owner, alias_name] if candidate.original_name == name && candidate == method
+				[owner, alias_name] if candidate.original_name == name && candidate.source_location == method.source_location
 			end
 		end
 	end
