@@ -89,14 +89,6 @@ module Phlex::SGML::Elements
 		end
 	end
 
-	def self.restore_entry(current, previous, name)
-		if previous.key?(name)
-			current.merge(name => previous[name]).freeze
-		else
-			current.except(name).freeze
-		end
-	end
-
 	Registry = Data.define(:elements, :void_elements)
 	EMPTY_REGISTRY = Registry.new(elements: {}.freeze, void_elements: {}.freeze)
 	REGISTRATION_MUTEX = Mutex.new
@@ -120,7 +112,22 @@ module Phlex::SGML::Elements
 	end
 
 	def register_element(method_name, tag: method_name.name.tr("_", "-"))
-		tag = __register__(method_name, tag, void: false)
+		tag = String.new(tag.to_s).freeze
+
+		# Registered before the method is defined, so recompiling what inlined it reads the new tag.
+		REGISTRATION_MUTEX.synchronize do
+			registry = __element_registry__
+
+			@__element_registry__ = Registry.new(
+				elements: registry.elements.merge(method_name => tag).freeze,
+				void_elements: registry.void_elements.except(method_name).freeze,
+			)
+		end
+
+		Phlex::SGML::Elements.record_registered_name(method_name)
+
+		# Aliasing the method to itself suppresses Ruby's method redefinition warning.
+		alias_method(method_name, method_name) if method_defined?(method_name)
 
 		class_eval(<<~RUBY, __FILE__, __LINE__ + 1)
 			# frozen_string_literal: true
@@ -221,7 +228,21 @@ module Phlex::SGML::Elements
 	end
 
 	def __register_void_element__(method_name, tag: method_name.name.tr("_", "-"))
-		tag = __register__(method_name, tag, void: true)
+		tag = String.new(tag.to_s).freeze
+
+		REGISTRATION_MUTEX.synchronize do
+			registry = __element_registry__
+
+			@__element_registry__ = Registry.new(
+				elements: registry.elements.merge(method_name => tag).freeze,
+				void_elements: registry.void_elements.merge(method_name => tag).freeze,
+			)
+		end
+
+		Phlex::SGML::Elements.record_registered_name(method_name)
+
+		# Aliasing the method to itself suppresses Ruby's method redefinition warning.
+		alias_method(method_name, method_name) if method_defined?(method_name)
 
 		class_eval(<<~RUBY, __FILE__, __LINE__ + 1)
 			# frozen_string_literal: true
@@ -254,42 +275,5 @@ module Phlex::SGML::Elements
 		RUBY
 
 		method_name
-	end
-
-	# Registered before the method is defined, so recompiling what inlined it
-	# reads the new tag. If a hook refuses the redefinition, nothing changes.
-	private def __register__(method_name, tag, void:)
-		tag = String.new(tag.to_s).freeze
-
-		previous = REGISTRATION_MUTEX.synchronize do
-			registry = __element_registry__
-
-			@__element_registry__ = Registry.new(
-				elements: registry.elements.merge(method_name => tag).freeze,
-				void_elements: (void ? registry.void_elements.merge(method_name => tag) : registry.void_elements.except(method_name)).freeze,
-			)
-
-			registry
-		end
-
-		begin
-			# Aliasing the method to itself suppresses Ruby's method redefinition warning.
-			alias_method(method_name, method_name) if method_defined?(method_name)
-		rescue Exception
-			REGISTRATION_MUTEX.synchronize do
-				registry = __element_registry__
-
-				@__element_registry__ = Registry.new(
-					elements: Phlex::SGML::Elements.restore_entry(registry.elements, previous.elements, method_name),
-					void_elements: Phlex::SGML::Elements.restore_entry(registry.void_elements, previous.void_elements, method_name),
-				)
-			end
-
-			raise
-		end
-
-		Phlex::SGML::Elements.record_registered_name(method_name)
-
-		tag
 	end
 end

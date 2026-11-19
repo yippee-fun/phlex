@@ -64,19 +64,6 @@ class ElementRegistryTest < Quickdraw::Test
 		assert_equal [after.elements, after.void_elements], [{ foo_bar: "new-tag" }, {}]
 	end
 
-	test "a re-registration refused before its method is replaced leaves the registry as it was" do
-		elements = new_elements_module
-		elements.register_element :foo_bar, tag: "old-foo"
-		elements.__register_void_element__ :baz_qux, tag: "old-baz"
-		elements.define_singleton_method(:method_added) { |name| raise "refused #{name}" }
-
-		assert_raises(RuntimeError) { elements.__register_void_element__ :foo_bar, tag: "new-foo" }
-		assert_raises(RuntimeError) { elements.register_element :baz_qux, tag: "new-baz" }
-
-		assert_equal elements.__registered_elements__, { foo_bar: "old-foo", baz_qux: "old-baz" }
-		assert_equal elements.__registered_void_elements__, { baz_qux: "old-baz" }
-	end
-
 	test "registering never freezes the caller's tag" do
 		elements = new_elements_module
 		tag = +"my-tag"
