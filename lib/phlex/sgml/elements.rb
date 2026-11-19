@@ -112,6 +112,20 @@ module Phlex::SGML::Elements
 	end
 
 	def register_element(method_name, tag: method_name.name.tr("_", "-"))
+		tag = String.new(tag.to_s).freeze
+
+		# Registered before the method is defined, so recompiling what inlined it reads the new tag.
+		REGISTRATION_MUTEX.synchronize do
+			registry = __element_registry__
+
+			@__element_registry__ = Registry.new(
+				elements: registry.elements.merge(method_name => tag).freeze,
+				void_elements: registry.void_elements.except(method_name).freeze,
+			)
+		end
+
+		Phlex::SGML::Elements.record_registered_name(method_name)
+
 		# Aliasing the method to itself suppresses Ruby's method redefinition warning.
 		alias_method(method_name, method_name) if method_defined?(method_name)
 
@@ -210,6 +224,10 @@ module Phlex::SGML::Elements
 			end
 		RUBY
 
+		method_name
+	end
+
+	def __register_void_element__(method_name, tag: method_name.name.tr("_", "-"))
 		tag = String.new(tag.to_s).freeze
 
 		REGISTRATION_MUTEX.synchronize do
@@ -217,16 +235,12 @@ module Phlex::SGML::Elements
 
 			@__element_registry__ = Registry.new(
 				elements: registry.elements.merge(method_name => tag).freeze,
-				void_elements: registry.void_elements.except(method_name).freeze,
+				void_elements: registry.void_elements.merge(method_name => tag).freeze,
 			)
 		end
 
 		Phlex::SGML::Elements.record_registered_name(method_name)
 
-		method_name
-	end
-
-	def __register_void_element__(method_name, tag: method_name.name.tr("_", "-"))
 		# Aliasing the method to itself suppresses Ruby's method redefinition warning.
 		alias_method(method_name, method_name) if method_defined?(method_name)
 
@@ -259,19 +273,6 @@ module Phlex::SGML::Elements
 				nil
 			end
 		RUBY
-
-		tag = String.new(tag.to_s).freeze
-
-		REGISTRATION_MUTEX.synchronize do
-			registry = __element_registry__
-
-			@__element_registry__ = Registry.new(
-				elements: registry.elements.merge(method_name => tag).freeze,
-				void_elements: registry.void_elements.merge(method_name => tag).freeze,
-			)
-		end
-
-		Phlex::SGML::Elements.record_registered_name(method_name)
 
 		method_name
 	end
