@@ -32,9 +32,10 @@ require "refract"
 # class or by including a module recompiles whatever inlined it.
 #
 # Three differences remain, all deliberate:
-# - Changes to a module already mixed into a compiled component aren't seen:
-#   defining, removing or undefining a method on it, or mixing another module
-#   into it. Call `Phlex::Compiler.recompile(component)` after such a change.
+# - Changing what an inlined element or helper resolves to through a module
+#   already mixed into a compiled component isn't seen: defining, removing or
+#   undefining it on that module, or mixing another module into it. Call
+#   `Phlex::Compiler.recompile` on each class whose methods inlined it.
 # - Attributes with literal keys are serialised without the attribute cache, so
 #   a value's `to_s`, `to_h` or `iso8601` runs on every render rather than once
 #   per distinct set of attributes.
