@@ -31,7 +31,10 @@ require "refract"
 # a single instance with `extend` or a singleton method. Redefining one on a
 # class or by including a module recompiles whatever inlined it.
 #
-# Two differences remain, both deliberate:
+# Three differences remain, all deliberate:
+# - Changes to a module already mixed into a compiled component aren't seen:
+#   defining, removing or undefining a method on it, or mixing another module
+#   into it. Call `Phlex::Compiler.recompile(component)` after such a change.
 # - Attributes with literal keys are serialised without the attribute cache, so
 #   a value's `to_s`, `to_h` or `iso8601` runs on every render rather than once
 #   per distinct set of attributes.
