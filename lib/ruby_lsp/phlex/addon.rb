@@ -32,8 +32,10 @@ module RubyLsp
 
 				case arguments
 				in [Prism::SymbolNode[unescaped: String => method_name], *]
-					tag_name = method_name.tr("_", "-")
-					arguments[1] in Prism::StringNode[unescaped: String => tag_name]
+					tag_name = case arguments[1]
+						in Prism::StringNode[unescaped: String => given] then given
+						else method_name.tr("_", "-")
+					end
 
 					@listener.add_method(method_name, location, [
 						RubyIndexer::Entry::Signature.new([
