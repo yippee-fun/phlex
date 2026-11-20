@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-bundle exec qt && PHLEX_BROWSER=webkit bundle exec qt --max quickdraw/browser && bundle exec rubocop && echo "🎉 All tests and checks passed!"
+bundle exec qd all && bundle exec rubocop && echo "🎉 All tests and checks passed!"

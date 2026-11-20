@@ -40,12 +40,9 @@ jobs:
         run: |
           bundle install --jobs 4
 
-      - name: Install Chromium for browser tests
-        run: bundle exec qt browser install chromium
-
       - name: Generate coverage report
         run: |
-          COVERAGE=true bundle exec qt
+          COVERAGE=true bundle exec qd
 
       - name: Setup Pages
         uses: actions/configure-pages@v6

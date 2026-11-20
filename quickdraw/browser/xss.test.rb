@@ -28,6 +28,28 @@ class XSSTest < Quickdraw::Test
 					event.preventDefault()
 				}
 			}, true)
+
+			// Clicks every element, then an HTML and an SVG javascript: link of its
+			// own, and waits for their dialogs, so the links clicked before them have run.
+			window.clickEverything = async () => {
+				const controls = document.createElement("div")
+				controls.innerHTML = `<a href="javascript:alert('control')">x</a><svg><a href="javascript:alert('control')"><text>x</text></a></svg>`
+				const nodes = [...document.body.querySelectorAll("*"), ...controls.querySelectorAll("a")]
+				document.body.append(controls)
+
+				for (const node of nodes) {
+					node.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }))
+				}
+
+				const deadline = Date.now() + 5000
+
+				while (window.dialogs.filter((message) => message === "control").length < 2) {
+					if (Date.now() > deadline) throw new Error("The control links’ dialogs never opened.")
+					await new Promise((resolve) => setTimeout(resolve, 10))
+				}
+
+				return window.dialogs.filter((message) => message !== "control")
+			}
 		}
 	JS
 
@@ -142,30 +164,6 @@ class XSSTest < Quickdraw::Test
 		end
 	end
 
-	# Clicks every element, then an HTML and an SVG javascript: link of its own,
-	# and waits for their dialogs, so the links clicked before them have run.
-	CLICK_EVERYTHING = <<~JS
-		async () => {
-			const controls = document.createElement("div")
-			controls.innerHTML = `<a href="javascript:alert('control')">x</a><svg><a href="javascript:alert('control')"><text>x</text></a></svg>`
-			const nodes = [...document.body.querySelectorAll("*"), ...controls.querySelectorAll("a")]
-			document.body.append(controls)
-
-			for (const node of nodes) {
-				node.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }))
-			}
-
-			const deadline = Date.now() + 5000
-
-			while (window.dialogs.filter((message) => message === "control").length < 2) {
-				if (Date.now() > deadline) throw new Error("The control links’ dialogs never opened.")
-				await new Promise((resolve) => setTimeout(resolve, 10))
-			}
-
-			return window.dialogs.filter((message) => message !== "control")
-		}
-	JS
-
 	ASCII_CHARS.each do |char|
 		test "javascript: links with #{char.inspect}" do
 			assert_no_dialogs JavaScriptLinks.new(char)
@@ -203,6 +201,6 @@ class XSSTest < Quickdraw::Test
 	private def assert_no_dialogs(component)
 		page.add_init_script(HARNESS)
 		page.set_content(component.call)
-		assert_equal page.evaluate(CLICK_EVERYTHING), []
+		assert_equal page.evaluate("clickEverything()"), []
 	end
 end

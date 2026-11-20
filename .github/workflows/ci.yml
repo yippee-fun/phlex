@@ -34,10 +34,10 @@ jobs:
           bundle install --jobs 4
 
       - name: Install Chromium for browser tests
-        run: bundle exec qt browser install chromium
+        run: bundle exec qd browser install chromium
 
       - name: Quickdraw Tests
-        run: bundle exec qt
+        run: bundle exec qd all --browser chromium
 
   native:
     strategy:
@@ -64,7 +64,7 @@ jobs:
           bundle install --jobs 4
 
       - name: Install Chromium for browser tests
-        run: bundle exec qt browser install chromium
+        run: bundle exec qd browser install chromium
 
       - name: Compile phlex-native
         working-directory: phlex-native
@@ -74,7 +74,7 @@ jobs:
         env:
           PHLEX_NATIVE: "true"
           PHLEX_NATIVE_ITERATIONS: "200000"
-        run: bundle exec qt
+        run: bundle exec qd all --browser chromium
 
   # A Ruby built with AddressSanitizer, since preloading it into a normal Ruby doesn't work.
   native-sanitizers:
@@ -103,7 +103,7 @@ jobs:
           PHLEX_NATIVE: "true"
           PHLEX_NATIVE_STRESS: "true"
           ASAN_OPTIONS: "detect_leaks=0"
-        run: bundle exec qt ./phlex-native/quickdraw/attributes.test.rb
+        run: bundle exec qd ./phlex-native/quickdraw/attributes.test.rb
 
   rubocop:
     runs-on: "ubuntu-latest"

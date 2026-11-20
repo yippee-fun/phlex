@@ -1,10 +1,10 @@
 [tasks.setup]
 description = "Install all project dependencies."
-run = ["mise install", "bundle install --jobs 4", "bundle install --jobs 4 --gemfile phlex-native/Gemfile", "bundle exec qt browser install chromium webkit"]
+run = ["mise install", "bundle install --jobs 4", "bundle install --jobs 4 --gemfile phlex-native/Gemfile", "bundle exec qd browser install"]
 
 [tasks.test]
 description = "Run tests"
-run = ["bundle exec qt"]
+run = ["bundle exec qd"]
 
 [tasks.lint]
 description = "Run linter"
@@ -24,7 +24,7 @@ run = ["bundle exec ./bench.rb"]
 
 [tasks.browser_tests]
 description = "Run browser tests in Chromium and WebKit"
-run = ["PHLEX_BROWSER=chromium bundle exec qt quickdraw/browser", "PHLEX_BROWSER=webkit bundle exec qt --max quickdraw/browser"]
+run = ["bundle exec qd browser"]
 
 [tasks."native:compile"]
 description = "Compile phlex-native from source"
@@ -35,7 +35,7 @@ run = "bundle exec rake compile"
 description = "Run tests with phlex-native loaded"
 depends = ["native:compile"]
 env = { PHLEX_NATIVE = "true" }
-run = "bundle exec qt"
+run = "bundle exec qd"
 
 [tasks."native:package"]
 description = "Build the phlex-native source gem and a precompiled gem for every platform (needs Docker)"
