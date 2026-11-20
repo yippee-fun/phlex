@@ -388,7 +388,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 		) do
 			Phlex::Compiler.compile(LifecycleKept)
 			assert compiled_method?(LifecycleKept, :view_template)
-			assert_equal LifecycleKept.instance_variable_get(:@__phlex_inlined__), Set[:span, :section]
+			assert_equal LifecycleKept.instance_variable_get(:@__phlex_inlined__), Set[:span, :section, :block_given?]
 
 			instance = LifecycleKept.new
 			instance.define_singleton_method(:div) { |*, **, &| plain("singleton div") }
@@ -415,7 +415,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 			RUBY
 		) do
 			Phlex::Compiler.compile(LifecycleFrozenChild)
-			assert_equal LifecycleFrozenChild.instance_variable_get(:@__phlex_inlined__), Set[:div]
+			assert_equal LifecycleFrozenChild.instance_variable_get(:@__phlex_inlined__), Set[:div, :block_given?]
 
 			LifecycleFrozenChild.freeze
 			assert LifecycleFrozenChild.frozen?
@@ -461,7 +461,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			assert compiled_method?(LifecycleRefinedElements, :view_template)
 			assert_equal LifecycleRefinedElements.call, expected
-			assert_equal LifecycleRefinedElements.instance_variable_get(:@__phlex_inlined__), Set[:section]
+			assert_equal LifecycleRefinedElements.instance_variable_get(:@__phlex_inlined__), Set[:section, :block_given?]
 			assert compiled_method?(LifecycleUnrefinedElements, :view_template)
 			assert_equal LifecycleUnrefinedElements.call, "<div>hello</div>"
 		end

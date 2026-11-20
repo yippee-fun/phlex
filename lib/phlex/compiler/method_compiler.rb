@@ -205,7 +205,7 @@ module Phlex::Compiler
 				end
 			end
 
-			@environment.inlined << node.name if compiled && (@appends > appends || !(Refract::CallNode === compiled))
+			@environment.inlined.merge([node.name, :block_given?]) if compiled && (@appends > appends || !(Refract::CallNode === compiled))
 			compiled
 		end
 
@@ -953,6 +953,9 @@ module Phlex::Compiler
 		private def compile_plain(node)
 			# Keep runtime block rejection and evaluation of forwarded block expressions.
 			return keep_call(node, "it has a block") if node.block
+			return keep_call(node, "__text__ is overridden") unless @environment.helper?(:__text__)
+
+			@environment.inlined << :__text__
 
 			case node.arguments&.arguments
 			in [Refract::StringNode | Refract::SymbolNode => text] then plain(text.unescaped)
