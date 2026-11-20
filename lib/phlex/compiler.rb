@@ -34,14 +34,30 @@ require "refract"
 # Redefining one on a class or by including a module recompiles whatever
 # inlined it.
 #
-# Four differences remain, all deliberate:
+# Seven differences remain, all deliberate:
 # - Changing what an inlined element or helper resolves to through a module
 #   already mixed into a compiled component isn't seen: defining, removing or
 #   undefining it on that module, or mixing another module into it. Call
 #   `Phlex::Compiler.recompile` on each class whose methods inlined it.
 # - Attributes with literal keys are serialised without the attribute cache, so
 #   a value's `to_s`, `to_h` or `iso8601` runs on every render rather than once
-#   per distinct set of attributes.
+#   per distinct set of attributes, and its `hash` isn't called.
+# - Compiled code appends the text of neighbouring elements together and reads
+#   the state once per method. When an append itself fails, because the buffer
+#   is frozen or holds text in an encoding the new text can't join, the partial
+#   output, the exception raised and its `cause` can differ from element
+#   methods appending one by one. A buffer switched mid-element, by a Fiber
+#   suspended inside `capture`, and a method that started before rendering,
+#   can see a different buffer. Whether to render is checked at each append,
+#   where an element method checks once, which only matters to code starting
+#   a fragment mid-element. A State subclass overriding its methods sees them
+#   called a different number of times.
+# - Static text and attributes are escaped and serialised once, when
+#   compiling, outside `Regexp.timeout`, and so are references whose prefix
+#   is known. A core method compiled code calls that's redefined after
+#   compiling isn't noticed. A String subclass whose `gsub` returns something
+#   other than a String, which the serialiser's own paths treat differently,
+#   renders as its path for names it's seen before does.
 # - Method#source_location of a compiled method names the generated source;
 #   exceptions are mapped back to the real file. `local_variables` and
 #   `binding` in a compiled method also see the compiler's `__phlex_` locals.
