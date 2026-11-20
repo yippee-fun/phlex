@@ -37,7 +37,8 @@ jobs:
         run: bundle exec qd browser install chromium
 
       - name: Quickdraw Tests
-        run: bundle exec qd all --browser chromium
+        # Without fork, config.browser runs only Chromium, and --browser needs several.
+        run: bundle exec qd all ${{ !startsWith(matrix.ruby-version, 'truffleruby') && '--browser chromium' || '' }}
 
   native:
     strategy:

@@ -945,8 +945,8 @@ class AttributesTest < Quickdraw::Test
 	end
 
 	test "nested dates and times" do
-		output = phlex { div(data: { day: Date.new(2020, 1, 2), at: Time.utc(2020, 1, 2, 3, 4, 5) }) }
-		assert_equal output, %(<div data-day="2020-01-02" data-at="2020-01-02T03:04:05Z"></div>)
+		output = phlex { div(data: { day: Date.new(2020, 1, 2), at: Time.new(2020, 1, 2, 3, 4, 5, "+00:00") }) }
+		assert_equal output, %(<div data-day="2020-01-02" data-at="2020-01-02T03:04:05+00:00"></div>)
 	end
 
 	test "nested sets of tokens" do

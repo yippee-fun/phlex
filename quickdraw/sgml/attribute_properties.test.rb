@@ -15,7 +15,7 @@ class AttributePropertiesTest < Quickdraw::Test
 
 	fuzz "renders attributes a browser reads as written, or refuses them", ATTRIBUTES do |attributes|
 		# Safe values are trusted, so they skip the checks for unsafe names and URLs.
-		output = Attributes.generate_attributes(attributes.reject { |_, v| Phlex::SGML::SafeObject === v })
+		output = Attributes.generate_attributes(attributes.reject { |_, v| trusted?(v) })
 	rescue Phlex::ArgumentError
 		nil
 	else
@@ -56,6 +56,15 @@ class AttributePropertiesTest < Quickdraw::Test
 		check(TEXT) do |value|
 			assert_equal outcome { Attributes.generate_attributes({ title: value }) }, outcome { Attributes.generate_attributes({ "title" => value }) }
 			assert_equal outcome { Attributes.generate_attributes({ href: value }) }, outcome { Attributes.generate_attributes({ "href" => value }) }
+		end
+	end
+
+	private def trusted?(value)
+		case value
+		in Phlex::SGML::SafeObject then true
+		in Hash then value.each_value.any? { |v| trusted?(v) }
+		in Array | Set then value.any? { |v| trusted?(v) }
+		else false
 		end
 	end
 

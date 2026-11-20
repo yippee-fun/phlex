@@ -37,5 +37,10 @@ Phlex::Loader.eager_load
 $LOAD_PATH.unshift(File.expand_path("../fixtures", __dir__))
 
 Quickdraw.configure do |config|
-	config.browser("quickdraw/browser/**/*.test.rb", browsers: [:chromium, :webkit])
+	# Quickdraw runs several browsers in forked groups, which TruffleRuby can't.
+	if Process.respond_to?(:fork)
+		config.browser("quickdraw/browser/**/*.test.rb", browsers: [:chromium, :webkit])
+	else
+		config.browser("quickdraw/browser/**/*.test.rb", browser: :chromium)
+	end
 end
