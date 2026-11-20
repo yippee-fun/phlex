@@ -398,7 +398,7 @@ module Phlex::Compiler
 			in nil | Refract::NilNode
 				true
 			in Refract::CallNode if node.receiver.nil?
-				known = @environment.element(node.name) || (@environment.helper?(node.name) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw)
+				known = @environment.element(node.name) || (@environment.helper?(node.name) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw) || render_returns_nil?(node)
 				relied << node.name if known
 				known
 			in Refract::IfNode
@@ -411,6 +411,16 @@ module Phlex::Compiler
 				node.conditions.all? { |condition| nil_valued?(condition.statements&.body&.last, relied) } && nil_valued?(node.else_clause, relied)
 			else
 				false
+			end
+		end
+
+		# `render` returns nil, unless a `break` in its block, or in a default for
+		# one of the block's parameters, returns from it.
+		private def render_returns_nil?(node)
+			node.name == :render && @environment.helper?(:render) && case node.block
+				in nil then true
+				in Refract::BlockNode => block then [block.parameters, block.body].compact.none? { |part| BreakScanner.breaks?(part) }
+				else false
 			end
 		end
 
