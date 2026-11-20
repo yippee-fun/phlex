@@ -2,6 +2,8 @@
 
 return unless defined?(Phlex::Native)
 
+require "attribute_generators"
+
 class NativeAttributesTest < Quickdraw::Test
 	Attributes = Phlex::SGML::Attributes
 	StringSubclass = Class.new(String)
@@ -309,6 +311,21 @@ class NativeAttributesTest < Quickdraw::Test
 
 		mismatches.compact!
 		assert_equal mismatches.first(3), []
+	end
+
+	fuzz "matches the Ruby implementation on generated attributes", AttributeGenerators::ATTRIBUTES, cases: 1_000 do |attributes|
+		mismatches = [NativeAttributesTest.compare_fetch(attributes)]
+
+		attributes.each do |k, v|
+			name = Attributes.attribute_name(k)
+			Attributes.validate_attribute_name(k, name)
+			mismatches << NativeAttributesTest.compare(:attribute, k, name, v)
+			mismatches << NativeAttributesTest.compare(:reference_attribute, k, name, v) if Attributes.reference_attribute?(name)
+		rescue Phlex::ArgumentError
+			next
+		end
+
+		assert_equal mismatches.compact, []
 	end
 
 	test "matches the Ruby implementation on each key and value" do
