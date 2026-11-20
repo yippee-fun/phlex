@@ -43,4 +43,7 @@ Quickdraw.configure do |config|
 	else
 		config.browser("quickdraw/browser/**/*.test.rb", browser: :chromium)
 	end
+
+	# Under AddressSanitizer, phlex-native's differential tests take minutes.
+	config.timeout = 1800 if ENV["PHLEX_NATIVE_SANITIZE"] == "true"
 end

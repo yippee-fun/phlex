@@ -103,6 +103,7 @@ jobs:
         env:
           PHLEX_NATIVE: "true"
           PHLEX_NATIVE_STRESS: "true"
+          PHLEX_NATIVE_SANITIZE: "true"
           ASAN_OPTIONS: "detect_leaks=0"
         run: bundle exec qd ./phlex-native/quickdraw/attributes.test.rb
 
