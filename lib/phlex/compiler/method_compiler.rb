@@ -221,7 +221,7 @@ module Phlex::Compiler
 			statements([
 				*attributes.hoisted,
 				append(literal("<#{tag}"), *attributes.parts, literal(">")),
-				Output::Enclosed.new(body: compile_content(node), closing: "</#{tag}>"),
+				Output::Enclosed.new(body: compile_content(node, element: true), closing: "</#{tag}>"),
 				raw("</#{tag}>"),
 				*(flush_after_head if tag == "head"),
 			])
@@ -261,7 +261,7 @@ module Phlex::Compiler
 			end
 		end
 
-		private def compile_content(node)
+		private def compile_content(node, element: false)
 			case node.block
 			in nil
 				[]
@@ -273,6 +273,8 @@ module Phlex::Compiler
 					[visit(block.body)]
 				in Refract::StatementsNode[body: [statement]] if (content = compile_literal_content(statement))
 					[content]
+				in Refract::StatementsNode[body: [Refract::LocalVariableReadNode | Refract::InstanceVariableReadNode => variable]] if element
+					[element_output(variable)]
 				in Refract::StatementsNode[body: [statement]] if pure?(statement)
 					[implicit_output(statement)]
 				else
@@ -294,6 +296,16 @@ module Phlex::Compiler
 				write(content, Refract::ParenthesesNode.new(body: visit(body))),
 				if_node(call(read(length), :==, call(read(state_local), :output_bytesize)), [implicit_output(read(content))], inline: true),
 			]
+		end
+
+		# An element outputs its block's value itself rather than calling
+		# __implicit_output__, so a String is escaped inline.
+		private def element_output(variable)
+			elsif_chain(
+				[call(constant("Phlex::SGML::SafeObject"), :===, variable), implicit_output(variable)],
+				[call(constant("String"), :===, variable), append(expression(escaped(variable)))],
+				otherwise: implicit_output(variable)
+			)
 		end
 
 		private def implicit_output(node)

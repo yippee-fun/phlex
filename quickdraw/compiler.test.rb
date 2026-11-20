@@ -319,15 +319,11 @@ class CompilerTest < Quickdraw::Test
 				begin
 					__phlex_state__ = @_state
 					(if __phlex_state__.should_render?
-						__phlex_state__.buffer.<<("<html>")
+						__phlex_state__.buffer.<<("<html><head><title>T</title></head>")
 					end
 					nil)
 					__phlex_done_1__ = false
 					begin
-						(if __phlex_state__.should_render?
-							__phlex_state__.buffer.<<("<head><title>T</title></head>")
-						end
-						nil)
 						flush() if __phlex_state__.should_render?
 						__phlex_done_1__ = true
 					ensure
@@ -340,6 +336,51 @@ class CompilerTest < Quickdraw::Test
 					end
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("</html>")
+					end
+					nil)
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
+	test "nested elements share one guard, with the ASCII text around their content fused" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				div { h3 { @title }; p { "x" } }
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("<div><h3>")
+					end
+					nil)
+					__phlex_done_1__ = false
+					begin
+						if ::Phlex::SGML::SafeObject.===(@title)
+							__implicit_output__(@title)
+						elsif ::String.===(@title)
+							(if __phlex_state__.should_render?
+								__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(@title))
+							end
+							nil)
+						else
+							__implicit_output__(@title)
+						end
+						__phlex_done_1__ = true
+					ensure
+						unless __phlex_done_1__
+							(if __phlex_state__.should_render?
+								__phlex_state__.buffer.<<("</h3></div>")
+							end
+							nil)
+						end
+					end
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("</h3><p>x</p></div>")
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
@@ -368,7 +409,16 @@ class CompilerTest < Quickdraw::Test
 								nil)
 								__phlex_done_1__ = false
 								begin
-									__implicit_output__(i)
+									if ::Phlex::SGML::SafeObject.===(i)
+										__implicit_output__(i)
+									elsif ::String.===(i)
+										(if __phlex_state__.should_render?
+											__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(i))
+										end
+										nil)
+									else
+										__implicit_output__(i)
+									end
 									__phlex_done_1__ = true
 								ensure
 									unless __phlex_done_1__

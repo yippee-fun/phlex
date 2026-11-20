@@ -15,15 +15,10 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 	end
 
 	visit Refract::StatementsNode do |node|
-		queue = node.body.compact.reverse
 		body = []
 
-		while (child = queue.pop)
+		flatten(node.body).each do |child|
 			case child
-			in Refract::StatementsNode
-				child.body.compact.reverse_each { |grandchild| queue << grandchild }
-			in Output::Enclosed if Output.static?(child)
-				child.body.reverse_each { |grandchild| queue << grandchild }
 			in Output::Append if Output::Append === body.last
 				body[-1] = Output::Append.new(parts: body.last.parts + child.parts)
 			in Output::Append
@@ -36,6 +31,40 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 		end
 
 		node.copy(body: body.compact.map { |statement| (Output::Append === statement) ? append(statement.parts) : statement })
+	end
+
+	# Splices nested statements and enclosures that can't exit early into the
+	# list. ASCII text at either end of an enclosure's body moves out of it, to
+	# fuse with the text around it, since appending it can't fail or jump. An
+	# enclosure whose body is then just another enclosure closes both at once.
+	private def flatten(statements)
+		statements.flat_map do |statement|
+			case statement
+			in nil then []
+			in Refract::StatementsNode then flatten(statement.body)
+			in Output::Enclosed if Output.static?(statement) then flatten(statement.body)
+			in Output::Enclosed
+				body = flatten(statement.body)
+				leading = body.take_while { |child| ascii_text?(child) }
+				rest = body.drop(leading.length)
+				trailing = rest.reverse.take_while { |child| ascii_text?(child) }.reverse
+				body = rest.take(rest.length - trailing.length)
+
+				enclosed = case body
+					in [Output::Enclosed => inner] if statement.closing.ascii_only? && inner.closing.ascii_only?
+						inner.with(closing: inner.closing + statement.closing)
+					else
+						statement.with(body:)
+				end
+
+				[*leading, enclosed, *trailing]
+			else [statement]
+			end
+		end
+	end
+
+	private def ascii_text?(statement)
+		Output::Append === statement && statement.parts.all? { |part| Output::Literal === part && part.text.ascii_only? }
 	end
 
 	private def enclose(node)
