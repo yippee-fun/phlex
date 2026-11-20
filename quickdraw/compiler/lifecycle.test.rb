@@ -260,7 +260,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 			# With nothing left to inline, the original definition is reinstalled.
 			LifecycleLate.include(Module.new { def span(**, &) = plain("included span") })
 			assert_equal LifecycleLate.new.call, "<div>parent</div>included span"
-			assert_equal LifecycleLate.new.extend(Module.new { def span(**, &) = plain("extended span") }).call, "<div>parent</div>extended span" # rubocop:disable Lint/DuplicateMethods
+			assert_equal LifecycleLate.new.extend(Module.new { def span(**, &) = plain("extended span") }).call, "<div>parent</div>extended span"
 		end
 	end
 
