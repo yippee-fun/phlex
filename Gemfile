@@ -8,7 +8,6 @@ gemspec
 group :test do
 	gem "quickdraw", github: "joeldrapper/quickdraw"
 	gem "simplecov", require: false
-	gem "selenium-webdriver"
 end
 
 gem "nokogiri"
@@ -19,4 +18,4 @@ group :development do
 	gem "benchmark-ips"
 end
 
-gem "refract", github: "yippee-fun/refract"
+gem "refract", github: "yippee-fun/refract", ref: "ea4fe6900694d88504a05d4e09e65c980475e76e"

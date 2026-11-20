@@ -82,6 +82,10 @@ module Phlex::Compiler
 
 	def self.enabled? = @enabled
 
+	# Compiled code builds splatted attributes with this rather than a Hash
+	# literal, since before Ruby 3.4 `**nil` is only allowed in a call.
+	def self.keywords(**keywords) = keywords
+
 	# Compile each component on its first render. A component that fails to
 	# compile is reported to `on_failure` once and keeps rendering uncompiled,
 	# so a compiler bug costs speed, never a page.

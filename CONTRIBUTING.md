@@ -9,14 +9,14 @@ Phlex is incredibly complex and requires a lot of meta-programming but when you 
 ## Setup
 
 - Install dependencies `bundle install`
-- Run the tests `bundle exec qt`
+- Run the tests `bundle exec qd`
 
 ## Tests
 
 Tests are written using [Quickdraw](https://github.com/joeldrapper/quickdraw) and placed in the `quickdraw` folder. You can run these tests with:
 
 ```
-bundle exec qt
+bundle exec qd
 ```
 
 ## Documentation

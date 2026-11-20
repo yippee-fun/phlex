@@ -222,6 +222,10 @@ module Phlex::SGML::Attributes
 			raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{k}.")
 		end
 
+		if name.empty?
+			raise Phlex::ArgumentError.new("Attribute names can't be empty.")
+		end
+
 		if lower_name == "id" && k != :id
 			raise Phlex::ArgumentError.new(":id attribute should only be passed as a lowercase symbol.")
 		end
@@ -262,26 +266,26 @@ module Phlex::SGML::Attributes
 
 			case v
 			when true
-				buffer << " " << base_name << name
+				buffer << " " << checked_nested_name(base_name, name)
 			when String
-				buffer << " " << base_name << name << '="' << (v.include?('"') ? v.gsub('"', "&quot;") : v) << '"'
+				buffer << " " << checked_nested_name(base_name, name) << '="' << (v.include?('"') ? v.gsub('"', "&quot;") : v) << '"'
 			when Symbol
 				n = v.name
 				n = n.tr("_", "-") if n.include?("_")
-				buffer << " " << base_name << name << '="' << (n.include?('"') ? n.gsub('"', "&quot;") : n) << '"'
+				buffer << " " << checked_nested_name(base_name, name) << '="' << (n.include?('"') ? n.gsub('"', "&quot;") : n) << '"'
 			when Integer, Float
-				buffer << " " << base_name << name << '="' << v.to_s << '"'
+				buffer << " " << checked_nested_name(base_name, name) << '="' << v.to_s << '"'
 			when Date, Time
-				buffer << " " << base_name << name << '="' << date_time_value(v) << '"'
+				buffer << " " << checked_nested_name(base_name, name) << '="' << date_time_value(v) << '"'
 			when Hash
 				generate_nested_attributes(v, "#{base_name}#{name}-", buffer)
 			when Array
 				if (value = generate_nested_tokens(v))
-					buffer << " " << base_name << name << '="' << value << '"'
+					buffer << " " << checked_nested_name(base_name, name) << '="' << value << '"'
 				end
 			when Set
 				if (value = generate_nested_tokens(v.to_a))
-					buffer << " " << base_name << name << '="' << value << '"'
+					buffer << " " << checked_nested_name(base_name, name) << '="' << value << '"'
 				end
 			when Phlex::SGML::SafeObject
 				buffer << " " << base_name << name << '="' << v.to_s.gsub('"', "&quot;") << '"'
@@ -303,6 +307,17 @@ module Phlex::SGML::Attributes
 		end
 	end
 
+	# Joined to its base, a nested name can spell an unsafe one, such as `http-equiv`.
+	private def checked_nested_name(base_name, name)
+		full_name = "#{base_name}#{name}"
+
+		if UNSAFE_ATTRIBUTES.include?(full_name.downcase.delete("^a-z-"))
+			raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{full_name}.")
+		end
+
+		full_name
+	end
+
 	# Detects `javascript:` URLs, including ones obfuscated with HTML character
 	# references, whitespace or case. The full check has to decode and normalise
 	# the value, which allocates several strings, so it's skipped when the value
@@ -322,23 +337,19 @@ module Phlex::SGML::Attributes
 
 	def decode_html_character_references(value)
 		value
-			.gsub(/&#x([0-9a-f]+);?/i) {
-				begin
-					[$1.to_i(16)].pack("U*")
-				rescue
-					""
-				end
-			}
-			.gsub(/&#(\d+);?/) {
-				begin
-					[$1.to_i].pack("U*")
-				rescue
-					""
-				end
-			}
+			.gsub(/&#x([0-9a-f]+);?/i) { character_reference($1.to_i(16)) }
+			.gsub(/&#(\d+);?/) { character_reference($1.to_i) }
 			.gsub(/&([a-z][a-z0-9]+);?/i) {
 				NAMED_CHARACTER_REFERENCES[$1.downcase] || ""
 			}
+	end
+
+	# Browsers decode surrogates and code points past Unicode as U+FFFD.
+	private def character_reference(code_point)
+		case code_point
+		in 0xD800..0xDFFF | 0x110000.. then "�"
+		else code_point.chr(Encoding::UTF_8)
+		end
 	end
 
 	def generate_nested_tokens(tokens, sep = " ", gsub_from = nil, gsub_to	= "")

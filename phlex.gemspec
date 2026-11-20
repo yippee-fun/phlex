@@ -12,7 +12,7 @@ Gem::Specification.new do |spec|
 	spec.description = "Build HTML, SVG and CSV views with Ruby classes."
 	spec.homepage = "https://www.phlex.fun"
 	spec.license = "MIT"
-	spec.required_ruby_version = ">= 3.2"
+	spec.required_ruby_version = ">= 3.3"
 
 	spec.metadata["homepage_uri"] = spec.homepage
 	spec.metadata["source_code_uri"] = "https://github.com/phlex-ruby/phlex"

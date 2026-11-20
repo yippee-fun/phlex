@@ -2,7 +2,7 @@ inherit_from:
   - "https://www.goodcop.style/tabs.yml"
 
 AllCops:
-  TargetRubyVersion: 3.2
+  TargetRubyVersion: 3.3
   Exclude:
     - "quickdraw/compilation_equivalence_cases/**/*.rb"
     - "phlex-native/pkg/**/*"

@@ -42,7 +42,7 @@ jobs:
 
       - name: Generate coverage report
         run: |
-          COVERAGE=true bundle exec qt
+          COVERAGE=true bundle exec qd
 
       - name: Setup Pages
         uses: actions/configure-pages@v6

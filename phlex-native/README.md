@@ -26,7 +26,7 @@ To build with AddressSanitizer and UndefinedBehaviorSanitizer, and run the diffe
 
 ```sh
 (cd phlex-native && PHLEX_NATIVE_SANITIZE=true bundle exec rake compile)
-PHLEX_NATIVE=true PHLEX_NATIVE_STRESS=true bundle exec qt ./phlex-native/quickdraw/attributes.test.rb
+PHLEX_NATIVE=true PHLEX_NATIVE_STRESS=true PHLEX_NATIVE_SANITIZE=true bundle exec qd ./phlex-native/quickdraw/attributes.test.rb
 ```
 
 ## Releasing

@@ -253,14 +253,16 @@ class CompilerLifecycleTest < Quickdraw::Test
 			end
 			assert_equal error.message, "span can't be redefined on a single instance: LifecycleLate compiled it inline. Redefine it on the class, before compiling."
 
+			extended_span = Module.new { def span(**, &) = plain("extended span") }
+
 			assert_raises(Phlex::Compiler::Error) do
-				LifecycleLate.new.extend(Module.new { def span(**, &) = plain("extended span") })
+				LifecycleLate.new.extend(extended_span)
 			end
 
 			# With nothing left to inline, the original definition is reinstalled.
 			LifecycleLate.include(Module.new { def span(**, &) = plain("included span") })
 			assert_equal LifecycleLate.new.call, "<div>parent</div>included span"
-			assert_equal LifecycleLate.new.extend(Module.new { def span(**, &) = plain("extended span") }).call, "<div>parent</div>extended span" # rubocop:disable Lint/DuplicateMethods
+			assert_equal LifecycleLate.new.extend(extended_span).call, "<div>parent</div>extended span"
 		end
 	end
 

@@ -480,7 +480,10 @@ module Phlex::Compiler
 		end
 
 		private def compile_attribute_hash(element, keyword_hash, closing)
-			hash = Refract::HashNode.new(elements: keyword_hash.elements)
+			hash = case keyword_hash.elements
+				in [*, Refract::AssocSplatNode, *] then call(constant("Phlex::Compiler"), :keywords, keyword_hash)
+				else Refract::HashNode.new(elements: keyword_hash.elements)
+			end
 			hoisted = []
 			hash = hoisted_local(hash, hoisted) unless pure?(hash)
 			attributes = @locals.fresh(:attributes)
