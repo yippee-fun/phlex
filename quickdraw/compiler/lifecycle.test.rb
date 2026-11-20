@@ -264,6 +264,33 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "re-registering an element after compilation renders its new tag" do
+		with_component_files(
+			"reregistered.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReregistered < Phlex::HTML
+					register_element :widget, tag: "old-widget"
+					__register_void_element__ :marker, tag: "old-marker"
+
+					def view_template
+						widget { "x" }
+						marker
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleReregistered)
+			assert_equal LifecycleReregistered.call, "<old-widget>x</old-widget><old-marker>"
+
+			LifecycleReregistered.register_element :widget, tag: "new-widget"
+			assert_equal LifecycleReregistered.call, "<new-widget>x</new-widget><old-marker>"
+
+			LifecycleReregistered.__register_void_element__ :marker, tag: "new-marker"
+			assert compiled_method?(LifecycleReregistered, :view_template)
+			assert_equal LifecycleReregistered.call, "<new-widget>x</new-widget><new-marker>"
+		end
+	end
+
 	test "recompiling leaves a method above a `using` that never compiled alone" do
 		with_component_files(
 			"boundary.rb" => <<~RUBY
