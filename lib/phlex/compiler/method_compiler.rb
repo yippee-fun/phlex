@@ -209,11 +209,16 @@ module Phlex::Compiler
 			compiled
 		end
 
-		# A forwarded block is evaluated before the element opens and may be nil,
-		# so it keeps the runtime call. The runtime closes the element however
-		# its content exits, which the enclosure reproduces.
+		# The runtime closes the element however its content exits, which the
+		# enclosure reproduces. Only the method's own block is forwarded inline,
+		# since another expression is evaluated, and may be nil, when the
+		# element is called.
 		private def compile_standard_element(node, tag)
-			return compile_call_with_content(node, because: "its block is forwarded") if Refract::BlockArgumentNode === node.block
+			if Refract::BlockArgumentNode === node.block
+				return compile_forwarded_element(node, tag) if node.block.expression.nil? && tag != "head"
+
+				return compile_call_with_content(node, because: "its block is forwarded")
+			end
 
 			attributes = compile_attributes(node, node.block ? ">" : "></#{tag}>")
 			return compile_call_with_content(node, because: "it has positional arguments") unless attributes
@@ -225,6 +230,63 @@ module Phlex::Compiler
 				raw("</#{tag}>"),
 				*(flush_after_head if tag == "head"),
 			])
+		end
+
+		# An element given the method's block, as the element method does it: the
+		# buffer and whether to render are read when it's called, the block is
+		# only yielded if there is one, and without one the element is empty.
+		private def compile_forwarded_element(node, tag)
+			attributes = compile_attributes(node, ">")
+			return compile_call_with_content(node, because: "it has positional arguments") unless attributes
+
+			buffer = @locals.fresh(:buffer)
+			length = @locals.fresh(:content_length)
+			content = @locals.fresh(:content)
+			empty = attributes.parts.map { |part| (Output::Guarded === part) ? part.with(closing: "></#{tag}>") : part }
+
+			statements([
+				*attributes.hoisted,
+				write(buffer, call(read(state_local), :buffer)),
+				if_node(
+					call(nil, :block_given?),
+					[
+						if_node(
+							should_render,
+							[
+								opening(buffer, literal("<#{tag}"), *attributes.parts, literal(">")),
+								begin_node(
+									[
+										write(length, call(read(state_local), :output_bytesize)),
+										write(content, yield_self),
+										if_node(call(read(length), :==, call(read(state_local), :output_bytesize)), [element_value_output(read(content), read(buffer))]),
+									],
+									ensure_clause: ensure_node([call(read(buffer), :<<, string("</#{tag}>"))])
+								),
+							],
+							else_body: [yield_self]
+						),
+					],
+					else_body: [if_node(should_render, [opening(buffer, literal("<#{tag}"), *empty, literal("></#{tag}>"))])]
+				),
+				Refract::NilNode.new,
+			])
+		end
+
+		private def yield_self
+			Refract::YieldNode.new(arguments: Refract::ArgumentsNode.new(arguments: [Refract::SelfNode.new]))
+		end
+
+		# How an element method outputs its block's value.
+		private def element_value_output(content, buffer)
+			formatted = @locals.fresh(:formatted)
+
+			elsif_chain(
+				[call(constant("Phlex::SGML::SafeObject"), :===, content), call(read(state_local), :append, call(content, :to_s))],
+				[call(constant("String"), :===, content), call(buffer, :<<, escaped(content))],
+				[call(constant("Symbol"), :===, content), call(buffer, :<<, escaped(call(content, :name)))],
+				[call(Refract::NilNode.new, :equal?, content), Refract::NilNode.new],
+				otherwise: if_node(write(formatted, call(nil, :format_object, content)), [call(buffer, :<<, escaped(read(formatted)))])
+			)
 		end
 
 		private def compile_void_element(node, tag)
@@ -946,6 +1008,13 @@ module Phlex::Compiler
 			state_local
 
 			Output::Append.new(parts:)
+		end
+
+		private def opening(buffer, *parts)
+			@appends += 1
+			state_local
+
+			Output::Opening.new(parts:, buffer:)
 		end
 
 		# Guarded blocks read the state themselves, so only output outside them

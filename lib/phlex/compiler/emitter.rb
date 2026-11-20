@@ -25,6 +25,8 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 				body << child
 			in Output::Enclosed
 				body.concat(enclose(child))
+			in Output::Opening
+				body << chain(child.parts, read(child.buffer))
 			else
 				body << visit(child)
 			end
@@ -83,9 +85,11 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 	# before it has already reached the buffer, as at runtime. The whole
 	# statement evaluates to nil, like the element methods it replaces.
 	private def append(parts)
-		chain = fuse(parts).reduce(buffer) { |receiver, part| call(receiver, :<<, lower(part)) }
+		parenthesized([if_node(should_render, [chain(parts, buffer)]), Refract::NilNode.new])
+	end
 
-		parenthesized([if_node(should_render, [chain]), Refract::NilNode.new])
+	private def chain(parts, receiver)
+		fuse(parts).reduce(receiver) { |chained, part| call(chained, :<<, lower(part, receiver)) }
 	end
 
 	private def fuse(parts)
@@ -98,22 +102,22 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 		end
 	end
 
-	private def lower(part)
+	private def lower(part, receiver)
 		case part
 		in Output::Literal then string(part.text)
 		in Output::Conditional | Output::Expression then part.node
-		in Output::Guarded then guard(part)
+		in Output::Guarded then guard(part, receiver)
 		end
 	end
 
 	# The guard is an expression inside the append chain, so the opening tag's
 	# text has already been appended when the closing text is.
-	private def guard(part)
+	private def guard(part, receiver)
 		done = @locals.fresh(:done)
 
 		begin_node(
-			[write(done, Refract::FalseNode.new), *part.statements, write(done, Refract::TrueNode.new), lower(part.result)],
-			ensure_clause: ensure_node([unless_node(read(done), [call(buffer, :<<, string(part.closing))], inline: true)])
+			[write(done, Refract::FalseNode.new), *part.statements, write(done, Refract::TrueNode.new), lower(part.result, receiver)],
+			ensure_clause: ensure_node([unless_node(read(done), [call(receiver, :<<, string(part.closing))], inline: true)])
 		)
 	end
 end
