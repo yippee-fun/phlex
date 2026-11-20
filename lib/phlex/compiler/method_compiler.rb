@@ -143,7 +143,7 @@ module Phlex::Compiler
 				body: statements([
 					mapping_exceptions([
 						if_node(
-							call(Refract::SelfNode.new, :equal?, read(self_local)),
+							call(read(self_local), :__phlex_equal__?, Refract::SelfNode.new),
 							[write(Locals::STATE, Refract::InstanceVariableReadNode.new(name: :@_state)), compiled],
 							else_body: [original]
 						),

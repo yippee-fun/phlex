@@ -509,4 +509,10 @@ class Phlex::SGML
 		self.class.__send__(:__inlining_changed__, singleton_class, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
 		self
 	end
+
+	# BasicObject#equal? under a name a component won't override. A compiled
+	# block runs its compiled body only when the component says the block's
+	# receiver is itself, rather than asking the receiver, which could be
+	# anything.
+	define_method(:__phlex_equal__?, BasicObject.instance_method(:equal?))
 end

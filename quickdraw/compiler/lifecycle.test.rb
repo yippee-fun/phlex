@@ -216,6 +216,31 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a subclass overriding equal? after compilation stops guarded blocks trusting it" do
+		with_component_files(
+			"identity.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleIdentity < Phlex::HTML
+					def view_template
+						impostor = Object.new
+						impostor.define_singleton_method(:br) { nil }
+						impostor.instance_exec(&block_of { br })
+						plain "ok"
+					end
+
+					def block_of(&block) = block
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleIdentity)
+			assert_equal LifecycleIdentity.new.call, "ok"
+
+			trusting = Class.new(LifecycleIdentity) { def equal?(_) = true }
+			assert_equal trusting.new.call, "ok"
+			assert_equal LifecycleIdentity.new.call, "ok"
+		end
+	end
+
 	test "an element redefined after compilation takes effect by recompiling what inlined it" do
 		with_component_files(
 			"late.rb" => <<~RUBY

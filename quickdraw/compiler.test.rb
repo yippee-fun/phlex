@@ -311,7 +311,7 @@ class CompilerTest < Quickdraw::Test
 					__phlex_self__ = self
 					@items.each { |i|
 						begin
-							if self.equal?(__phlex_self__)
+							if __phlex_self__.__phlex_equal__?(self)
 								__phlex_state__ = @_state
 								(if __phlex_state__.should_render?
 									__phlex_state__.buffer.<<("<li>")
