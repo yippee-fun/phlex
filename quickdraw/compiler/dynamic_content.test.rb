@@ -17,7 +17,7 @@ class DynamicContentCompilerTest < Quickdraw::Test
 
 		refute source.include?("__yield_content__")
 		assert source.include?("output_bytesize")
-		assert source.include?("__implicit_output__")
+		refute source.include?("__implicit_output__")
 	end
 
 	test "implicit output is suppressed when the expression writes to the buffer" do
@@ -254,7 +254,6 @@ class DynamicContentCompilerTest < Quickdraw::Test
 
 	[
 		"next 'title'",
-		"break 'title'",
 		"value = 'title'; value",
 		"redo if false; 'title'",
 		"class << (next 'title' if true); end",
@@ -267,8 +266,19 @@ class DynamicContentCompilerTest < Quickdraw::Test
 				end
 			RUBY
 
-			assert source.include?("__yield_content__")
+			assert source.include?("yield_component")
 		end
+	end
+
+	test "a block that breaks keeps the element call, which the break returns from" do
+		source = compile_equivalent(<<~RUBY, "<h2></h2><p>title</p>")
+			def view_template
+				value = h2 { break "title" }
+				p { value }
+			end
+		RUBY
+
+		assert source.include?("h2 {")
 	end
 
 	test "block parameters still receive the component" do
@@ -282,7 +292,7 @@ class DynamicContentCompilerTest < Quickdraw::Test
 			end
 		RUBY
 
-		assert source.include?("__yield_content__")
+		assert source.include?("yield_component")
 	end
 
 	test "a forwarded block keeps the element call" do

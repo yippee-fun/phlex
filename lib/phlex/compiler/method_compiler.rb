@@ -220,6 +220,11 @@ module Phlex::Compiler
 				return compile_call_with_content(node, because: "its block is forwarded")
 			end
 
+			# A `break` returns from the element method, skipping what follows it.
+			if (Refract::BlockNode === node.block) && breaks?(node.block)
+				return compile_call_with_content(node, because: "its block has a break of its own")
+			end
+
 			attributes = compile_attributes(node, node.block ? ">" : "></#{tag}>")
 			return compile_call_with_content(node, because: "it has positional arguments") unless attributes
 
@@ -327,7 +332,7 @@ module Phlex::Compiler
 			case node.block
 			in nil
 				[]
-			in Refract::BlockNode => block if block.body.nil?
+			in Refract::BlockNode[parameters: nil, body: nil]
 				[]
 			in Refract::BlockNode => block if inlinable?(block)
 				case block.body
@@ -336,38 +341,48 @@ module Phlex::Compiler
 				in Refract::StatementsNode[body: [statement]] if (content = compile_literal_content(statement))
 					[content]
 				in Refract::StatementsNode[body: [Refract::LocalVariableReadNode | Refract::InstanceVariableReadNode => variable]] if element
-					[element_output(variable)]
+					[content_output(variable, element:)]
+				in Refract::StatementsNode[body: [statement]] if pure?(statement) && element
+					content = @locals.fresh(:content)
+					[write(content, statement), content_output(read(content), element:)]
 				in Refract::StatementsNode[body: [statement]] if pure?(statement)
 					[implicit_output(statement)]
 				else
-					inline_dynamic_content(block.body)
+					measured_content(Refract::ParenthesesNode.new(body: visit(block.body)), element:)
 				end
 			in Refract::BlockNode => block
 				@diagnostics.report(node, "#{node.name}'s block is yielded at runtime because #{UNINLINABLE_BLOCK}")
-				[yield_content(compile_block_unguarded(block))]
+				block = compile_block_unguarded(block)
+
+				if element
+					measured_content(call(constant("Phlex::Compiler"), :yield_component, Refract::SelfNode.new, block:), element:)
+				else
+					[yield_content(block)]
+				end
 			end
 		end
 
 		# The runtime outputs a block's value only if the block wrote nothing.
-		private def inline_dynamic_content(body)
+		private def measured_content(value, element:)
 			length = @locals.fresh(:content_length)
 			content = @locals.fresh(:content)
 
 			[
 				write(length, call(read(state_local), :output_bytesize)),
-				write(content, Refract::ParenthesesNode.new(body: visit(body))),
-				if_node(call(read(length), :==, call(read(state_local), :output_bytesize)), [implicit_output(read(content))], inline: true),
+				write(content, value),
+				if_node(call(read(length), :==, call(read(state_local), :output_bytesize)), [content_output(read(content), element:)]),
 			]
 		end
 
-		# An element outputs its block's value itself rather than calling
-		# __implicit_output__, so a String is escaped inline.
-		private def element_output(variable)
-			elsif_chain(
-				[call(constant("Phlex::SGML::SafeObject"), :===, variable), implicit_output(variable)],
-				[call(constant("String"), :===, variable), append(expression(escaped(variable)))],
-				otherwise: implicit_output(variable)
-			)
+		# An element method outputs its block's value itself, while other
+		# helpers call __implicit_output__.
+		private def content_output(content, element:)
+			if element
+				@appends += 1
+				if_node(should_render, [element_value_output(content, buffer)])
+			else
+				implicit_output(content)
+			end
 		end
 
 		private def implicit_output(node)
@@ -419,9 +434,15 @@ module Phlex::Compiler
 		private def render_returns_nil?(node)
 			node.name == :render && @environment.helper?(:render) && case node.block
 				in nil then true
-				in Refract::BlockNode => block then [block.parameters, block.body].compact.none? { |part| BreakScanner.breaks?(part) }
+				in Refract::BlockNode => block then !breaks?(block)
 				else false
 			end
+		end
+
+		# Whether a `break` in the block, or in a default for one of its
+		# parameters, would return from the call it's passed to.
+		private def breaks?(block)
+			[block.parameters, block.body].compact.any? { |part| BreakScanner.breaks?(part) }
 		end
 
 		# An interpolation that writes to the buffer changes what the runtime does
@@ -973,16 +994,24 @@ module Phlex::Compiler
 		# Unlike an element, the runtime has no `ensure`, so a jump out of the
 		# block skips the closing text, and only a block that can be inlined is
 		# compiled. A forwarded block, which may be nil, keeps the runtime call too.
+		# The runtime yields with __yield_content__, so its content is only
+		# inlined while that's Phlex's.
 		private def compile_wrapped_content(node, opening, closing)
 			return compile_call_with_content(node, because: "its block is forwarded or #{UNINLINABLE_BLOCK}") unless inlinable_content?(node.block)
 
+			unless @environment.helper?(:__yield_content__) && @environment.helper?(:__implicit_output__)
+				# The block may be yielded with another `self`, so calls in it are compiled behind a check.
+				return keep_call(node, "__yield_content__ or __implicit_output__ is overridden")
+			end
+
+			@environment.inlined.merge(%i[__yield_content__ __implicit_output__])
 			statements([raw(opening), *compile_content(node), raw(closing)])
 		end
 
 		private def inlinable_content?(block)
 			case block
-			in nil then true
-			in Refract::BlockNode then block.body.nil? || inlinable?(block)
+			in nil | Refract::BlockNode[parameters: nil, body: nil] then true
+			in Refract::BlockNode then inlinable?(block)
 			else false
 			end
 		end

@@ -284,14 +284,30 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<div>")
 					end
 					nil)
-					__phlex_done_3__ = false
+					__phlex_done_4__ = false
 					begin
 						__phlex_content_length_1__ = __phlex_state__.output_bytesize
 						__phlex_content_2__ = (helper)
-						__implicit_output__(__phlex_content_2__) if __phlex_content_length_1__.==(__phlex_state__.output_bytesize)
-						__phlex_done_3__ = true
+						if __phlex_content_length_1__.==(__phlex_state__.output_bytesize)
+							if __phlex_state__.should_render?
+								if ::Phlex::SGML::SafeObject.===(__phlex_content_2__)
+									__phlex_state__.append(__phlex_content_2__.to_s)
+								elsif ::String.===(__phlex_content_2__)
+									__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_content_2__))
+								elsif ::Symbol.===(__phlex_content_2__)
+									__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_content_2__.name))
+								elsif nil.equal?(__phlex_content_2__)
+									nil
+								else
+									if (__phlex_formatted_3__ = format_object(__phlex_content_2__))
+										__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_formatted_3__))
+									end
+								end
+							end
+						end
+						__phlex_done_4__ = true
 					ensure
-						unless __phlex_done_3__
+						unless __phlex_done_4__
 							(if __phlex_state__.should_render?
 								__phlex_state__.buffer.<<("</div>")
 							end
@@ -358,21 +374,26 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<div><h3>")
 					end
 					nil)
-					__phlex_done_1__ = false
+					__phlex_done_2__ = false
 					begin
-						if ::Phlex::SGML::SafeObject.===(@title)
-							__implicit_output__(@title)
-						elsif ::String.===(@title)
-							(if __phlex_state__.should_render?
+						if __phlex_state__.should_render?
+							if ::Phlex::SGML::SafeObject.===(@title)
+								__phlex_state__.append(@title.to_s)
+							elsif ::String.===(@title)
 								__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(@title))
+							elsif ::Symbol.===(@title)
+								__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(@title.name))
+							elsif nil.equal?(@title)
+								nil
+							else
+								if (__phlex_formatted_1__ = format_object(@title))
+									__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_formatted_1__))
+								end
 							end
-							nil)
-						else
-							__implicit_output__(@title)
 						end
-						__phlex_done_1__ = true
+						__phlex_done_2__ = true
 					ensure
-						unless __phlex_done_1__
+						unless __phlex_done_2__
 							(if __phlex_state__.should_render?
 								__phlex_state__.buffer.<<("</h3></div>")
 							end
@@ -407,21 +428,26 @@ class CompilerTest < Quickdraw::Test
 									__phlex_state__.buffer.<<("<li>")
 								end
 								nil)
-								__phlex_done_1__ = false
+								__phlex_done_2__ = false
 								begin
-									if ::Phlex::SGML::SafeObject.===(i)
-										__implicit_output__(i)
-									elsif ::String.===(i)
-										(if __phlex_state__.should_render?
+									if __phlex_state__.should_render?
+										if ::Phlex::SGML::SafeObject.===(i)
+											__phlex_state__.append(i.to_s)
+										elsif ::String.===(i)
 											__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(i))
+										elsif ::Symbol.===(i)
+											__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(i.name))
+										elsif nil.equal?(i)
+											nil
+										else
+											if (__phlex_formatted_1__ = format_object(i))
+												__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_formatted_1__))
+											end
 										end
-										nil)
-									else
-										__implicit_output__(i)
 									end
-									__phlex_done_1__ = true
+									__phlex_done_2__ = true
 								ensure
-									unless __phlex_done_1__
+									unless __phlex_done_2__
 										(if __phlex_state__.should_render?
 											__phlex_state__.buffer.<<("</li>")
 										end

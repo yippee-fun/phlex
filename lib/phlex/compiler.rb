@@ -92,6 +92,10 @@ module Phlex::Compiler
 	# out of the component's method, as at runtime.
 	def self.escape_quotes(value) = value.gsub('"', "&quot;")
 
+	# Compiled code yields to an element's block with this when the block can't
+	# be inlined, as the element method yields to it.
+	def self.yield_component(component) = yield(component)
+
 	# Compiled code serialises one entry of a nested attribute hash with this,
 	# as the runtime does within the whole hash.
 	def self.nested_attributes(key, value, base)
