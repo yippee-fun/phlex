@@ -1,6 +1,6 @@
 [tasks.setup]
 description = "Install all project dependencies."
-run = ["mise install", "bundle install --jobs 4", "bundle install --jobs 4 --gemfile phlex-native/Gemfile"]
+run = ["mise install", "bundle install --jobs 4", "bundle install --jobs 4 --gemfile phlex-native/Gemfile", "bundle exec qt browser install chromium webkit"]
 
 [tasks.test]
 description = "Run tests"
@@ -23,8 +23,8 @@ description = "Run benchmarks"
 run = ["bundle exec ./bench.rb"]
 
 [tasks.browser_tests]
-description = "Run browser tests"
-run = ["bundle exec ./browser_tests.rb"]
+description = "Run browser tests in Chromium and WebKit"
+run = ["PHLEX_BROWSER=chromium bundle exec qt quickdraw/browser", "PHLEX_BROWSER=webkit bundle exec qt --max quickdraw/browser"]
 
 [tasks."native:compile"]
 description = "Compile phlex-native from source"
@@ -49,3 +49,4 @@ run = "for gem in pkg/*.gem; do gem push \"$gem\"; done"
 
 [tools]
 ruby = "latest"
+node = "latest"

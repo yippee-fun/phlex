@@ -35,3 +35,7 @@ Phlex::Loader.eager_load
 
 # Previous content of test helper now starts here
 $LOAD_PATH.unshift(File.expand_path("../fixtures", __dir__))
+
+Quickdraw.configure do |config|
+	config.browser("quickdraw/browser/**/*.test.rb", browser: ENV.fetch("PHLEX_BROWSER", "chromium"))
+end
