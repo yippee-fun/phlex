@@ -18,4 +18,4 @@ group :development do
 	gem "benchmark-ips"
 end
 
-gem "refract", github: "yippee-fun/refract", ref: "ea4fe6900694d88504a05d4e09e65c980475e76e"
+gem "refract", github: "yippee-fun/refract"
