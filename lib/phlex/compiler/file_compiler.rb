@@ -190,6 +190,14 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		probe = Phlex::Compiler.probe(namespace, usings:)
 		environments = {}.compare_by_identity
 
+		if (redefined = Phlex::Compiler::CoreCalls.redefined)
+			@diagnostics.refuse(definitions.first.node, "#{redefined} is redefined, and compiled code calls it where the runtime calls the original")
+		end
+
+		if (refined = Phlex::Compiler::CoreCalls.refined(probe.refinements, probe.component))
+			@diagnostics.refuse(@usings.first&.node || definitions.first.node, "this file refines #{refined}, which compiled code calls where the runtime calls it unrefined")
+		end
+
 		definitions.group_by { |definition| @targets[definition.node.start_line].component }.filter_map do |component, component_definitions|
 			unless probe.component.equal?(component)
 				copied, others = component_definitions.partition { |definition| copied?(component, probe.component, definition.node.name) }

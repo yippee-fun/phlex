@@ -30,6 +30,8 @@ class CompilationEquivalenceTest < Quickdraw::Test
 		"conditional_using" => /isn.t a plain top-level statement naming a constant/,
 		"ruby2_keywords_splat" => /arguments the compiler can.t read/,
 		"refinement_same_line" => /`using` applies to only part of the file/,
+		"refined_core_method" => /refines String#include\?, which compiled code calls/,
+		"refined_escape" => /refines #<Class:\w+::Escape>#html_escape/,
 	}.merge(
 		# Only CRuby can tell a method made by `def` from one made otherwise.
 		defined?(RubyVM::InstructionSequence) ? {} : { "superseded_definitions" => /the file has changed since it was loaded/ }

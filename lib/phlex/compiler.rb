@@ -27,10 +27,12 @@ require "refract"
 # compiled approximately. Refused: a method marked `ruby2_keywords`, a `using`
 # that applies to only part of its file, two definitions of a method on one
 # line, a local or bare call named like a local the compiler generates
-# (`__phlex_…`), a file
-# edited since it was loaded, and redefining an inlined element or helper on
-# a single instance with `extend` or a singleton method. Redefining one on a
-# class or by including a module recompiles whatever inlined it.
+# (`__phlex_…`), a file edited since it was loaded, a refinement in the file
+# of a method compiled code calls for the runtime, such as String#include?,
+# or such a core method redefined in Ruby, and redefining an inlined element
+# or helper on a single instance with `extend` or a singleton method.
+# Redefining one on a class or by including a module recompiles whatever
+# inlined it.
 #
 # Four differences remain, all deliberate:
 # - Changing what an inlined element or helper resolves to through a module
@@ -59,7 +61,7 @@ module Phlex::Compiler
 	Target = Data.define(:component, :name, :line, :compiled, :replaced)
 
 	# What reopening a definition's class and module statements reached.
-	Probe = Data.define(:component, :set, :method_resolver)
+	Probe = Data.define(:component, :set, :method_resolver, :refinements)
 
 	MUTEX = Mutex.new
 
@@ -275,16 +277,17 @@ module Phlex::Compiler
 	end
 
 	# Reopens the class and module statements around a definition with nothing
-	# inside but a call reporting the class reached and what `Set` names there.
-	# The method resolver captures the file's refinements, so element and helper
-	# lookup uses the same lexical scope as the compiled definitions. The
-	# statements are copied without their superclasses, so they only reopen.
+	# inside but a call reporting the class reached, what `Set` names there and
+	# the refinements active there. The method resolver captures the file's
+	# refinements, so element and helper lookup uses the same lexical scope as
+	# the compiled definitions. The statements are copied without their
+	# superclasses, so they only reopen.
 	# Bind and call separately: TruffleRuby's bind_call loses the caller's refinements.
 	def self.probe(namespace, usings: [])
 		report = parse(<<~RUBY, PROBE_PATH).statements.body.first
 			::Phlex::Compiler.__probe__(self, defined?(Set) && Set, ->(component, name) {
 				::Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind(component).call(name)
-			})
+			}, ::Module.used_modules)
 		RUBY
 		program = Refract::StatementsNode.new(body: [*usings, wrap_in_namespace(namespace, [report])])
 		source = Refract::Formatter.new.format_node(program).source
@@ -302,8 +305,8 @@ module Phlex::Compiler
 		SCOPES.pop
 	end
 
-	def self.__probe__(component, set, method_resolver)
-		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, set:, method_resolver:)
+	def self.__probe__(component, set, method_resolver, refinements)
+		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, set:, method_resolver:, refinements:)
 	end
 
 	# Whether the class is still the one its name refers to. After a reload the
