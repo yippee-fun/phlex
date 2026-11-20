@@ -40,6 +40,19 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				def defaulted(text = (hr; "default"))
 					div { text }
 				end
+
+				def shadowed
+					tap { plain title; title = "local" }
+				end
+
+				def reserved_call
+					div { __phlex_state__ }
+				end
+
+				def running_total
+					total = 0
+					tap { [1].each { |n| total += n }; total += 1; div { total.to_s } }
+				end
 			end
 
 			class self::Dynamic < Phlex::HTML
@@ -318,8 +331,10 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				"16: doctype keeps its call because it has arguments or a block",
 				"17: fragment keeps its call because its block has parameters or is forwarded",
 				"25: more than one method is defined on this line, so the compiler can't tell which definition is live",
-				"27: __phlex_x__ is a local the compiler reserves; names starting with __phlex_ can't be used",
+				"27: __phlex_x__ is a name the compiler reserves for locals; names starting with __phlex_ can't be used",
 				"32: hr keeps its call because it's in a parameter default",
+				"37: calls in this block are left to the runtime because `title` is called before it's assigned",
+				"40: __phlex_state__ is a name the compiler reserves for locals; names starting with __phlex_ can't be used",
 			]
 
 			assert diagnostics.all? { |diagnostic| diagnostic.path == path }

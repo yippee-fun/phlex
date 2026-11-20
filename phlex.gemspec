@@ -30,6 +30,6 @@ Gem::Specification.new do |spec|
 	spec.require_paths = ["lib"]
 
 	spec.add_dependency "zeitwerk", "~>2.7"
-	spec.add_dependency "refract", "~> 1.0"
+	spec.add_dependency "refract", "~> 1.2"
 	spec.add_dependency "erb", ">= 5.0.2" # ERB::Escape is Ractor-safe from here
 end

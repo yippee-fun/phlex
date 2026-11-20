@@ -20,7 +20,7 @@ class CompilationEquivalenceTest < Quickdraw::Test
 	# Cases the compiler is expected to refuse, with the reason it must give.
 	REFUSED = {
 		"same_line_definitions" => /more than one method is defined on this line/,
-		"reserved_locals" => /__phlex_done_1__ is a local the compiler reserves/,
+		"reserved_locals" => /__phlex_done_1__ is a name the compiler reserves for locals/,
 		"refinement_mid_file" => /`using` applies to only part of the file/,
 		"ruby2_keywords" => /marked ruby2_keywords/,
 		"ruby2_keywords_reopened" => /marked ruby2_keywords/,

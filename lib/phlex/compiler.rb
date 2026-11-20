@@ -26,12 +26,13 @@ require "refract"
 # refused with a Phlex::Compiler::Error naming the file and line rather than
 # compiled approximately. Refused: a method marked `ruby2_keywords`, a `using`
 # that applies to only part of its file, two definitions of a method on one
-# line, a local named like one the compiler generates (`__phlex_…`), a file
+# line, a local or bare call named like a local the compiler generates
+# (`__phlex_…`), a file
 # edited since it was loaded, and redefining an inlined element or helper on
 # a single instance with `extend` or a singleton method. Redefining one on a
 # class or by including a module recompiles whatever inlined it.
 #
-# Three differences remain, all deliberate:
+# Four differences remain, all deliberate:
 # - Changing what an inlined element or helper resolves to through a module
 #   already mixed into a compiled component isn't seen: defining, removing or
 #   undefining it on that module, or mixing another module into it. Call
@@ -40,7 +41,12 @@ require "refract"
 #   a value's `to_s`, `to_h` or `iso8601` runs on every render rather than once
 #   per distinct set of attributes.
 # - Method#source_location of a compiled method names the generated source;
-#   exceptions are mapped back to the real file.
+#   exceptions are mapped back to the real file. `local_variables` and
+#   `binding` in a compiled method also see the compiler's `__phlex_` locals.
+# - A block passed to a method the compiler doesn't know is compiled alongside
+#   a copy of the original, used when the block runs with another `self`. A
+#   literal Ruby reuses on each evaluation, such as a regular expression or a
+#   range, is a different object in each copy.
 #
 # Methods a component gains from mixins aren't compiled, which only costs speed.
 module Phlex::Compiler

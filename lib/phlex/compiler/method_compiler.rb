@@ -80,8 +80,8 @@ module Phlex::Compiler
 		visit Refract::DefNode do |node|
 			return node unless @stack.size == 1
 
-			if (reserved = LocalsScanner.names(node).find { |name| name.start_with?("__phlex_") })
-				@diagnostics.refuse(node, "#{reserved} is a local the compiler reserves; names starting with __phlex_ can't be used")
+			if (reserved = (LocalsScanner.names(node) | BareCallScanner.names(node)).find { |name| name.start_with?("__phlex_") })
+				@diagnostics.refuse(node, "#{reserved} is a name the compiler reserves for locals; names starting with __phlex_ can't be used")
 				return node
 			end
 
@@ -114,33 +114,46 @@ module Phlex::Compiler
 		#
 		# The block may outlive the method or be built before rendering starts, so
 		# the compiled body reads the state afresh rather than trusting the one
-		# read on entry, and maps its own exceptions, as the method's rescue may
-		# no longer be on the stack.
+		# read on entry, and the block maps its own exceptions, as the method's
+		# rescue may no longer be on the stack.
 		visit Refract::BlockNode do |node|
-			return super(node) unless @compiling_calls && node.body
+			return super(node) unless @compiling_calls
+			return without_compiling_calls { super(node) } unless node.body
 
 			if @guarded_blocks == GUARDED_BLOCK_DEPTH_LIMIT
 				@diagnostics.report(node, "calls in this block are left to the runtime because it's nested #{GUARDED_BLOCK_DEPTH_LIMIT} blocks deep")
-				return without_compiling_calls { super(node) }
+				return mapping_block_exceptions(without_compiling_calls { super(node) })
+			end
+
+			if (conflict = ReparseScanner.conflict(node))
+				@diagnostics.report(node, "calls in this block are left to the runtime because #{conflict}")
+				return mapping_block_exceptions(without_compiling_calls { super(node) })
 			end
 
 			appends = @appends
 			@guarded_blocks += 1
 			compiled = visit(node.body)
 			@guarded_blocks -= 1
-			return node if appends == @appends
+			return mapping_block_exceptions(without_compiling_calls { super(node) }) if appends == @appends
 
 			original = without_compiling_calls { visit(node.body) }
 
 			node.copy(
+				parameters: without_compiling_calls(because: "it's in a parameter default") { visit(node.parameters) },
 				body: statements([
-					if_node(
-						call(Refract::SelfNode.new, :equal?, read(self_local)),
-						[mapping_exceptions([write(Locals::STATE, Refract::InstanceVariableReadNode.new(name: :@_state)), compiled])],
-						else_body: [original]
-					),
+					mapping_exceptions([
+						if_node(
+							call(Refract::SelfNode.new, :equal?, read(self_local)),
+							[write(Locals::STATE, Refract::InstanceVariableReadNode.new(name: :@_state)), compiled],
+							else_body: [original]
+						),
+					]),
 				])
 			)
+		end
+
+		private def mapping_block_exceptions(block)
+			block.copy(body: statements([mapping_exceptions([block.body])]))
 		end
 
 		private def mapping_exceptions(body)
@@ -148,8 +161,8 @@ module Phlex::Compiler
 				body,
 				rescue_clause: rescue_node(
 					[constant("Exception")],
-					Refract::LocalVariableTargetNode.new(name: Locals::EXCEPTION),
-					[call(constant("Kernel"), :raise, call(nil, :__map_exception__, read(Locals::EXCEPTION)))]
+					Refract::LocalVariableTargetNode.new(name: Locals::EXCEPTION, depth: nil),
+					[call(constant("Kernel"), :raise, call(constant("Phlex"), :__map_exception__, read(Locals::EXCEPTION)))]
 				)
 			)
 		end

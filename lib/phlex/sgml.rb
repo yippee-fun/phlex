@@ -509,20 +509,4 @@ class Phlex::SGML
 		self.class.__send__(:__inlining_changed__, singleton_class, modules.flat_map { |mod| mod.instance_methods + mod.private_instance_methods })
 		self
 	end
-
-	def __map_exception__(exception)
-		return exception unless (locations = exception.backtrace_locations)
-
-		exception.set_backtrace(
-			locations.map do |loc|
-				if (generation = Phlex.__compiled_source_maps__[loc.path]) && (line = generation.lines[loc.lineno])
-					"#{generation.path}:#{line}:in '#{loc.label}'"
-				else
-					loc.to_s
-				end
-			end
-		)
-
-		exception
-	end
 end

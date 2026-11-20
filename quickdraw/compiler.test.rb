@@ -29,7 +29,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -49,7 +49,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -76,7 +76,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -104,7 +104,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -134,7 +134,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -167,7 +167,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -191,7 +191,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -216,7 +216,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -254,7 +254,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -294,7 +294,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -310,8 +310,8 @@ class CompilerTest < Quickdraw::Test
 				begin
 					__phlex_self__ = self
 					@items.each { |i|
-						if self.equal?(__phlex_self__)
-							begin
+						begin
+							if self.equal?(__phlex_self__)
 								__phlex_state__ = @_state
 								(if __phlex_state__.should_render?
 									__phlex_state__.buffer.<<("<li>")
@@ -333,17 +333,17 @@ class CompilerTest < Quickdraw::Test
 									__phlex_state__.buffer.<<("</li>")
 								end
 								nil)
-							rescue ::Exception => __phlex_exception__
-								::Kernel.raise(__map_exception__(__phlex_exception__))
+							else
+								li {
+									i
+								}
 							end
-						else
-							li {
-								i
-							}
+						rescue ::Exception => __phlex_exception__
+							::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 						end
 					}
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY

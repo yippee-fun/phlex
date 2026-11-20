@@ -8,7 +8,7 @@ require_relative "fixtures/page"
 require_relative "fixtures/layout"
 require_relative "fixtures/dynamic_list"
 
-RubyVM::YJIT.enable
+puts "YJIT #{(defined?(RubyVM::YJIT) && RubyVM::YJIT.enabled?) ? 'on' : 'off'}"
 
 sample = Example::Page.new.call
 puts "#{sample.bytesize} bytes"
