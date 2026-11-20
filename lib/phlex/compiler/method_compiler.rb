@@ -438,11 +438,11 @@ module Phlex::Compiler
 				return Piece.new(parts: [part], raises: false)
 			end
 
-			interpolated = Refract::InterpolatedStringNode === value
+			quotable = ascii_compatible_interpolation?(value)
 			reference = Phlex::SGML::Attributes.reference_attribute?(name)
-			value = hoisted_local(value, hoisted) if hoist
+			value = hoisted_local(value, hoisted) if hoist || (quotable && !reference)
 
-			if interpolated && !reference
+			if quotable && !reference
 				return Piece.new(parts: [literal(" #{name}=\""), expression(quoted(value)), literal('"')], raises: false)
 			end
 
@@ -450,9 +450,18 @@ module Phlex::Compiler
 			Piece.new(parts: [expression(call(constant("Phlex::SGML::Attributes"), serializer, key, string(name), value))], raises: true)
 		end
 
-		# An interpolation is always a String, so it only needs its quotes escaped.
+		# An interpolation is always a String, so it only needs its quotes escaped,
+		# which can only raise if its encoding isn't ASCII-compatible. Literal text
+		# rules that out, as interpolating such a string into it raises first.
+		private def ascii_compatible_interpolation?(node)
+			Refract::InterpolatedStringNode === node && node.parts.any? { |part| Refract::StringNode === part && !part.unescaped.empty? }
+		end
+
+		# The runtime only copies the string if it has quotes to escape.
 		private def quoted(node)
-			call(node, :gsub, string('"'), string("&quot;"))
+			parenthesized([
+				if_node(call(node, :include?, string('"')), [call(constant("Phlex::Compiler"), :escape_quotes, node)], else_body: [node]),
+			])
 		end
 
 		private def hoisted_local(node, hoisted)

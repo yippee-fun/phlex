@@ -86,6 +86,10 @@ module Phlex::Compiler
 	# literal, since before Ruby 3.4 `**nil` is only allowed in a call.
 	def self.keywords(**keywords) = keywords
 
+	# Compiled code escapes quotes with this, so the match data gsub sets stays
+	# out of the component's method, as at runtime.
+	def self.escape_quotes(value) = value.gsub('"', "&quot;")
+
 	# Compile each component on its first render. A component that fails to
 	# compile is reported to `on_failure` once and keeps rendering uncompiled,
 	# so a compiler bug costs speed, never a page.
