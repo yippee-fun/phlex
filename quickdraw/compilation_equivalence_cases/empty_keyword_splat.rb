@@ -7,11 +7,14 @@ module EquivalenceCases
 
 			def initialize(**attrs)
 				@attrs = attrs
+				@nothing = nil
 			end
 
 			def view_template
 				div(**@attrs) { "x" }
 				div(**{}) { "empty" }
+				div(**@nothing) { "nil" }
+				div(id: "b", **@nothing) { "nil with a key" }
 			end
 		end
 	end

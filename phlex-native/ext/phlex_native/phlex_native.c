@@ -239,6 +239,26 @@ static int put_tokens(output_t *o, VALUE tokens, long start) {
 }
 
 static int put_nested(output_t *o, VALUE hash, long prefix_length);
+static int unsafe_attribute_p(const char *p, long n);
+
+// Whether Ruby must check a nested name joined to its base: it normalises to
+// an unsafe name, such as `http-equiv`, or isn't ASCII, which Ruby downcases.
+static int nested_name_needs_ruby_p(const char *name, long n) {
+	char normalized[NORMALIZED_CAPACITY];
+	long normalized_length = 0;
+
+	for (long i = 0; i < n; i++) {
+		unsigned char c = (unsigned char)name[i];
+		if (c >= 0x80) return 1;
+		unsigned char lower = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+		if ((lower >= 'a' && lower <= 'z') || lower == '-') {
+			if (normalized_length == NORMALIZED_CAPACITY) return 0;
+			normalized[normalized_length++] = lower;
+		}
+	}
+
+	return unsafe_attribute_p(normalized, normalized_length);
+}
 
 static int nested_each(VALUE k, VALUE v, VALUE arg) {
 	nested_t *nested = (nested_t *)arg;
@@ -260,6 +280,7 @@ static int nested_each(VALUE k, VALUE v, VALUE arg) {
 			name[i] = (dasherize && p[i] == '_') ? '-' : p[i];
 		}
 		length = nested->prefix_length + n;
+		if (!safe_value_p(v) && nested_name_needs_ruby_p(o->prefix, length)) goto fallback;
 	}
 
 	if (v == Qtrue) {
@@ -484,7 +505,7 @@ static int top_level_each(VALUE k, VALUE v, VALUE arg) {
 	const char *p;
 	long n;
 	int dasherize;
-	if (!key_bytes(k, &p, &n, &dasherize)) goto fallback;
+	if (!key_bytes(k, &p, &n, &dasherize) || n == 0) goto fallback;
 
 	// The name is copied out of the key so it can't move while the value is written.
 	char stack_name[256];

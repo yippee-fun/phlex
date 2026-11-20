@@ -143,8 +143,7 @@ class CompilerMagicCommentsTest < Quickdraw::Test
 	end
 
 	test "an encoding comment after a byte order mark is forwarded" do
-		# TruffleRuby fails to load a file like this at all.
-		next if RUBY_ENGINE == "truffleruby"
+		skip "TruffleRuby fails to load a file like this at all" if RUBY_ENGINE == "truffleruby"
 
 		results = render_before_and_after_compiling("MagicCommentsByteOrderMark", <<~RUBY)
 			\xEF\xBB\xBF# encoding: ascii-8bit
