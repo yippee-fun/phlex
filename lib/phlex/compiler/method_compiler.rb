@@ -886,8 +886,9 @@ module Phlex::Compiler
 		# Whether evaluating the node can't have side effects or raise, so it's
 		# safe to evaluate it inside an append that may be skipped. Constants are
 		# excluded: reading one can autoload or raise NameError. So are
-		# interpolations and splats, which call to_s and to_hash. Conditionals
-		# over pure operands are pure, since they only choose between them.
+		# interpolations and splats, which call to_s and to_hash, and hash keys
+		# that could have a `hash` method of their own. Conditionals over pure
+		# operands are pure, since they only choose between them.
 		private def pure?(node)
 			case node
 			in nil | Refract::StringNode | Refract::SymbolNode | Refract::IntegerNode | Refract::FloatNode |
@@ -896,7 +897,7 @@ module Phlex::Compiler
 				Refract::LocalVariableReadNode | Refract::InstanceVariableReadNode | Refract::EmbeddedVariableNode
 				true
 			in Refract::ArrayNode | Refract::HashNode | Refract::KeywordHashNode then node.elements.all? { |element| pure?(element) }
-			in Refract::AssocNode then pure?(node.key) && pure?(node.value)
+			in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode | Refract::IntegerNode | Refract::FloatNode | Refract::NilNode | Refract::TrueNode | Refract::FalseNode] then pure?(node.value)
 			in Refract::InterpolatedStringNode then node.parts.all? { |part| Refract::StringNode === part }
 			in Refract::ParenthesesNode then pure?(node.body)
 			in Refract::StatementsNode then node.body.all? { |statement| pure?(statement) }
