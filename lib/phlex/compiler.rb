@@ -90,6 +90,14 @@ module Phlex::Compiler
 	# out of the component's method, as at runtime.
 	def self.escape_quotes(value) = value.gsub('"', "&quot;")
 
+	# Compiled code serialises one entry of a nested attribute hash with this,
+	# as the runtime does within the whole hash.
+	def self.nested_attributes(key, value, base)
+		buffer = +""
+		Phlex::SGML::Attributes.generate_nested_attributes({ key => value }, base, buffer)
+		buffer
+	end
+
 	# Compile each component on its first render. A component that fails to
 	# compile is reported to `on_failure` once and keeps rendering uncompiled,
 	# so a compiler bug costs speed, never a page.

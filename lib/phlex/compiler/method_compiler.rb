@@ -9,9 +9,8 @@ module Phlex::Compiler
 		Attributes = Data.define(:hoisted, :parts)
 		NO_ATTRIBUTES = Attributes.new(hoisted: [], parts: [])
 
-		# One attribute's contribution to the opening tag, and whether
-		# evaluating it runs the serialiser, which can raise.
-		Piece = Data.define(:parts, :raises)
+		# A part of the opening tag that runs a serialiser, which can raise.
+		Serialized = Data.define(:node)
 
 		TokenChoice = Data.define(:condition, :truthy, :falsy)
 		TOKEN_CONDITIONS_LIMIT = 3
@@ -418,7 +417,7 @@ module Phlex::Compiler
 				@diagnostics.report(node, "#{node.name}'s attributes are serialised together because #{reason}")
 				nil
 			in Array
-				Attributes.new(hoisted:, parts: attribute_parts(pieces, closing))
+				Attributes.new(hoisted:, parts: attribute_parts(pieces.flatten(1), closing))
 			end
 		end
 
@@ -428,50 +427,95 @@ module Phlex::Compiler
 			(Refract::ImplicitNode === assoc.value) ? assoc.value.value : assoc.value
 		end
 
+		# One attribute's parts of the opening tag.
 		private def attribute_piece(key, key_value, value, hoisted, hoist:)
 			if (static = static_attribute_value(value))
-				return Piece.new(parts: [literal(serialized_attribute(key_value, static[0]))], raises: false)
+				return [literal(serialized_attribute(key_value, static[0]))]
 			end
 
 			name = Phlex::SGML::Attributes.attribute_name(key_value)
 			Phlex::SGML::Attributes.validate_attribute_name(key_value, name)
 
 			if (folded = fold_conditional(value) { |leaf| (static = static_attribute_value(leaf)) && string(serialized_attribute(key_value, static[0])) })
-				part = hoist ? expression(hoisted_local(folded, hoisted)) : Output::Conditional.new(folded)
-				return Piece.new(parts: [part], raises: false)
+				return [hoist ? expression(hoisted_local(folded, hoisted)) : Output::Conditional.new(folded)]
 			end
 
 			if (tokens = token_list(key_value, value, hoisted))
-				return Piece.new(parts: [Output::Conditional.new(tokens)], raises: false)
+				return [Output::Conditional.new(tokens)]
+			end
+
+			reference = Phlex::SGML::Attributes.reference_attribute?(name)
+
+			if !reference && (nested = nested_attributes(key_value, name, value, hoisted))
+				return nested
 			end
 
 			quotable = ascii_compatible_interpolation?(value)
-			reference = Phlex::SGML::Attributes.reference_attribute?(name)
 			value = hoisted_local(value, hoisted) if hoist || (quotable && !reference)
 
 			if quotable && !reference
-				return Piece.new(parts: [literal(" #{name}=\""), expression(quoted(value)), literal('"')], raises: false)
+				return [literal(" #{name}=\""), expression(quoted(value)), literal('"')]
 			end
 
 			if reference
-				return Piece.new(parts: [expression(call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value))], raises: true)
+				return [Serialized.new(call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value))]
 			end
 
 			value = hoisted_local(value, hoisted) unless hoist
-			Piece.new(parts: [expression(typed_attribute(key, name, value))], raises: true)
+			[Serialized.new(typed_attribute(value, name) { call(constant("Phlex::SGML::Attributes"), :attribute, key, string(name), value) })]
 		end
 
 		# What the serialiser returns, without calling it for true, nil, false or
 		# a String, built by appending as the serialiser builds it, since that
 		# decides its encoding. The value is read more than once, so it must be a
 		# local of the compiler's, which a String's methods can't reassign.
-		private def typed_attribute(key, name, value)
+		private def typed_attribute(value, name)
 			elsif_chain(
 				[call(Refract::TrueNode.new, :equal?, value), string(" #{name}")],
 				[call(constant("String"), :===, value), call(call(call(string(" #{name}=\""), :+@), :<<, quoted(value)), :<<, string('"'))],
-				[value, call(constant("Phlex::SGML::Attributes"), :attribute, key, string(name), value)],
+				[value, yield],
 				otherwise: string("")
 			)
+		end
+
+		# A hash of nested attributes with literal keys, such as `data:`, is
+		# serialised entry by entry. Static entries are serialised now, and each
+		# dynamic value is evaluated into a local where the hash is, then
+		# serialised in order. A `style:` hash is serialised as styles, so it's
+		# left to the serialiser.
+		private def nested_attributes(key_value, name, value, hoisted)
+			return unless Refract::HashNode === value && key_value != :style
+
+			base = "#{name}-"
+			return unless value.elements.all? { |assoc| assoc in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode] }
+
+			entries = value.elements.map { |assoc| [static_value(assoc.key), assoc.key, attribute_value(assoc)] }
+			return unless entries.map(&:first).uniq.length == entries.length
+
+			begin
+				entries = entries.map do |(nested_key_value, nested_key, nested_value)|
+					nested_name = Phlex::Compiler.nested_attributes(nested_key_value, true, base).delete_prefix(" ")
+
+					if (static = static_attribute_value(nested_value))
+						[:static, Phlex::Compiler.nested_attributes(nested_key_value, static[0], base)]
+					else
+						[:dynamic, nested_key, nested_name, nested_value]
+					end
+				end
+			rescue
+				# Left to the serialiser, which skips a key whose value is nil or false.
+				return
+			end
+
+			entries.map do |entry|
+				case entry
+				in [:static, text]
+					literal(text)
+				in [:dynamic, nested_key, nested_name, nested_value]
+					nested_value = hoisted_local(nested_value, hoisted)
+					Serialized.new(typed_attribute(nested_value, nested_name) { call(constant("Phlex::Compiler"), :nested_attributes, nested_key, nested_value, string(base)) })
+				end
+			end
 		end
 
 		private def elsif_chain(*branches, otherwise:)
@@ -579,16 +623,23 @@ module Phlex::Compiler
 		end
 
 		# The runtime builds the whole attribute string before appending any of
-		# it, so if a value is invalid the tag closes empty. Pieces that can raise
-		# are all evaluated into locals in the first part, and appended after.
-		private def attribute_parts(pieces, closing)
-			raising = pieces.select(&:raises)
-			return pieces.flat_map(&:parts) if raising.empty?
+		# it, so if a value is invalid the tag closes empty. Serialisations are
+		# all evaluated into locals in the first part, and appended after.
+		private def attribute_parts(parts, closing)
+			writes = []
 
-			locals = raising.to_h { |piece| [piece, @locals.fresh(:attribute)] }
-			writes = raising.map { |piece| write(locals[piece], piece.parts.first.node) }
-			parts = pieces.flat_map { |piece| locals.key?(piece) ? [expression(read(locals[piece]))] : piece.parts }
-			parts[0] = Output::Guarded.new(statements: writes, result: parts[0], closing:)
+			parts = parts.map do |part|
+				case part
+				in Serialized[node]
+					local = @locals.fresh(:attribute)
+					writes << write(local, node)
+					expression(read(local))
+				else
+					part
+				end
+			end
+
+			parts[0] = Output::Guarded.new(statements: writes, result: parts[0], closing:) if writes.any?
 			parts
 		end
 
