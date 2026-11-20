@@ -42,7 +42,7 @@ jobs:
 
       - name: Generate coverage report
         run: |
-          COVERAGE=true bundle exec qd
+          bundle exec qd --coverage
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
@@ -50,7 +50,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: "./coverage"
+          path: "./.quickdraw/coverage"
 
       - name: Deploy to GitHub Pages
         id: deployment
