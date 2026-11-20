@@ -289,7 +289,7 @@ module Phlex::Compiler
 				[call(constant("Phlex::SGML::SafeObject"), :===, content), call(read(state_local), :append, call(content, :to_s))],
 				[call(constant("String"), :===, content), call(buffer, :<<, escaped(content))],
 				[call(constant("Symbol"), :===, content), call(buffer, :<<, escaped(call(content, :name)))],
-				[call(Refract::NilNode.new, :equal?, content), Refract::NilNode.new],
+				[call(Refract::NilNode.new, :===, content), Refract::NilNode.new],
 				otherwise: if_node(write(formatted, call(nil, :format_object, content)), [call(buffer, :<<, escaped(read(formatted)))])
 			)
 		end
@@ -614,7 +614,7 @@ module Phlex::Compiler
 		# local of the compiler's, which a String's methods can't reassign.
 		private def typed_attribute(value, name)
 			elsif_chain(
-				[call(Refract::TrueNode.new, :equal?, value), string(" #{name}")],
+				[call(Refract::TrueNode.new, :===, value), string(" #{name}")],
 				[call(constant("String"), :===, value), call(call(call(string(" #{name}=\""), :+@), :<<, quoted(value)), :<<, string('"'))],
 				[value, yield],
 				otherwise: string("")

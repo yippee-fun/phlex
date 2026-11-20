@@ -68,7 +68,7 @@ class CompilerTest < Quickdraw::Test
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
 							__phlex_done_3__ = false
-							__phlex_attribute_2__ = if true.equal?(__phlex_value_1__)
+							__phlex_attribute_2__ = if true.===(__phlex_value_1__)
 								" class"
 							elsif ::String.===(__phlex_value_1__)
 								' class="'.+@.<<((if __phlex_value_1__.include?('"')
@@ -108,7 +108,7 @@ class CompilerTest < Quickdraw::Test
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
 							__phlex_done_3__ = false
-							__phlex_attribute_2__ = if true.equal?(__phlex_value_1__)
+							__phlex_attribute_2__ = if true.===(__phlex_value_1__)
 								" id"
 							elsif ::String.===(__phlex_value_1__)
 								' id="'.+@.<<((if __phlex_value_1__.include?('"')
@@ -150,7 +150,7 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<a").<<(begin
 							__phlex_done_5__ = false
 							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.reference_attribute(:href, "href", __phlex_value_1__)
-							__phlex_attribute_4__ = if true.equal?(__phlex_value_2__)
+							__phlex_attribute_4__ = if true.===(__phlex_value_2__)
 								" id"
 							elsif ::String.===(__phlex_value_2__)
 								' id="'.+@.<<((if __phlex_value_2__.include?('"')
@@ -195,7 +195,7 @@ class CompilerTest < Quickdraw::Test
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
 							__phlex_done_4__ = false
-							__phlex_attribute_3__ = if true.equal?(__phlex_value_2__)
+							__phlex_attribute_3__ = if true.===(__phlex_value_2__)
 								" id"
 							elsif ::String.===(__phlex_value_2__)
 								' id="'.+@.<<((if __phlex_value_2__.include?('"')
@@ -296,7 +296,7 @@ class CompilerTest < Quickdraw::Test
 									__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_content_2__))
 								elsif ::Symbol.===(__phlex_content_2__)
 									__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_content_2__.name))
-								elsif nil.equal?(__phlex_content_2__)
+								elsif nil.===(__phlex_content_2__)
 									nil
 								else
 									if (__phlex_formatted_3__ = format_object(__phlex_content_2__))
@@ -383,7 +383,7 @@ class CompilerTest < Quickdraw::Test
 								__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(@title))
 							elsif ::Symbol.===(@title)
 								__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(@title.name))
-							elsif nil.equal?(@title)
+							elsif nil.===(@title)
 								nil
 							else
 								if (__phlex_formatted_1__ = format_object(@title))
@@ -437,7 +437,7 @@ class CompilerTest < Quickdraw::Test
 											__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(i))
 										elsif ::Symbol.===(i)
 											__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(i.name))
-										elsif nil.equal?(i)
+										elsif nil.===(i)
 											nil
 										else
 											if (__phlex_formatted_1__ = format_object(i))
