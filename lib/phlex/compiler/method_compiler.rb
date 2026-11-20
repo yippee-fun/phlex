@@ -451,10 +451,20 @@ module Phlex::Compiler
 			end
 
 			quotable = ascii_compatible_interpolation?(value)
-			value = hoisted_local(value, hoisted) if hoist || (quotable && !reference)
+			safe_prefix = reference && quotable && safe_reference_prefix?(value)
+			value = hoisted_local(value, hoisted) if hoist || (quotable && !reference) || safe_prefix
 
 			if quotable && !reference
 				return [literal(" #{name}=\""), expression(quoted(value)), literal('"')]
+			end
+
+			if safe_prefix
+				return [
+					Serialized.new(elsif_chain(
+						[decodable(value), Refract::InterpolatedStringNode.new(parts: [string(" #{name}=\""), embedded(quoted(value)), string('"')])],
+						otherwise: call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value)
+					)),
+				]
 			end
 
 			if reference
@@ -463,6 +473,31 @@ module Phlex::Compiler
 
 			value = hoisted_local(value, hoisted) unless hoist
 			[Serialized.new(typed_attribute(value, name) { call(constant("Phlex::SGML::Attributes"), :attribute, key, string(name), value) })]
+		end
+
+		# Whether an interpolated reference starts with text that rules out a
+		# `javascript:` URL, whatever follows it. The runtime decodes character
+		# references and keeps only letters and colons before checking, so the
+		# text mustn't contain anything decoding could change, and what's left of
+		# it must differ from `javascript:` before either ends.
+		private def safe_reference_prefix?(node)
+			prefix = node.parts.first
+			return false unless Refract::StringNode === prefix
+
+			text = prefix.unescaped
+			return false unless text.ascii_only? && !text.include?("&") && !text.include?('"')
+
+			normalized = text.downcase.delete("^a-z:")
+			!normalized.empty? && !normalized.start_with?("javascript:") && !"javascript:".start_with?(normalized)
+		end
+
+		# Whether decoding the string's character references can't raise.
+		private def decodable(node)
+			Refract::OrNode.new(
+				left: call(node, :ascii_only?),
+				operator: "||",
+				right: Refract::AndNode.new(left: call(constant("Encoding::UTF_8"), :equal?, call(node, :encoding)), operator: "&&", right: call(node, :valid_encoding?))
+			)
 		end
 
 		# What the serialiser returns, without calling it for true, nil, false or
