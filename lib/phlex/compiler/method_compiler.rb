@@ -764,14 +764,21 @@ module Phlex::Compiler
 				else Refract::HashNode.new(elements: keyword_hash.elements)
 			end
 			hoisted = []
-			hash = hoisted_local(hash, hoisted) unless pure?(hash)
+			hash = hoisted_local(hash, hoisted)
 			attributes = @locals.fresh(:attributes)
+
+			# Element methods only serialise a hash that has something in it.
+			serialized = if_node(
+				call(call(hash, :length), :>, Refract::IntegerNode.new(value: 0)),
+				[*normalize_call(element, hash), cached_attributes(hash)],
+				else_body: [string("")]
+			)
 
 			Attributes.new(
 				hoisted:,
 				parts: [
 					Output::Guarded.new(
-						statements: [write(attributes, attributes_call(element, hash))],
+						statements: [write(attributes, serialized)],
 						result: expression(read(attributes)),
 						closing:
 					),
@@ -779,12 +786,23 @@ module Phlex::Compiler
 			)
 		end
 
-		private def attributes_call(element, hash)
-			if (normalizer = attribute_normalizer(element))
-				hash = call(constant("Phlex::SGML::Elements"), normalizer, hash)
-			end
+		# As the element method serialises them, through the attribute cache.
+		private def cached_attributes(hash)
+			call(
+				call(read(state_local), :attribute_cache),
+				:fetch,
+				hash,
+				block: Refract::BlockNode.new(parameters: nil, body: statements([call(constant("Phlex::SGML::Attributes"), :generate_attributes, hash)]))
+			)
+		end
 
-			call(nil, :__attributes__, hash)
+		# Normalizers rewrite the hash in place.
+		private def normalize_call(element, hash)
+			if (normalizer = attribute_normalizer(element))
+				[call(constant("Phlex::SGML::Elements"), normalizer, hash)]
+			else
+				[]
+			end
 		end
 
 		private def normalize_attributes(element, attributes)
