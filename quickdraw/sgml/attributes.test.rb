@@ -1015,4 +1015,12 @@ class AttributesTest < Quickdraw::Test
 		component.new({ style: { margin: 0, margin_top: "1px" } }).call
 		assert_equal component.new({ style: { margin_top: "1px", margin: 0 } }).call, %(<div style="margin-top: 1px; margin: 0;"></div>)
 	end
+
+	test "a reference is checked without asking the value whether it's true" do
+		value = Class.new(String) { def ==(_other) = raise("asked") }.new("/x")
+
+		# String keys are never remembered as checked, so they take the full path.
+		assert_equal Phlex::SGML::Attributes.generate_attributes({ "href" => value }), %( href="/x")
+		assert_equal Phlex::SGML::Attributes.reference_attribute(:href, "href", value), %( href="/x")
+	end
 end
