@@ -264,7 +264,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 
 	# Only CRuby can tell a method made by `def` from one made otherwise.
 	test "definitions that aren't live, or aren't compiled, aren't refused" do
-		next unless defined?(RubyVM::InstructionSequence)
+		skip "Needs RubyVM::InstructionSequence" unless defined?(RubyVM::InstructionSequence)
 
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "superseded.rb")

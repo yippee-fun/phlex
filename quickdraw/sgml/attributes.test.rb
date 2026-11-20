@@ -901,7 +901,7 @@ class AttributesTest < Quickdraw::Test
 		assert_equal checked_names[:title], "title"
 		assert_equal checked_reference_names[:href], "href"
 		refute checked_names.key?(:href)
-		assert Ractor.shareable?(checked_names)
+		assert Ractor.shareable?(checked_names) if defined?(Ractor)
 
 		defer { Phlex::SGML::Attributes.instance_variable_set(:@checked_names, checked_names) }
 		names = ("aaaa".."zzzz").first(Phlex::SGML::Attributes::CHECKED_NAMES_LIMIT + 1)
