@@ -31,7 +31,7 @@ module Phlex
 	CACHED_FILES = Set.new
 
 	# The main Ractor’s attribute cache. Other Ractors can’t read it, so each has its own.
-	ATTRIBUTE_CACHE = FIFO.new(max_bytesize: 2 ** 20)
+	ATTRIBUTE_CACHE = AttributeCache.new(max_bytesize: 2 ** 20)
 	@attribute_cache_max_bytesize = ATTRIBUTE_CACHE.max_bytesize
 
 	begin
@@ -102,7 +102,7 @@ module Phlex
 	# A Ractor’s own cache is kept as large as the main one.
 	def self.__ractor_attribute_cache__
 		max_bytesize = @attribute_cache_max_bytesize
-		cache = (::Ractor.current[:__phlex_attribute_cache__] ||= FIFO.new(max_bytesize:))
+		cache = (::Ractor.current[:__phlex_attribute_cache__] ||= AttributeCache.new(max_bytesize:))
 		cache.grow_to(max_bytesize) if cache.max_bytesize < max_bytesize
 		cache
 	end

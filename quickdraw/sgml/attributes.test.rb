@@ -864,4 +864,155 @@ class AttributesTest < Quickdraw::Test
 		output = phlex { input(:accept => ["image/jpeg", "image/png"], "type" => "file") }
 		assert_equal output, %(<input accept="image/jpeg, image/png" type="file">)
 	end
+
+	test "a reference attribute is checked every time, even once its name is cached" do
+		assert_equal phlex { a(href: "/a") }, %(<a href="/a"></a>)
+		assert_equal phlex { a(href: "javascript:alert(1)") }, %(<a></a>)
+		assert_equal phlex { a("Href" => "/a") }, %(<a Href="/a"></a>)
+		assert_equal phlex { a("Href" => "javascript:alert(1)") }, %(<a></a>)
+	end
+
+	test "a safe reference is kept once its name is cached" do
+		safe_string = +"javascript:trusted()"
+		safe_string.extend(Phlex::SGML::SafeObject)
+
+		Phlex::SGML::Attributes.generate_attributes({ href: "/a" })
+		assert_equal Phlex::SGML::Attributes.generate_attributes({ href: safe_string }), %( href="javascript:trusted()")
+	end
+
+	test "a URL that isn't a script URL is kept, even with a j, a colon or a character reference" do
+		assert_equal phlex { a(href: "https://example.com/jobs") }, %(<a href="https://example.com/jobs"></a>)
+		assert_equal phlex { a(href: "https://example.com/?a=1&amp;b=Jam") }, %(<a href="https://example.com/?a=1&amp;b=Jam"></a>)
+		refute Phlex::SGML::Attributes.unsafe_reference?("https://example.com/jobs")
+		refute Phlex::SGML::Attributes.unsafe_reference?("mailto:jo@example.com?subject=a&amp;b")
+	end
+
+	test "a String subclass can't hide a script URL by overriding downcase" do
+		sneaky = Class.new(String) { def downcase(*) = "https://example.com" }
+
+		assert_equal phlex { a(href: sneaky.new("javascript:alert('sneaky')")) }, %(<a></a>)
+	end
+
+	test "checked names are cached up to a limit, in shareable hashes" do
+		Phlex::SGML::Attributes.generate_attributes({ title: "a", href: "/a" })
+		checked_names = Phlex::SGML::Attributes.instance_variable_get(:@checked_names)
+		checked_reference_names = Phlex::SGML::Attributes.instance_variable_get(:@checked_reference_names)
+
+		assert_equal checked_names[:title], "title"
+		assert_equal checked_reference_names[:href], "href"
+		refute checked_names.key?(:href)
+		assert Ractor.shareable?(checked_names)
+
+		defer { Phlex::SGML::Attributes.instance_variable_set(:@checked_names, checked_names) }
+		names = ("aaaa".."zzzz").first(Phlex::SGML::Attributes::CHECKED_NAMES_LIMIT + 1)
+		Phlex::SGML::Attributes.generate_attributes(names.to_h { |name| [:"data-#{name}", "x"] })
+
+		assert_equal Phlex::SGML::Attributes.instance_variable_get(:@checked_names).size, Phlex::SGML::Attributes::CHECKED_NAMES_LIMIT
+	end
+
+	test "names that start with on but aren't event handlers" do
+		assert_equal phlex { div(:on => "x", "on-x" => "y") }, %(<div on="x" on-x="y"></div>)
+		assert_raises(Phlex::ArgumentError) { phlex { div(onx: "x") } }
+	end
+
+	test "validate_attribute_name refuses what serialising refuses" do
+		["onclick", "ONCLICK", "on:click", "srcdoc", "x y", "a\"b"].each do |name|
+			assert_raises(Phlex::ArgumentError) { Phlex::SGML::Attributes.validate_attribute_name(name, name) }
+		end
+
+		error = assert_raises(Phlex::ArgumentError) { Phlex::SGML::Attributes.validate_attribute_name("ID", "ID") }
+		assert_equal error.message, ":id attribute should only be passed as a lowercase symbol."
+
+		assert_equal Phlex::SGML::Attributes.validate_attribute_name(:title, "title"), nil
+	end
+
+	test "reference_attribute? normalises the name" do
+		assert Phlex::SGML::Attributes.reference_attribute?("HREF")
+		assert Phlex::SGML::Attributes.reference_attribute?("xlink:href")
+		refute Phlex::SGML::Attributes.reference_attribute?("title")
+	end
+
+	test "quotes are escaped in every kind of value" do
+		output = phlex do
+			div(
+				title: Phlex::SGML::SafeValue.new(%(a"b)),
+				data: { a: %(x"y), b: :"x\"y", c: Phlex::SGML::SafeValue.new(%(s"s)) },
+				style: Set[%(content: "x")],
+			)
+		end
+
+		assert_equal output, %(<div title="a&quot;b" data-a="x&quot;y" data-b="x&quot;y" data-c="s&quot;s" style="content: &quot;x&quot;;"></div>)
+	end
+
+	test "nested dates and times" do
+		output = phlex { div(data: { day: Date.new(2020, 1, 2), at: Time.utc(2020, 1, 2, 3, 4, 5) }) }
+		assert_equal output, %(<div data-day="2020-01-02" data-at="2020-01-02T03:04:05Z"></div>)
+	end
+
+	test "nested sets of tokens" do
+		assert_equal phlex { div(class: ["x", Set["a", "b"]]) }, %(<div class="x a b"></div>)
+		assert_equal phlex { img(srcset: ["a.jpg 1x", Set["/w=1,2/b.jpg 2x"]]) }, %(<img srcset="a.jpg 1x, /w=1%2C2/b.jpg 2x">)
+	end
+
+	test "invalid values raise with a message" do
+		{
+			-> { div(title: Object.new) } => /\AInvalid attribute value for title: #<Object/,
+			-> { div(data: { 1 => "x" }) } => /\AAttribute keys should be Strings or Symbols/,
+			-> { div(data: { "a b" => "x" }) } => /\AUnsafe attribute name detected: a b\.\z/,
+			-> { div(data: { a: Object.new }) } => /\AInvalid attribute value #<Object/,
+			-> { div(class: [Object.new]) } => /\AInvalid token type: Object\.\z/,
+			-> { div(style: [1]) } => /\AInvalid style: 1\.\z/,
+			-> { div(style: { 1 => "x" }) } => /\AStyle keys should be Strings or Symbols\.\z/,
+			-> { div(style: { a: [1] }) } => /\AInvalid style value: \[1\]\z/,
+		}.each do |block, message|
+			error = assert_raises(Phlex::ArgumentError) { phlex(&block) }
+			assert_match error.message, message
+		end
+	end
+
+	test "a character reference to an invalid code point in a URL decodes as a replacement character" do
+		assert_equal phlex { a(href: "/?q=&#xD800;") }, %(<a href="/?q=&#xD800;"></a>)
+		assert_equal phlex { a(href: "/?q=&#x110000;&#99999999999999999999;") }, %(<a href="/?q=&#x110000;&#99999999999999999999;"></a>)
+		assert_equal Phlex::SGML::Attributes.decode_html_character_references("&#xD7FF;&#xD800;&#xDFFF;&#xE000;"), "퟿��"
+		assert_equal Phlex::SGML::Attributes.decode_html_character_references("&#1114111;&#1114112;&#x6A;"), "\u{10FFFF}�j"
+	end
+
+	test "a nested hash can't make an unsafe attribute name" do
+		[
+			{ http: { equiv: "refresh" } },
+			{ "HTTP" => { "Equiv" => "refresh" } },
+			{ http: { "eq:uiv" => "refresh" } },
+			{ http: { "equİv" => "refresh" } },
+			{ http: { equiv: { _: "refresh" } } },
+		].each do |attributes|
+			error = assert_raises(Phlex::ArgumentError) { phlex { meta(**attributes) } }
+			assert_match error.message, /\AUnsafe attribute name detected: http-/i
+		end
+
+		assert_equal phlex { meta(http: { equiv: Phlex::SGML::SafeValue.new("refresh") }) }, %(<meta http-equiv="refresh">)
+		assert_equal phlex { meta(http: { equiv: { _: Phlex::SGML::SafeValue.new("refresh") } }) }, %(<meta http-equiv="refresh">)
+		assert_equal phlex { meta(http: { equiv: { mode: "local" } }) }, %(<meta http-equiv-mode="local">)
+		assert_equal phlex { meta(data: { http: { equiv: "x" } }) }, %(<meta data-http-equiv="x">)
+	end
+
+	test "an empty attribute name is refused" do
+		["", :""].each do |name|
+			[true, "x", { a: "b" }].each do |value|
+				error = assert_raises(Phlex::ArgumentError) { phlex { div(name => value) } }
+				assert_equal error.message, "Attribute names can't be empty."
+			end
+		end
+
+		assert_equal phlex { div(data: { "" => "x" }) }, %(<div data-="x"></div>)
+	end
+
+	test "attributes render in the order given, whatever was rendered before" do
+		component = Class.new(Phlex::HTML) do
+			def initialize(style) = @style = style
+			def view_template = div(**@style)
+		end
+
+		component.new({ style: { margin: 0, margin_top: "1px" } }).call
+		assert_equal component.new({ style: { margin_top: "1px", margin: 0 } }).call, %(<div style="margin-top: 1px; margin: 0;"></div>)
+	end
 end
