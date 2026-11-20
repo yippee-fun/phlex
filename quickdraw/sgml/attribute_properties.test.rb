@@ -14,9 +14,6 @@ class AttributePropertiesTest < Quickdraw::Test
 	EVENT_HANDLER = /\Aon[a-z]+\z/
 
 	fuzz "renders attributes a browser reads as written, or refuses them", ATTRIBUTES do |attributes|
-		next if invalid_code_point_reference?(attributes.inspect)
-		next if attributes.any? { |k, _| Attributes.attribute_name(k).empty? }
-
 		# Safe values are trusted, so they skip the checks for unsafe names and URLs.
 		output = Attributes.generate_attributes(attributes.reject { |_, v| Phlex::SGML::SafeObject === v })
 	rescue Phlex::ArgumentError
@@ -32,14 +29,12 @@ class AttributePropertiesTest < Quickdraw::Test
 		element.attribute_nodes.each do |attribute|
 			name = attribute.name
 			refute_match name, EVENT_HANDLER
-			refute UNSAFE_ATTRIBUTES.include?(name) unless name == "http-equiv" # Known bug: a nested hash renders it.
+			refute UNSAFE_ATTRIBUTES.include?(name)
 			refute javascript_url?(attribute.value) if URL_ATTRIBUTES.include?(name)
 		end
 	end
 
 	fuzz "never renders a script URL", TEXT do |url|
-		next if invalid_code_point_reference?(url)
-
 		output = Attributes.generate_attributes({ :href => url, "src" => url })
 		attributes = Nokogiri::HTML5.fragment("<a#{output}></a>").children.first.attribute_nodes
 
@@ -74,15 +69,5 @@ class AttributePropertiesTest < Quickdraw::Test
 	# leading and trailing C0 controls and spaces, and removes tabs and newlines.
 	private def javascript_url?(value)
 		value.sub(/\A[\x00-\x20]+/, "").delete("\t\n\r").downcase(:ascii).start_with?("javascript:")
-	end
-
-	# Known bugs, to fix separately: an empty name renders as ` ="…"`, which a
-	# browser reads as an attribute named `="…"`; and decoding a reference to a surrogate or a code point past
-	# U+10FFFF makes an invalid string, so checking a URL with one raises.
-	private def invalid_code_point_reference?(text)
-		text.scan(/&#(?:x(\h+)|(\d+))/i).any? do |hex, decimal|
-			code_point = hex ? hex.to_i(16) : decimal.to_i
-			code_point > 0x10FFFF || (0xD800..0xDFFF).cover?(code_point)
-		end
 	end
 end

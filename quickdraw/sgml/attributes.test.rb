@@ -970,28 +970,43 @@ class AttributesTest < Quickdraw::Test
 		end
 	end
 
-	test "a character reference to an invalid code point in a URL doesn't raise" do
-		skip "Known bug: decoding it makes an invalid string, so checking the URL raises ArgumentError"
-
+	test "a character reference to an invalid code point in a URL decodes as a replacement character" do
 		assert_equal phlex { a(href: "/?q=&#xD800;") }, %(<a href="/?q=&#xD800;"></a>)
-		assert_equal phlex { a(href: "/?q=&#x110000;") }, %(<a href="/?q=&#x110000;"></a>)
+		assert_equal phlex { a(href: "/?q=&#x110000;&#99999999999999999999;") }, %(<a href="/?q=&#x110000;&#99999999999999999999;"></a>)
+		assert_equal Phlex::SGML::Attributes.decode_html_character_references("&#xD7FF;&#xD800;&#xDFFF;&#xE000;"), "퟿��"
+		assert_equal Phlex::SGML::Attributes.decode_html_character_references("&#1114111;&#1114112;&#x6A;"), "\u{10FFFF}�j"
 	end
 
 	test "a nested hash can't make an unsafe attribute name" do
-		skip "Known bug: http: { equiv: } renders http-equiv"
+		[
+			{ http: { equiv: "refresh" } },
+			{ "HTTP" => { "Equiv" => "refresh" } },
+			{ http: { "eq:uiv" => "refresh" } },
+			{ http: { "equİv" => "refresh" } },
+			{ http: { equiv: { _: "refresh" } } },
+		].each do |attributes|
+			error = assert_raises(Phlex::ArgumentError) { phlex { meta(**attributes) } }
+			assert_match error.message, /\AUnsafe attribute name detected: http-/i
+		end
 
-		assert_raises(Phlex::ArgumentError) { phlex { meta(http: { equiv: "refresh" }) } }
+		assert_equal phlex { meta(http: { equiv: Phlex::SGML::SafeValue.new("refresh") }) }, %(<meta http-equiv="refresh">)
+		assert_equal phlex { meta(http: { equiv: { _: Phlex::SGML::SafeValue.new("refresh") } }) }, %(<meta http-equiv="refresh">)
+		assert_equal phlex { meta(http: { equiv: { mode: "local" } }) }, %(<meta http-equiv-mode="local">)
+		assert_equal phlex { meta(data: { http: { equiv: "x" } }) }, %(<meta data-http-equiv="x">)
 	end
 
 	test "an empty attribute name is refused" do
-		skip "Known bug: it renders as ` =\"x\"`, which a browser reads as an attribute named `=\"x\"`"
+		["", :""].each do |name|
+			[true, "x", { a: "b" }].each do |value|
+				error = assert_raises(Phlex::ArgumentError) { phlex { div(name => value) } }
+				assert_equal error.message, "Attribute names can't be empty."
+			end
+		end
 
-		assert_raises(Phlex::ArgumentError) { phlex { div("" => "x") } }
+		assert_equal phlex { div(data: { "" => "x" }) }, %(<div data-="x"></div>)
 	end
 
 	test "attributes render in the order given, whatever was rendered before" do
-		skip "Known bug: the attribute cache treats hashes with the same pairs in another order as equal" unless defined?(Phlex::Native)
-
 		component = Class.new(Phlex::HTML) do
 			def initialize(style) = @style = style
 			def view_template = div(**@style)

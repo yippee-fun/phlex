@@ -22,9 +22,6 @@ class CompilationEquivalencePropertiesTest < Quickdraw::Test
 	end
 
 	private def render(component, shape, value)
-		# Known bug: the cache treats hashes with the same pairs in another order
-		# as equal, so the interpreter can render an earlier hash's order.
-		Phlex::ATTRIBUTE_CACHE.clear
 		[:returned, component.new(shape, value).call]
 	rescue => error
 		# Messages can include an object's address, which differs between renders.
