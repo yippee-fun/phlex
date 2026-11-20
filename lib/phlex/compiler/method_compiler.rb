@@ -13,6 +13,9 @@ module Phlex::Compiler
 		# evaluating it runs the serialiser, which can raise.
 		Piece = Data.define(:parts, :raises)
 
+		TokenChoice = Data.define(:condition, :truthy, :falsy)
+		TOKEN_CONDITIONS_LIMIT = 3
+
 		UNINLINABLE_BLOCK = "it has parameters or contains a return, break, next or local assignment"
 		GUARDED_BLOCK_DEPTH_LIMIT = 4
 
@@ -438,6 +441,10 @@ module Phlex::Compiler
 				return Piece.new(parts: [part], raises: false)
 			end
 
+			if (tokens = token_list(key_value, value, hoisted))
+				return Piece.new(parts: [Output::Conditional.new(tokens)], raises: false)
+			end
+
 			quotable = ascii_compatible_interpolation?(value)
 			reference = Phlex::SGML::Attributes.reference_attribute?(name)
 			value = hoisted_local(value, hoisted) if hoist || (quotable && !reference)
@@ -448,6 +455,76 @@ module Phlex::Compiler
 
 			serializer = reference ? :reference_attribute : :attribute
 			Piece.new(parts: [expression(call(constant("Phlex::SGML::Attributes"), serializer, key, string(name), value))], raises: true)
+		end
+
+		# A list of literal tokens, some chosen by conditions, is serialised now
+		# for every combination of the conditions. Each condition is tested once,
+		# in order, where the runtime evaluates it, and stays in condition
+		# position, where some expressions mean something else. Only ASCII text is
+		# chosen this way, since appending it can't fail whatever the buffer holds.
+		private def token_list(key_value, value, hoisted)
+			return unless Refract::ArrayNode === value
+
+			tokens = catch(:dynamic) { value.elements.map { |element| token_choice(element) } }
+			choices = tokens&.grep(TokenChoice)
+			return unless choices&.length&.between?(1, TOKEN_CONDITIONS_LIMIT)
+
+			texts = token_texts(key_value, tokens, choices.length)
+			return unless texts
+
+			conditions = choices.map do |choice|
+				hoisted_local(if_node(choice.condition, [Refract::TrueNode.new], else_body: [Refract::FalseNode.new]), hoisted)
+			end
+
+			token_tree(conditions, texts)
+		end
+
+		# The serialised text for each combination of the conditions.
+		private def token_texts(key_value, tokens, conditions)
+			texts = [true, false].repeated_permutation(conditions).to_h do |picks|
+				pick = picks.each
+				chosen = tokens.map { |token| (TokenChoice === token) ? (pick.next ? token.truthy : token.falsy) : token }
+				[picks, serialized_attribute(key_value, chosen)]
+			end
+
+			texts if texts.each_value.all?(&:ascii_only?)
+		rescue
+			nil
+		end
+
+		private def token_tree(conditions, texts, picks = [])
+			return string(texts.fetch(picks)) if picks.length == conditions.length
+
+			if_node(conditions[picks.length], [token_tree(conditions, texts, [*picks, true])], else_body: [token_tree(conditions, texts, [*picks, false])])
+		end
+
+		# A literal token, or a condition choosing between two.
+		private def token_choice(node)
+			case node
+			in Refract::ParenthesesNode[body: Refract::StatementsNode[body: [inner]]] then token_choice(inner)
+			in Refract::IfNode[subsequent: nil | Refract::ElseNode]
+				TokenChoice.new(condition: node.predicate, truthy: branch_token(node.statements), falsy: branch_token(node.subsequent&.statements))
+			in Refract::UnlessNode
+				TokenChoice.new(condition: node.predicate, truthy: branch_token(node.else_clause&.statements), falsy: branch_token(node.statements))
+			else
+				token_literal(node)
+			end
+		end
+
+		private def branch_token(branch)
+			case branch
+			in nil then nil
+			in Refract::StatementsNode[body: [statement]] then token_literal(statement)
+			else throw :dynamic
+			end
+		end
+
+		private def token_literal(node)
+			case node
+			in Refract::StringNode | Refract::SymbolNode | Refract::IntegerNode | Refract::FloatNode | Refract::NilNode | Refract::FalseNode then static_value(node)
+			in Refract::ArrayNode then node.elements.map { |element| token_literal(element) }
+			else throw :dynamic
+			end
 		end
 
 		# An interpolation is always a String, so it only needs its quotes escaped,

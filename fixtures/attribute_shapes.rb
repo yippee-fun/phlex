@@ -3,7 +3,7 @@
 # Each shape passes a value to an element in a way the compiler compiles
 # differently. Errors are rescued so partial output is compared too.
 class AttributeShapes < Phlex::HTML
-	SHAPES = %i[title href src id class style data interpolated interpolated_only interpolated_href splat mixed conditional].freeze
+	SHAPES = %i[title href src id class style data interpolated interpolated_only interpolated_href splat mixed conditional tokens].freeze
 
 	def initialize(shape, value)
 		@shape = shape
@@ -25,6 +25,7 @@ class AttributeShapes < Phlex::HTML
 		in :splat then div(**@value)
 		in :mixed then a(id: "x", href: @value, class: ["a", @value], data: { value: @value })
 		in :conditional then a(href: (@value ? "/yes" : "javascript:no()"), title: (@value ? "yes" : nil))
+		in :tokens then div(class: ["a", ("b" if @value), (@value ? :c_d : nil)], title: @value) { "x" }
 		end
 	rescue => error
 		plain "!#{error.class}"
