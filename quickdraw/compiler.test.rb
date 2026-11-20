@@ -55,7 +55,7 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 	end
 
-	test "pure dynamic attributes are appended in the chain and close the tag on failure" do
+	test "dynamic attributes are serialised in a guard that closes the tag on failure, with fast paths for true, nil, false and Strings" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a
 				div(class: @cls) { "x" }
@@ -64,14 +64,27 @@ class CompilerTest < Quickdraw::Test
 			def a
 				begin
 					__phlex_state__ = @_state
+					__phlex_value_1__ = @cls
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
-							__phlex_done_2__ = false
-							__phlex_attribute_1__ = ::Phlex::SGML::Attributes.attribute(:class, "class", @cls)
-							__phlex_done_2__ = true
-							__phlex_attribute_1__
+							__phlex_done_3__ = false
+							__phlex_attribute_2__ = if true.equal?(__phlex_value_1__)
+								" class"
+							elsif ::String.===(__phlex_value_1__)
+								' class="'.+@.<<((if __phlex_value_1__.include?('"')
+									::Phlex::Compiler.escape_quotes(__phlex_value_1__)
+								else
+									__phlex_value_1__
+								end)).<<('"')
+							elsif __phlex_value_1__
+								::Phlex::SGML::Attributes.attribute(:class, "class", __phlex_value_1__)
+							else
+								""
+							end
+							__phlex_done_3__ = true
+							__phlex_attribute_2__
 						ensure
-							__phlex_state__.buffer.<<(">") unless __phlex_done_2__
+							__phlex_state__.buffer.<<(">") unless __phlex_done_3__
 						end).<<(">x</div>")
 					end
 					nil)
@@ -95,7 +108,19 @@ class CompilerTest < Quickdraw::Test
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
 							__phlex_done_3__ = false
-							__phlex_attribute_2__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
+							__phlex_attribute_2__ = if true.equal?(__phlex_value_1__)
+								" id"
+							elsif ::String.===(__phlex_value_1__)
+								' id="'.+@.<<((if __phlex_value_1__.include?('"')
+									::Phlex::Compiler.escape_quotes(__phlex_value_1__)
+								else
+									__phlex_value_1__
+								end)).<<('"')
+							elsif __phlex_value_1__
+								::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
+							else
+								""
+							end
 							__phlex_done_3__ = true
 							__phlex_attribute_2__
 						ensure
@@ -125,7 +150,19 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<a").<<(begin
 							__phlex_done_5__ = false
 							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.reference_attribute(:href, "href", __phlex_value_1__)
-							__phlex_attribute_4__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							__phlex_attribute_4__ = if true.equal?(__phlex_value_2__)
+								" id"
+							elsif ::String.===(__phlex_value_2__)
+								' id="'.+@.<<((if __phlex_value_2__.include?('"')
+									::Phlex::Compiler.escape_quotes(__phlex_value_2__)
+								else
+									__phlex_value_2__
+								end)).<<('"')
+							elsif __phlex_value_2__
+								::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							else
+								""
+							end
 							__phlex_done_5__ = true
 							__phlex_attribute_3__
 						ensure
@@ -158,7 +195,19 @@ class CompilerTest < Quickdraw::Test
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
 							__phlex_done_4__ = false
-							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							__phlex_attribute_3__ = if true.equal?(__phlex_value_2__)
+								" id"
+							elsif ::String.===(__phlex_value_2__)
+								' id="'.+@.<<((if __phlex_value_2__.include?('"')
+									::Phlex::Compiler.escape_quotes(__phlex_value_2__)
+								else
+									__phlex_value_2__
+								end)).<<('"')
+							elsif __phlex_value_2__
+								::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							else
+								""
+							end
 							__phlex_done_4__ = true
 							__phlex_value_1__
 						ensure

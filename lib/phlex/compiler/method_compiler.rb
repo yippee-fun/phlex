@@ -453,8 +453,35 @@ module Phlex::Compiler
 				return Piece.new(parts: [literal(" #{name}=\""), expression(quoted(value)), literal('"')], raises: false)
 			end
 
-			serializer = reference ? :reference_attribute : :attribute
-			Piece.new(parts: [expression(call(constant("Phlex::SGML::Attributes"), serializer, key, string(name), value))], raises: true)
+			if reference
+				return Piece.new(parts: [expression(call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value))], raises: true)
+			end
+
+			value = hoisted_local(value, hoisted) unless hoist
+			Piece.new(parts: [expression(typed_attribute(key, name, value))], raises: true)
+		end
+
+		# What the serialiser returns, without calling it for true, nil, false or
+		# a String, built by appending as the serialiser builds it, since that
+		# decides its encoding. The value is read more than once, so it must be a
+		# local of the compiler's, which a String's methods can't reassign.
+		private def typed_attribute(key, name, value)
+			elsif_chain(
+				[call(Refract::TrueNode.new, :equal?, value), string(" #{name}")],
+				[call(constant("String"), :===, value), call(call(call(string(" #{name}=\""), :+@), :<<, quoted(value)), :<<, string('"'))],
+				[value, call(constant("Phlex::SGML::Attributes"), :attribute, key, string(name), value)],
+				otherwise: string("")
+			)
+		end
+
+		private def elsif_chain(*branches, otherwise:)
+			branches.reverse.reduce(Refract::ElseNode.new(statements: statements([otherwise]))) do |subsequent, (predicate, body)|
+				Refract::IfNode.new(inline: false, predicate:, statements: statements([body]), subsequent:)
+			end
+		end
+
+		private def embedded(node)
+			Refract::EmbeddedStatementsNode.new(statements: statements([node]))
 		end
 
 		# A list of literal tokens, some chosen by conditions, is serialised now
