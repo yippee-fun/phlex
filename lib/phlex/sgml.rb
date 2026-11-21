@@ -166,10 +166,14 @@ class Phlex::SGML
 	def capture(*args, &block)
 		return "" unless block
 
-		if args.length > 0
-			@_state.capture { __yield_content_with_args__(*args, &block) }
-		else
-			@_state.capture { __yield_content__(&block) }
+		state = @_state
+
+		state.suspend_caching do
+			if args.length > 0
+				state.capture { __yield_content_with_args__(*args, &block) }
+			else
+				state.capture { __yield_content__(&block) }
+			end
 		end
 	end
 
@@ -275,21 +279,27 @@ class Phlex::SGML
 			end
 			state.buffer << cached_buffer
 		else
+			found = false
+
 			fragment_map.each do |fragment_name, (offset, length, nested_fragments)|
 				if state.fragments.include?(fragment_name)
+					found = true
 					state.fragments.delete(fragment_name)
 					state.fragments.subtract(nested_fragments)
 					state.buffer << cached_buffer.byteslice(offset, length)
 				end
 			end
 
-			state.halt_if_all_fragments_found
+			state.halt_if_all_fragments_found if found
 		end
 
 		nil
 	end
 
 	def json_escape(string)
+		# Active Support's version keeps an `html_safe` string `html_safe`.
+		return ERB::Util.json_escape(string) if ERB::Util.respond_to?(:json_escape)
+
 		string.gsub(/[&<>\u2028\u2029]/, {
 			"&" => '\u0026',
 			"<" => '\u003c',

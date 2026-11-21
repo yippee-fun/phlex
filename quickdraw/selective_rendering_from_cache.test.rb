@@ -126,6 +126,80 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 		end
 	end
 
+	test "doesn't halt after a cache when no fragments were selected from it" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		2.times do
+			component = HaltTest.new(cache_store:)
+			assert_equal component.call(fragments: []), ""
+			assert_equal component.events, [:after_cache, :after_template]
+		end
+	end
+
+	class NestedDuplicateTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(key, cache_store:)
+			@key = key
+			@cache_store = cache_store
+		end
+
+		def view_template
+			if @key
+				cache(@key) { content { cache { inner } } }
+			else
+				content { inner }
+			end
+		end
+
+		def inner
+			fragment("target") { plain "B" }
+		end
+
+		def content
+			fragment("target") do
+				plain "é"
+				yield
+				plain "C"
+			end
+		end
+	end
+
+	test "a fragment nested in a fragment of the same name ends the selection, cached or not" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		assert_equal NestedDuplicateTest.new(nil, cache_store:).call(fragments: ["target"]), "éB"
+
+		# Both caches cold, then only the inner cache warm, then both warm.
+		[1, 2, 2].each do |key|
+			assert_equal NestedDuplicateTest.new(key, cache_store:).call(fragments: ["target"]), "éB"
+		end
+	end
+
+	class DiscardedCaptureTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(cache_store:)
+			@cache_store = cache_store
+		end
+
+		def view_template
+			cache do
+				capture { cache("inner") { fragment("target") { plain "hidden" } } }
+				plain "secret"
+				fragment("target") { plain "public" }
+			end
+		end
+	end
+
+	test "a fragment in a discarded capture doesn't claim the fragment's name in the cache" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		2.times do
+			assert_equal DiscardedCaptureTest.new(cache_store:).call(fragments: ["target"]), "public"
+		end
+	end
+
 	class DuplicateTest < Phlex::HTML
 		attr_reader :cache_store
 

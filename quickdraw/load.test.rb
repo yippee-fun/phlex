@@ -25,6 +25,17 @@ class LoadTest < Quickdraw::Test
 		assert_equal output, "\\u003c/script\\u003e"
 	end
 
+	test "JSON escaping uses Active Support's implementation when it's loaded" do
+		output = run_script(<<~RUBY)
+			require "phlex"
+
+			def (ERB::Util).json_escape(string) = "from Active Support"
+			print Phlex::HTML.new.json_escape("</script>")
+		RUBY
+
+		assert_equal output, "from Active Support"
+	end
+
 	test "the FIFO cache works after requiring only phlex" do
 		output = run_script(<<~RUBY)
 			require "phlex"
