@@ -434,10 +434,15 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__).include?(:new)
 			before = LifecycleIconNew.instance_method(:view_template).source_location
 
-			Phlex::SGML.singleton_class.alias_method :new, :new
+			begin
+				Phlex::SVG.define_singleton_method(:new, Phlex::SGML.singleton_class.instance_method(:new))
 
-			refute_equal LifecycleIconNew.instance_method(:view_template).source_location, before
-			assert_equal LifecycleIconNew.new.call, %(<svg><circle r="1"></circle></svg>)
+				refute_equal LifecycleIconNew.instance_method(:view_template).source_location, before
+				refute LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:new)
+				assert_equal LifecycleIconNew.new.call, %(<svg><circle r="1"></circle></svg>)
+			ensure
+				Phlex::SVG.singleton_class.remove_method(:new)
+			end
 		end
 	end
 
