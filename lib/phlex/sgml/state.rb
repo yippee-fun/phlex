@@ -40,6 +40,7 @@ class Phlex::SGML::State
 			current_byte_offset = 0                                 		# Start tracking the byte offset of this fragment from the start of the cache buffer
 			@cache_stack.reverse_each do |(cache_buffer, fragment_map)| # We'll iterate deepest to shallowest
 				current_byte_offset += cache_buffer.bytesize		      		# Add the length of the cache buffer to the current byte offset
+				next if fragment_map.key?(id)                         		# Only the first fragment with a given name can be selected
 				fragment_map[id] = [current_byte_offset, nil, []]     		# Record the byte offset, length, and store a list of the nested fragments
 
 				fragment_map.each do |name, (_offset, length, nested_fragments)| # Iterate over the other fragments
@@ -54,8 +55,10 @@ class Phlex::SGML::State
 		if caching?
 			byte_length = nil
 			@cache_stack.reverse_each do |(cache_buffer, fragment_map)|   # We'll iterate deepest to shallowest
-				byte_length ||= cache_buffer.bytesize - fragment_map[id][0] # The byte length is the difference between the current byte offset and the byte offset of the fragment
-				fragment_map[id][1] = byte_length                           # All cache contexts will use the same by
+				fragment = fragment_map[id]
+				next if fragment[1]                                         # An earlier fragment with this name has already ended
+				byte_length ||= cache_buffer.bytesize - fragment[0]         # The byte length is the difference between the current byte offset and the byte offset of the fragment
+				fragment[1] = byte_length                                   # All cache contexts will use the same by
 			end
 		end
 
@@ -63,6 +66,10 @@ class Phlex::SGML::State
 
 		@fragments.delete(id)
 		@fragment_depth -= 1
+		halt_if_all_fragments_found
+	end
+
+	def halt_if_all_fragments_found
 		throw @halt_signal if @fragments.length == 0
 	end
 
@@ -71,7 +78,7 @@ class Phlex::SGML::State
 
 		@cache_stack.reverse_each do |(cache_buffer, fragment_map)|
 			offset += cache_buffer.bytesize
-			fragment_map[id] = [offset, length, nested_fragments]
+			fragment_map[id] ||= [offset, length, nested_fragments]
 		end
 	end
 

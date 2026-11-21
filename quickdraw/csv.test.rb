@@ -50,7 +50,7 @@ CSV
    Banana,2.0
    strawberry,Three pounds
    =SUM(A1:B1),=SUM(A1:B1)
-   Abc, "def",Foo\nbar "baz"
+   "Abc, ""def""","Foo\nbar ""baz"""
    ,
    ,
 CSV
@@ -282,5 +282,85 @@ CSV
 		end
 
 		assert_includes error.message, "escape_csv_injection?"
+	end
+
+	test "values containing the delimiter are quoted when trimming whitespace without escaping csv injection" do
+		example = Class.new(Base) do
+			define_method(:escape_csv_injection?) { false }
+			define_method(:trim_whitespace?) { true }
+		end
+
+		assert_equal example.new([Product.new(" x,y ", "1")]).call, %(name,price\n"x,y",1\n)
+	end
+
+	test "values containing a carriage return are quoted" do
+		[true, false].each do |trim_whitespace|
+			example = Class.new(Base) do
+				define_method(:escape_csv_injection?) { false }
+				define_method(:trim_whitespace?) { trim_whitespace }
+			end
+
+			assert_equal example.new([Product.new("a\rb", "1")]).call, %(name,price\n"a\rb",1\n)
+		end
+	end
+
+	test "a CSV can be rendered again after a wider one" do
+		example = Class.new(Phlex::CSV) do
+			define_method(:escape_csv_injection?) { false }
+			define_method(:row_template) do |row|
+				row.each { |value| column value }
+			end
+		end
+
+		csv = example.new([["a", "b"]])
+		assert_equal csv.call, %("",""\na,b\n)
+
+		csv.collection.replace([["c"]])
+		assert_equal csv.call, %(""\nc\n)
+	end
+
+	["[", "]", "\\", "^", "-", "|", "."].each do |delimiter|
+		test "with #{delimiter.inspect} as the delimiter" do
+			example = Class.new(Base) do
+				define_method(:escape_csv_injection?) { false }
+			end
+
+			rows = [Product.new("a#{delimiter}b", "c"), Product.new("d", "e")]
+
+			assert_equal example.new(rows).call(delimiter:), %(name#{delimiter}price\n"a#{delimiter}b"#{delimiter}c\nd#{delimiter}e\n)
+		end
+	end
+
+	test "raises when a row has fewer columns than the first row" do
+		example = Class.new(Phlex::CSV) do
+			define_method(:escape_csv_injection?) { false }
+			define_method(:row_template) do |product|
+				column "name", product.name
+				column "price", product.price if product.price
+			end
+		end
+
+		error = assert_raises(Phlex::RuntimeError) do
+			example.new([Product.new("Apple", 1), Product.new("Banana", nil)]).call
+		end
+
+		assert_equal error.message, "Column count mismatch: expected 2, got 1."
+	end
+
+	test "raises when a row has more columns than the first row" do
+		example = Class.new(Phlex::CSV) do
+			define_method(:escape_csv_injection?) { false }
+			define_method(:render_headers?) { false }
+			define_method(:row_template) do |product|
+				column product.name
+				column product.price if product.price
+			end
+		end
+
+		error = assert_raises(Phlex::RuntimeError) do
+			example.new([Product.new("Apple", nil), Product.new("Banana", 2)]).call
+		end
+
+		assert_equal error.message, "Column count mismatch: expected 1, got 2."
 	end
 end

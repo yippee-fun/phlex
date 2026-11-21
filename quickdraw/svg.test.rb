@@ -25,7 +25,17 @@ class SVGTest < Quickdraw::Test
 			end
 		end
 
-		assert_equal component.call, %(<![CDATA[Hello, <[[test]]>]]<![CDATA[ World!]]>)
+		assert_equal component.call, %(<![CDATA[Hello, <[[test]]]]><![CDATA[> World!]]>)
+	end
+
+	test "cdata containing the end delimiter parses back to the original text" do
+		component = Class.new(Phlex::SVG) do
+			def view_template
+				svg { cdata("a]]>b") }
+			end
+		end
+
+		assert_equal Nokogiri::XML(component.call).root.text, "a]]>b"
 	end
 
 	test "cdata with block" do

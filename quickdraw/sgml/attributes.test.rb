@@ -607,6 +607,13 @@ class AttributesTest < Quickdraw::Test
 		assert_equal output, %(<div style="font-weight: bold;"></div>)
 	end
 
+	test ":style, *responds to to_h*" do
+		styles = Struct.new(:color, :font_weight, keyword_init: true).new(color: "blue", font_weight: "bold")
+
+		output = phlex { div(style: styles) }
+		assert_equal output, %(<div style="color: blue; font-weight: bold;"></div>)
+	end
+
 	test ":style, Array(Hash)" do
 		output = phlex { div(style: [{ color: "blue" }, { font_weight: "bold", line_height: 1.5 }]) }
 		assert_equal output, %(<div style="color: blue; font-weight: bold; line-height: 1.5;"></div>)

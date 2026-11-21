@@ -60,30 +60,32 @@ class Phlex::SGML
 
 		block ||= @_content_block
 
-		previous_phlex_component = Thread.current[:__phlex_component__]
-		Thread.current[:__phlex_component__] = self
+		begin
+			previous_phlex_component = Thread.current[:__phlex_component__]
+			Thread.current[:__phlex_component__] = self
 
-		state.around_render(self) do
-			before_template(&block)
+			state.around_render(self) do
+				before_template(&block)
 
-			around_template do
-				if block
-					view_template do |*args|
-						if args.length > 0
-							__yield_content_with_args__(*args, &block)
-						else
-							__yield_content__(&block)
+				around_template do
+					if block
+						view_template do |*args|
+							if args.length > 0
+								__yield_content_with_args__(*args, &block)
+							else
+								__yield_content__(&block)
+							end
 						end
+					else
+						view_template
 					end
-				else
-					view_template
 				end
-			end
 
-			after_template(&block)
+				after_template(&block)
+			end
+		ensure
+			Thread.current[:__phlex_component__] = previous_phlex_component
 		end
-	ensure
-		Thread.current[:__phlex_component__] = previous_phlex_component
 	end
 
 	def context
@@ -280,13 +282,21 @@ class Phlex::SGML
 					state.buffer << cached_buffer.byteslice(offset, length)
 				end
 			end
+
+			state.halt_if_all_fragments_found
 		end
 
 		nil
 	end
 
 	def json_escape(string)
-		ERB::Util.json_escape(string)
+		string.gsub(/[&<>\u2028\u2029]/, {
+			"&" => '\u0026',
+			"<" => '\u003c',
+			">" => '\u003e',
+			"\u2028" => '\u2028',
+			"\u2029" => '\u2029',
+		})
 	end
 
 	# Override this method to use a different deployment key.

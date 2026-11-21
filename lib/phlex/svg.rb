@@ -18,9 +18,9 @@ class Phlex::SVG < Phlex::SGML
 		return unless state.should_render?
 
 		if !block && String === content
-			state.buffer << "<![CDATA[" << content.gsub("]]>", "]]>]]<![CDATA[") << "]]>"
+			state.buffer << "<![CDATA[" << content.gsub("]]>", "]]]]><![CDATA[>") << "]]>"
 		elsif block && nil == content
-			state.buffer << "<![CDATA[" << capture(&block).gsub("]]>", "]]>]]<![CDATA[") << "]]>"
+			state.buffer << "<![CDATA[" << capture(&block).gsub("]]>", "]]]]><![CDATA[>") << "]]>"
 		else
 
 			raise Phlex::ArgumentError.new("Expected a String or block.")
