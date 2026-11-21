@@ -9,9 +9,11 @@ module Phlex::Compiler
 		Attributes = Data.define(:hoisted, :parts)
 		NO_ATTRIBUTES = Attributes.new(hoisted: [], parts: [])
 
-		# One attribute's contribution to the opening tag, and whether
-		# evaluating it runs the serialiser, which can raise.
-		Piece = Data.define(:parts, :raises)
+		# A part of the opening tag that runs a serialiser, which can raise.
+		Serialized = Data.define(:node)
+
+		TokenChoice = Data.define(:condition, :truthy, :falsy)
+		TOKEN_CONDITIONS_LIMIT = 3
 
 		UNINLINABLE_BLOCK = "it has parameters or contains a return, break, next or local assignment"
 		GUARDED_BLOCK_DEPTH_LIMIT = 4
@@ -80,8 +82,8 @@ module Phlex::Compiler
 		visit Refract::DefNode do |node|
 			return node unless @stack.size == 1
 
-			if (reserved = LocalsScanner.names(node).find { |name| name.start_with?("__phlex_") })
-				@diagnostics.refuse(node, "#{reserved} is a local the compiler reserves; names starting with __phlex_ can't be used")
+			if (reserved = (LocalsScanner.names(node) | BareCallScanner.names(node)).find { |name| name.start_with?("__phlex_") })
+				@diagnostics.refuse(node, "#{reserved} is a name the compiler reserves for locals; names starting with __phlex_ can't be used")
 				return node
 			end
 
@@ -114,33 +116,46 @@ module Phlex::Compiler
 		#
 		# The block may outlive the method or be built before rendering starts, so
 		# the compiled body reads the state afresh rather than trusting the one
-		# read on entry, and maps its own exceptions, as the method's rescue may
-		# no longer be on the stack.
+		# read on entry, and the block maps its own exceptions, as the method's
+		# rescue may no longer be on the stack.
 		visit Refract::BlockNode do |node|
-			return super(node) unless @compiling_calls && node.body
+			return super(node) unless @compiling_calls
+			return without_compiling_calls { super(node) } unless node.body
 
 			if @guarded_blocks == GUARDED_BLOCK_DEPTH_LIMIT
 				@diagnostics.report(node, "calls in this block are left to the runtime because it's nested #{GUARDED_BLOCK_DEPTH_LIMIT} blocks deep")
-				return without_compiling_calls { super(node) }
+				return mapping_block_exceptions(without_compiling_calls { super(node) })
+			end
+
+			if (conflict = ReparseScanner.conflict(node))
+				@diagnostics.report(node, "calls in this block are left to the runtime because #{conflict}")
+				return mapping_block_exceptions(without_compiling_calls { super(node) })
 			end
 
 			appends = @appends
 			@guarded_blocks += 1
 			compiled = visit(node.body)
 			@guarded_blocks -= 1
-			return node if appends == @appends
+			return mapping_block_exceptions(without_compiling_calls { super(node) }) if appends == @appends
 
 			original = without_compiling_calls { visit(node.body) }
 
 			node.copy(
+				parameters: without_compiling_calls(because: "it's in a parameter default") { visit(node.parameters) },
 				body: statements([
-					if_node(
-						call(Refract::SelfNode.new, :equal?, read(self_local)),
-						[mapping_exceptions([write(Locals::STATE, Refract::InstanceVariableReadNode.new(name: :@_state)), compiled])],
-						else_body: [original]
-					),
+					mapping_exceptions([
+						if_node(
+							call(read(self_local), :__phlex_equal__?, Refract::SelfNode.new),
+							[write(Locals::STATE, Refract::InstanceVariableReadNode.new(name: :@_state)), compiled],
+							else_body: [original]
+						),
+					]),
 				])
 			)
+		end
+
+		private def mapping_block_exceptions(block)
+			block.copy(body: statements([mapping_exceptions([block.body])]))
 		end
 
 		private def mapping_exceptions(body)
@@ -148,8 +163,8 @@ module Phlex::Compiler
 				body,
 				rescue_clause: rescue_node(
 					[constant("Exception")],
-					Refract::LocalVariableTargetNode.new(name: Locals::EXCEPTION),
-					[call(constant("Kernel"), :raise, call(nil, :__map_exception__, read(Locals::EXCEPTION)))]
+					Refract::LocalVariableTargetNode.new(name: Locals::EXCEPTION, depth: nil),
+					[call(constant("Kernel"), :raise, call(constant("Phlex"), :__map_exception__, read(Locals::EXCEPTION)))]
 				)
 			)
 		end
@@ -194,22 +209,91 @@ module Phlex::Compiler
 			compiled
 		end
 
-		# A forwarded block is evaluated before the element opens and may be nil,
-		# so it keeps the runtime call. The runtime closes the element however
-		# its content exits, which the enclosure reproduces.
+		# The runtime closes the element however its content exits, which the
+		# enclosure reproduces. Only the method's own block is forwarded inline,
+		# since another expression is evaluated, and may be nil, when the
+		# element is called.
 		private def compile_standard_element(node, tag)
-			return compile_call_with_content(node, because: "its block is forwarded") if Refract::BlockArgumentNode === node.block
+			if Refract::BlockArgumentNode === node.block
+				return compile_forwarded_element(node, tag) if node.block.expression.nil? && tag != "head"
+
+				return compile_call_with_content(node, because: "its block is forwarded")
+			end
+
+			# A `break` returns from the element method, skipping what follows it.
+			if (Refract::BlockNode === node.block) && breaks?(node.block)
+				return compile_call_with_content(node, because: "its block has a break of its own")
+			end
 
 			attributes = compile_attributes(node, node.block ? ">" : "></#{tag}>")
 			return compile_call_with_content(node, because: "it has positional arguments") unless attributes
 
+			@environment.inlined << :block_given?
+
 			statements([
 				*attributes.hoisted,
 				append(literal("<#{tag}"), *attributes.parts, literal(">")),
-				Output::Enclosed.new(body: compile_content(node), closing: "</#{tag}>"),
+				Output::Enclosed.new(body: compile_content(node, element: true), closing: "</#{tag}>"),
 				raw("</#{tag}>"),
 				*(flush_after_head if tag == "head"),
 			])
+		end
+
+		# An element given the method's block, as the element method does it: the
+		# buffer and whether to render are read when it's called, the block is
+		# only yielded if there is one, and without one the element is empty.
+		private def compile_forwarded_element(node, tag)
+			attributes = compile_attributes(node, ">")
+			return compile_call_with_content(node, because: "it has positional arguments") unless attributes
+
+			buffer = @locals.fresh(:buffer)
+			length = @locals.fresh(:content_length)
+			content = @locals.fresh(:content)
+			empty = attributes.parts.map { |part| (Output::Guarded === part) ? part.with(closing: "></#{tag}>") : part }
+
+			statements([
+				*attributes.hoisted,
+				write(buffer, call(read(state_local), :buffer)),
+				if_node(
+					call(nil, :block_given?),
+					[
+						if_node(
+							should_render,
+							[
+								opening(buffer, literal("<#{tag}"), *attributes.parts, literal(">")),
+								begin_node(
+									[
+										write(length, call(read(state_local), :output_bytesize)),
+										write(content, yield_self),
+										if_node(call(read(length), :==, call(read(state_local), :output_bytesize)), [element_value_output(read(content), read(buffer))]),
+									],
+									ensure_clause: ensure_node([call(read(buffer), :<<, string("</#{tag}>"))])
+								),
+							],
+							else_body: [yield_self]
+						),
+					],
+					else_body: [if_node(should_render, [opening(buffer, literal("<#{tag}"), *empty, literal("></#{tag}>"))])]
+				),
+				Refract::NilNode.new,
+			])
+		end
+
+		private def yield_self
+			Refract::YieldNode.new(arguments: Refract::ArgumentsNode.new(arguments: [Refract::SelfNode.new]))
+		end
+
+		# How an element method outputs its block's value.
+		private def element_value_output(content, buffer)
+			formatted = @locals.fresh(:formatted)
+
+			elsif_chain(
+				[call(constant("Phlex::SGML::SafeObject"), :===, content), call(read(state_local), :append, call(content, :to_s))],
+				[call(constant("String"), :===, content), call(buffer, :<<, escaped(content))],
+				[call(constant("Symbol"), :===, content), call(buffer, :<<, escaped(call(content, :name)))],
+				[call(Refract::NilNode.new, :===, content), Refract::NilNode.new],
+				otherwise: if_node(write(formatted, call(nil, :format_object, content)), [call(buffer, :<<, escaped(read(formatted)))])
+			)
 		end
 
 		private def compile_void_element(node, tag)
@@ -241,16 +325,21 @@ module Phlex::Compiler
 
 		private def compile_block_unguarded(block)
 			case block
-			in Refract::BlockNode if block.body then block.copy(body: visit(block.body))
-			else visit(block)
+			in Refract::BlockNode if block.body
+				block.copy(
+					parameters: without_compiling_calls(because: "it's in a parameter default") { visit(block.parameters) },
+					body: visit(block.body)
+				)
+			else
+				visit(block)
 			end
 		end
 
-		private def compile_content(node)
+		private def compile_content(node, element: false)
 			case node.block
 			in nil
 				[]
-			in Refract::BlockNode => block if block.body.nil?
+			in Refract::BlockNode[parameters: nil, body: nil]
 				[]
 			in Refract::BlockNode => block if inlinable?(block)
 				case block.body
@@ -258,27 +347,49 @@ module Phlex::Compiler
 					[visit(block.body)]
 				in Refract::StatementsNode[body: [statement]] if (content = compile_literal_content(statement))
 					[content]
+				in Refract::StatementsNode[body: [Refract::LocalVariableReadNode | Refract::InstanceVariableReadNode => variable]] if element
+					[content_output(variable, element:)]
+				in Refract::StatementsNode[body: [statement]] if pure?(statement) && element
+					content = @locals.fresh(:content)
+					[write(content, statement), content_output(read(content), element:)]
 				in Refract::StatementsNode[body: [statement]] if pure?(statement)
 					[implicit_output(statement)]
 				else
-					inline_dynamic_content(block.body)
+					measured_content(Refract::ParenthesesNode.new(body: visit(block.body)), element:)
 				end
 			in Refract::BlockNode => block
 				@diagnostics.report(node, "#{node.name}'s block is yielded at runtime because #{UNINLINABLE_BLOCK}")
-				[yield_content(compile_block_unguarded(block))]
+				block = compile_block_unguarded(block)
+
+				if element
+					measured_content(call(constant("Phlex::Compiler"), :yield_component, Refract::SelfNode.new, block:), element:)
+				else
+					[yield_content(block)]
+				end
 			end
 		end
 
 		# The runtime outputs a block's value only if the block wrote nothing.
-		private def inline_dynamic_content(body)
+		private def measured_content(value, element:)
 			length = @locals.fresh(:content_length)
 			content = @locals.fresh(:content)
 
 			[
 				write(length, call(read(state_local), :output_bytesize)),
-				write(content, Refract::ParenthesesNode.new(body: visit(body))),
-				if_node(call(read(length), :==, call(read(state_local), :output_bytesize)), [implicit_output(read(content))], inline: true),
+				write(content, value),
+				if_node(call(read(length), :==, call(read(state_local), :output_bytesize)), [content_output(read(content), element:)]),
 			]
+		end
+
+		# An element method outputs its block's value itself, while other
+		# helpers call __implicit_output__.
+		private def content_output(content, element:)
+			if element
+				@appends += 1
+				if_node(should_render, [element_value_output(content, buffer)])
+			else
+				implicit_output(content)
+			end
 		end
 
 		private def implicit_output(node)
@@ -309,7 +420,12 @@ module Phlex::Compiler
 			in nil | Refract::NilNode
 				true
 			in Refract::CallNode if node.receiver.nil?
-				known = @environment.element(node.name) || (@environment.helper?(node.name) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw)
+				# A `break` in its block returns from the call with its value.
+				known = !((Refract::BlockNode === node.block) && breaks?(node.block)) && (
+					@environment.element(node.name) ||
+					(@environment.helper?(node.name) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw) ||
+					render_returns_nil?(node)
+				)
 				relied << node.name if known
 				known
 			in Refract::IfNode
@@ -323,6 +439,22 @@ module Phlex::Compiler
 			else
 				false
 			end
+		end
+
+		# `render` returns nil, unless a `break` in its block, or in a default for
+		# one of the block's parameters, returns from it.
+		private def render_returns_nil?(node)
+			node.name == :render && @environment.helper?(:render) && case node.block
+				in nil then true
+				in Refract::BlockNode => block then !breaks?(block)
+				else false
+			end
+		end
+
+		# Whether a `break` in the block, or in a default for one of its
+		# parameters, would return from the call it's passed to.
+		private def breaks?(block)
+			[block.parameters, block.body].compact.any? { |part| BreakScanner.breaks?(part) }
 		end
 
 		# An interpolation that writes to the buffer changes what the runtime does
@@ -402,7 +534,7 @@ module Phlex::Compiler
 				@diagnostics.report(node, "#{node.name}'s attributes are serialised together because #{reason}")
 				nil
 			in Array
-				Attributes.new(hoisted:, parts: attribute_parts(pieces, closing))
+				Attributes.new(hoisted:, parts: attribute_parts(pieces.flatten(1), closing))
 			end
 		end
 
@@ -412,34 +544,220 @@ module Phlex::Compiler
 			(Refract::ImplicitNode === assoc.value) ? assoc.value.value : assoc.value
 		end
 
+		# One attribute's parts of the opening tag.
 		private def attribute_piece(key, key_value, value, hoisted, hoist:)
 			if (static = static_attribute_value(value))
-				return Piece.new(parts: [literal(serialized_attribute(key_value, static[0]))], raises: false)
+				return [literal(serialized_attribute(key_value, static[0]))]
 			end
 
 			name = Phlex::SGML::Attributes.attribute_name(key_value)
 			Phlex::SGML::Attributes.validate_attribute_name(key_value, name)
 
 			if (folded = fold_conditional(value) { |leaf| (static = static_attribute_value(leaf)) && string(serialized_attribute(key_value, static[0])) })
-				part = hoist ? expression(hoisted_local(folded, hoisted)) : Output::Conditional.new(folded)
-				return Piece.new(parts: [part], raises: false)
+				return [hoist ? expression(hoisted_local(folded, hoisted)) : Output::Conditional.new(folded)]
 			end
 
-			interpolated = Refract::InterpolatedStringNode === value
+			if (tokens = token_list(key_value, value, hoisted))
+				return [Output::Conditional.new(tokens)]
+			end
+
 			reference = Phlex::SGML::Attributes.reference_attribute?(name)
-			value = hoisted_local(value, hoisted) if hoist
 
-			if interpolated && !reference
-				return Piece.new(parts: [literal(" #{name}=\""), expression(quoted(value)), literal('"')], raises: false)
+			if !reference && (nested = nested_attributes(key_value, name, value, hoisted))
+				return nested
 			end
 
-			serializer = reference ? :reference_attribute : :attribute
-			Piece.new(parts: [expression(call(constant("Phlex::SGML::Attributes"), serializer, key, string(name), value))], raises: true)
+			# An interpolation is always a String, so it only needs its quotes
+			# escaped. That can raise, as for a string that isn't ASCII-compatible,
+			# or on TruffleRuby one that isn't valid, so it's done inside the guard.
+			quotable = Refract::InterpolatedStringNode === value
+			safe_prefix = reference && quotable && safe_reference_prefix?(value)
+			value = hoisted_local(value, hoisted) if hoist || (quotable && !reference) || safe_prefix
+
+			if quotable && !reference
+				return [literal(" #{name}=\""), Serialized.new(quoted(value)), literal('"')]
+			end
+
+			if safe_prefix
+				return [
+					Serialized.new(elsif_chain(
+						[decodable(value), Refract::InterpolatedStringNode.new(parts: [string(" #{name}=\""), embedded(quoted(value)), string('"')])],
+						otherwise: call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value)
+					)),
+				]
+			end
+
+			if reference
+				return [Serialized.new(call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value))]
+			end
+
+			value = hoisted_local(value, hoisted) unless hoist
+			[Serialized.new(typed_attribute(value, name) { call(constant("Phlex::SGML::Attributes"), :attribute, key, string(name), value) })]
 		end
 
-		# An interpolation is always a String, so it only needs its quotes escaped.
+		# Whether an interpolated reference starts with text that rules out a
+		# `javascript:` URL, whatever follows it. The runtime decodes character
+		# references and keeps only letters and colons before checking, so the
+		# text mustn't contain anything decoding could change, and what's left of
+		# it must differ from `javascript:` before either ends.
+		private def safe_reference_prefix?(node)
+			prefix = node.parts.first
+			return false unless Refract::StringNode === prefix
+
+			text = prefix.unescaped
+			return false unless text.ascii_only? && !text.include?("&") && !text.include?('"')
+
+			normalized = text.downcase.delete("^a-z:")
+			!normalized.empty? && !normalized.start_with?("javascript:") && !"javascript:".start_with?(normalized)
+		end
+
+		# Whether decoding the string's character references can't raise.
+		private def decodable(node)
+			Refract::OrNode.new(
+				left: call(node, :ascii_only?),
+				operator: "||",
+				right: Refract::AndNode.new(left: call(constant("Encoding::UTF_8"), :equal?, call(node, :encoding)), operator: "&&", right: call(node, :valid_encoding?))
+			)
+		end
+
+		# What the serialiser returns, without calling it for true, nil, false or
+		# a String, built by appending as the serialiser builds it, since that
+		# decides its encoding. The value is read more than once, so it must be a
+		# local of the compiler's, which a String's methods can't reassign.
+		private def typed_attribute(value, name)
+			elsif_chain(
+				[call(Refract::TrueNode.new, :===, value), string(" #{name}")],
+				[call(constant("String"), :===, value), call(call(call(string(" #{name}=\""), :+@), :<<, quoted(value)), :<<, string('"'))],
+				[value, yield],
+				otherwise: string("")
+			)
+		end
+
+		# A hash of nested attributes with literal keys, such as `data:`, is
+		# serialised entry by entry. Static entries are serialised now, and each
+		# dynamic value is evaluated into a local where the hash is, then
+		# serialised in order. A `style:` hash is serialised as styles, so it's
+		# left to the serialiser.
+		private def nested_attributes(key_value, name, value, hoisted)
+			return unless Refract::HashNode === value && key_value != :style
+
+			base = "#{name}-"
+			return unless value.elements.all? { |assoc| assoc in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode] }
+
+			entries = value.elements.map { |assoc| [static_value(assoc.key), assoc.key, attribute_value(assoc)] }
+			return unless entries.map(&:first).uniq.length == entries.length
+
+			begin
+				entries = entries.map do |(nested_key_value, nested_key, nested_value)|
+					nested_name = Phlex::Compiler.nested_attributes(nested_key_value, true, base).delete_prefix(" ")
+
+					if (static = static_attribute_value(nested_value))
+						[:static, Phlex::Compiler.nested_attributes(nested_key_value, static[0], base)]
+					else
+						[:dynamic, nested_key, nested_name, nested_value]
+					end
+				end
+			rescue
+				# Left to the serialiser, which skips a key whose value is nil or false.
+				return
+			end
+
+			entries.map do |entry|
+				case entry
+				in [:static, text]
+					literal(text)
+				in [:dynamic, nested_key, nested_name, nested_value]
+					nested_value = hoisted_local(nested_value, hoisted)
+					Serialized.new(typed_attribute(nested_value, nested_name) { call(constant("Phlex::Compiler"), :nested_attributes, nested_key, nested_value, string(base)) })
+				end
+			end
+		end
+
+		private def elsif_chain(*branches, otherwise:)
+			branches.reverse.reduce(Refract::ElseNode.new(statements: statements([otherwise]))) do |subsequent, (predicate, body)|
+				Refract::IfNode.new(inline: false, predicate:, statements: statements([body]), subsequent:)
+			end
+		end
+
+		private def embedded(node)
+			Refract::EmbeddedStatementsNode.new(statements: statements([node]))
+		end
+
+		# A list of literal tokens, some chosen by conditions, is serialised now
+		# for every combination of the conditions. Each condition is tested once,
+		# in order, where the runtime evaluates it, and stays in condition
+		# position, where some expressions mean something else. Only ASCII text is
+		# chosen this way, since appending it can't fail whatever the buffer holds.
+		private def token_list(key_value, value, hoisted)
+			return unless Refract::ArrayNode === value
+
+			tokens = catch(:dynamic) { value.elements.map { |element| token_choice(element) } }
+			choices = tokens&.grep(TokenChoice)
+			return unless choices&.length&.between?(1, TOKEN_CONDITIONS_LIMIT)
+
+			texts = token_texts(key_value, tokens, choices.length)
+			return unless texts
+
+			conditions = choices.map do |choice|
+				hoisted_local(if_node(choice.condition, [Refract::TrueNode.new], else_body: [Refract::FalseNode.new]), hoisted)
+			end
+
+			token_tree(conditions, texts)
+		end
+
+		# The serialised text for each combination of the conditions.
+		private def token_texts(key_value, tokens, conditions)
+			texts = [true, false].repeated_permutation(conditions).to_h do |picks|
+				pick = picks.each
+				chosen = tokens.map { |token| (TokenChoice === token) ? (pick.next ? token.truthy : token.falsy) : token }
+				[picks, serialized_attribute(key_value, chosen)]
+			end
+
+			texts if texts.each_value.all?(&:ascii_only?)
+		rescue
+			nil
+		end
+
+		private def token_tree(conditions, texts, picks = [])
+			return string(texts.fetch(picks)) if picks.length == conditions.length
+
+			if_node(conditions[picks.length], [token_tree(conditions, texts, [*picks, true])], else_body: [token_tree(conditions, texts, [*picks, false])])
+		end
+
+		# A literal token, or a condition choosing between two.
+		private def token_choice(node)
+			case node
+			in Refract::ParenthesesNode[body: Refract::StatementsNode[body: [inner]]] then token_choice(inner)
+			in Refract::IfNode[subsequent: nil | Refract::ElseNode]
+				TokenChoice.new(condition: node.predicate, truthy: branch_token(node.statements), falsy: branch_token(node.subsequent&.statements))
+			in Refract::UnlessNode
+				TokenChoice.new(condition: node.predicate, truthy: branch_token(node.else_clause&.statements), falsy: branch_token(node.statements))
+			else
+				token_literal(node)
+			end
+		end
+
+		private def branch_token(branch)
+			case branch
+			in nil then nil
+			in Refract::StatementsNode[body: [statement]] then token_literal(statement)
+			else throw :dynamic
+			end
+		end
+
+		private def token_literal(node)
+			case node
+			in Refract::StringNode | Refract::SymbolNode | Refract::IntegerNode | Refract::FloatNode | Refract::NilNode | Refract::FalseNode then static_value(node)
+			in Refract::ArrayNode then node.elements.map { |element| token_literal(element) }
+			else throw :dynamic
+			end
+		end
+
+		# The runtime only copies the string if it has quotes to escape.
 		private def quoted(node)
-			call(node, :gsub, string('"'), string("&quot;"))
+			parenthesized([
+				if_node(call(node, :include?, string('"')), [call(constant("Phlex::Compiler"), :escape_quotes, node)], else_body: [node]),
+			])
 		end
 
 		private def hoisted_local(node, hoisted)
@@ -453,16 +771,23 @@ module Phlex::Compiler
 		end
 
 		# The runtime builds the whole attribute string before appending any of
-		# it, so if a value is invalid the tag closes empty. Pieces that can raise
-		# are all evaluated into locals in the first part, and appended after.
-		private def attribute_parts(pieces, closing)
-			raising = pieces.select(&:raises)
-			return pieces.flat_map(&:parts) if raising.empty?
+		# it, so if a value is invalid the tag closes empty. Serialisations are
+		# all evaluated into locals in the first part, and appended after.
+		private def attribute_parts(parts, closing)
+			writes = []
 
-			locals = raising.to_h { |piece| [piece, @locals.fresh(:attribute)] }
-			writes = raising.map { |piece| write(locals[piece], piece.parts.first.node) }
-			parts = pieces.flat_map { |piece| locals.key?(piece) ? [expression(read(locals[piece]))] : piece.parts }
-			parts[0] = Output::Guarded.new(statements: writes, result: parts[0], closing:)
+			parts = parts.map do |part|
+				case part
+				in Serialized[node]
+					local = @locals.fresh(:attribute)
+					writes << write(local, node)
+					expression(read(local))
+				else
+					part
+				end
+			end
+
+			parts[0] = Output::Guarded.new(statements: writes, result: parts[0], closing:) if writes.any?
 			parts
 		end
 
@@ -472,14 +797,21 @@ module Phlex::Compiler
 				else Refract::HashNode.new(elements: keyword_hash.elements)
 			end
 			hoisted = []
-			hash = hoisted_local(hash, hoisted) unless pure?(hash)
+			hash = hoisted_local(hash, hoisted)
 			attributes = @locals.fresh(:attributes)
+
+			# Element methods only serialise a hash that has something in it.
+			serialized = if_node(
+				call(call(hash, :length), :>, Refract::IntegerNode.new(value: 0)),
+				[*normalize_call(element, hash), cached_attributes(hash)],
+				else_body: [string("")]
+			)
 
 			Attributes.new(
 				hoisted:,
 				parts: [
 					Output::Guarded.new(
-						statements: [write(attributes, attributes_call(element, hash))],
+						statements: [write(attributes, serialized)],
 						result: expression(read(attributes)),
 						closing:
 					),
@@ -487,12 +819,23 @@ module Phlex::Compiler
 			)
 		end
 
-		private def attributes_call(element, hash)
-			if (normalizer = attribute_normalizer(element))
-				hash = call(constant("Phlex::SGML::Elements"), normalizer, hash)
-			end
+		# As the element method serialises them, through the attribute cache.
+		private def cached_attributes(hash)
+			call(
+				call(read(state_local), :attribute_cache),
+				:fetch,
+				hash,
+				block: Refract::BlockNode.new(parameters: nil, body: statements([call(constant("Phlex::SGML::Attributes"), :generate_attributes, hash)]))
+			)
+		end
 
-			call(nil, :__attributes__, hash)
+		# Normalizers rewrite the hash in place.
+		private def normalize_call(element, hash)
+			if (normalizer = attribute_normalizer(element))
+				[call(constant("Phlex::SGML::Elements"), normalizer, hash)]
+			else
+				[]
+			end
 		end
 
 		private def normalize_attributes(element, attributes)
@@ -594,8 +937,9 @@ module Phlex::Compiler
 		# Whether evaluating the node can't have side effects or raise, so it's
 		# safe to evaluate it inside an append that may be skipped. Constants are
 		# excluded: reading one can autoload or raise NameError. So are
-		# interpolations and splats, which call to_s and to_hash. Conditionals
-		# over pure operands are pure, since they only choose between them.
+		# interpolations and splats, which call to_s and to_hash, and hash keys
+		# that could have a `hash` method of their own. Conditionals over pure
+		# operands are pure, since they only choose between them.
 		private def pure?(node)
 			case node
 			in nil | Refract::StringNode | Refract::SymbolNode | Refract::IntegerNode | Refract::FloatNode |
@@ -604,7 +948,7 @@ module Phlex::Compiler
 				Refract::LocalVariableReadNode | Refract::InstanceVariableReadNode | Refract::EmbeddedVariableNode
 				true
 			in Refract::ArrayNode | Refract::HashNode | Refract::KeywordHashNode then node.elements.all? { |element| pure?(element) }
-			in Refract::AssocNode then pure?(node.key) && pure?(node.value)
+			in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode | Refract::IntegerNode | Refract::FloatNode | Refract::NilNode | Refract::TrueNode | Refract::FalseNode] then pure?(node.value)
 			in Refract::InterpolatedStringNode then node.parts.all? { |part| Refract::StringNode === part }
 			in Refract::ParenthesesNode then pure?(node.body)
 			in Refract::StatementsNode then node.body.all? { |statement| pure?(statement) }
@@ -621,15 +965,19 @@ module Phlex::Compiler
 		private def compile_plain(node)
 			# Keep runtime block rejection and evaluation of forwarded block expressions.
 			return keep_call(node, "it has a block") if node.block
+			return keep_call(node, "__text__ is overridden") unless @environment.helper?(:__text__)
 
-			case node.arguments&.arguments
-			in [Refract::StringNode | Refract::SymbolNode => text] then plain(text.unescaped)
-			in [Refract::InterpolatedStringNode => interpolated]
-				text = @locals.fresh(:text)
-				statements([write(text, visit(interpolated)), append(expression(escaped(read(text))))])
-			in [Refract::NilNode] then Refract::NilNode.new
-			else keep_call(node, "its argument isn't a literal or an interpolation")
+			compiled = case node.arguments&.arguments
+				in [Refract::StringNode | Refract::SymbolNode => text] then plain(text.unescaped)
+				in [Refract::InterpolatedStringNode => interpolated]
+					text = @locals.fresh(:text)
+					statements([write(text, visit(interpolated)), append(expression(escaped(read(text))))])
+				in [Refract::NilNode] then Refract::NilNode.new
+				else return keep_call(node, "its argument isn't a literal or an interpolation")
 			end
+
+			@environment.inlined.merge(%i[__text__ block_given?])
+			compiled
 		end
 
 		# `raw safe("…")` is a literal that skips escaping.
@@ -662,16 +1010,24 @@ module Phlex::Compiler
 		# Unlike an element, the runtime has no `ensure`, so a jump out of the
 		# block skips the closing text, and only a block that can be inlined is
 		# compiled. A forwarded block, which may be nil, keeps the runtime call too.
+		# The runtime yields with __yield_content__, so its content is only
+		# inlined while that's Phlex's.
 		private def compile_wrapped_content(node, opening, closing)
+			unless @environment.helper?(:__yield_content__) && @environment.helper?(:__implicit_output__)
+				# The block may be yielded with another `self`, so calls in it are compiled behind a check.
+				return keep_call(node, "__yield_content__ or __implicit_output__ is overridden")
+			end
+
 			return compile_call_with_content(node, because: "its block is forwarded or #{UNINLINABLE_BLOCK}") unless inlinable_content?(node.block)
 
+			@environment.inlined.merge(%i[__yield_content__ __implicit_output__ block_given?])
 			statements([raw(opening), *compile_content(node), raw(closing)])
 		end
 
 		private def inlinable_content?(block)
 			case block
-			in nil then true
-			in Refract::BlockNode then block.body.nil? || inlinable?(block)
+			in nil | Refract::BlockNode[parameters: nil, body: nil] then true
+			in Refract::BlockNode then inlinable?(block)
 			else false
 			end
 		end
@@ -722,6 +1078,13 @@ module Phlex::Compiler
 			state_local
 
 			Output::Append.new(parts:)
+		end
+
+		private def opening(buffer, *parts)
+			@appends += 1
+			state_local
+
+			Output::Opening.new(parts:, buffer:)
 		end
 
 		# Guarded blocks read the state themselves, so only output outside them

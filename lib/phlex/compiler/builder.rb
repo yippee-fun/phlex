@@ -21,12 +21,13 @@ module Phlex::Compiler::Builder
 		Refract::StringNode.new(unescaped: text)
 	end
 
+	# Generated locals aren't resolved to a scope, so their depth is unknown.
 	private def read(name)
-		Refract::LocalVariableReadNode.new(name:)
+		Refract::LocalVariableReadNode.new(name:, depth: nil)
 	end
 
 	private def write(name, value)
-		Refract::LocalVariableWriteNode.new(name:, value:)
+		Refract::LocalVariableWriteNode.new(name:, value:, depth: nil)
 	end
 
 	private def statements(body)

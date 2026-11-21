@@ -32,6 +32,12 @@ module Phlex::Compiler::Output
 		def static? = parts.all? { |part| part in Literal | Conditional }
 	end
 
+	# Parts appended to a buffer read into a local, where rendering is already
+	# known, as an element method appends its opening tag.
+	Opening = Data.define(:parts, :buffer) do
+		include Statement
+	end
+
 	# Statements whose output is followed by the closing text however they
 	# exit, unless none of it can exit early.
 	Enclosed = Data.define(:body, :closing) do

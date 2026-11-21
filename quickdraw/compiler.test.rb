@@ -29,7 +29,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -49,13 +49,13 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
 	end
 
-	test "pure dynamic attributes are appended in the chain and close the tag on failure" do
+	test "dynamic attributes are serialised in a guard that closes the tag on failure, with fast paths for true, nil, false and Strings" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a
 				div(class: @cls) { "x" }
@@ -64,19 +64,32 @@ class CompilerTest < Quickdraw::Test
 			def a
 				begin
 					__phlex_state__ = @_state
+					__phlex_value_1__ = @cls
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
-							__phlex_done_2__ = false
-							__phlex_attribute_1__ = ::Phlex::SGML::Attributes.attribute(:class, "class", @cls)
-							__phlex_done_2__ = true
-							__phlex_attribute_1__
+							__phlex_done_3__ = false
+							__phlex_attribute_2__ = if true.===(__phlex_value_1__)
+								" class"
+							elsif ::String.===(__phlex_value_1__)
+								' class="'.+@.<<((if __phlex_value_1__.include?('"')
+									::Phlex::Compiler.escape_quotes(__phlex_value_1__)
+								else
+									__phlex_value_1__
+								end)).<<('"')
+							elsif __phlex_value_1__
+								::Phlex::SGML::Attributes.attribute(:class, "class", __phlex_value_1__)
+							else
+								""
+							end
+							__phlex_done_3__ = true
+							__phlex_attribute_2__
 						ensure
-							__phlex_state__.buffer.<<(">") unless __phlex_done_2__
+							__phlex_state__.buffer.<<(">") unless __phlex_done_3__
 						end).<<(">x</div>")
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -95,7 +108,19 @@ class CompilerTest < Quickdraw::Test
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
 							__phlex_done_3__ = false
-							__phlex_attribute_2__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
+							__phlex_attribute_2__ = if true.===(__phlex_value_1__)
+								" id"
+							elsif ::String.===(__phlex_value_1__)
+								' id="'.+@.<<((if __phlex_value_1__.include?('"')
+									::Phlex::Compiler.escape_quotes(__phlex_value_1__)
+								else
+									__phlex_value_1__
+								end)).<<('"')
+							elsif __phlex_value_1__
+								::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
+							else
+								""
+							end
 							__phlex_done_3__ = true
 							__phlex_attribute_2__
 						ensure
@@ -104,7 +129,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -125,7 +150,19 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<a").<<(begin
 							__phlex_done_5__ = false
 							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.reference_attribute(:href, "href", __phlex_value_1__)
-							__phlex_attribute_4__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							__phlex_attribute_4__ = if true.===(__phlex_value_2__)
+								" id"
+							elsif ::String.===(__phlex_value_2__)
+								' id="'.+@.<<((if __phlex_value_2__.include?('"')
+									::Phlex::Compiler.escape_quotes(__phlex_value_2__)
+								else
+									__phlex_value_2__
+								end)).<<('"')
+							elsif __phlex_value_2__
+								::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							else
+								""
+							end
 							__phlex_done_5__ = true
 							__phlex_attribute_3__
 						ensure
@@ -134,7 +171,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -158,7 +195,19 @@ class CompilerTest < Quickdraw::Test
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
 							__phlex_done_4__ = false
-							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							__phlex_attribute_3__ = if true.===(__phlex_value_2__)
+								" id"
+							elsif ::String.===(__phlex_value_2__)
+								' id="'.+@.<<((if __phlex_value_2__.include?('"')
+									::Phlex::Compiler.escape_quotes(__phlex_value_2__)
+								else
+									__phlex_value_2__
+								end)).<<('"')
+							elsif __phlex_value_2__
+								::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+							else
+								""
+							end
 							__phlex_done_4__ = true
 							__phlex_value_1__
 						ensure
@@ -167,7 +216,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -191,7 +240,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -216,7 +265,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -235,14 +284,30 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<div>")
 					end
 					nil)
-					__phlex_done_3__ = false
+					__phlex_done_4__ = false
 					begin
 						__phlex_content_length_1__ = __phlex_state__.output_bytesize
 						__phlex_content_2__ = (helper)
-						__implicit_output__(__phlex_content_2__) if __phlex_content_length_1__.==(__phlex_state__.output_bytesize)
-						__phlex_done_3__ = true
+						if __phlex_content_length_1__.==(__phlex_state__.output_bytesize)
+							if __phlex_state__.should_render?
+								if ::Phlex::SGML::SafeObject.===(__phlex_content_2__)
+									__phlex_state__.append(__phlex_content_2__.to_s)
+								elsif ::String.===(__phlex_content_2__)
+									__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_content_2__))
+								elsif ::Symbol.===(__phlex_content_2__)
+									__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_content_2__.name))
+								elsif nil.===(__phlex_content_2__)
+									nil
+								else
+									if (__phlex_formatted_3__ = format_object(__phlex_content_2__))
+										__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_formatted_3__))
+									end
+								end
+							end
+						end
+						__phlex_done_4__ = true
 					ensure
-						unless __phlex_done_3__
+						unless __phlex_done_4__
 							(if __phlex_state__.should_render?
 								__phlex_state__.buffer.<<("</div>")
 							end
@@ -254,7 +319,7 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -270,15 +335,11 @@ class CompilerTest < Quickdraw::Test
 				begin
 					__phlex_state__ = @_state
 					(if __phlex_state__.should_render?
-						__phlex_state__.buffer.<<("<html>")
+						__phlex_state__.buffer.<<("<html><head><title>T</title></head>")
 					end
 					nil)
 					__phlex_done_1__ = false
 					begin
-						(if __phlex_state__.should_render?
-							__phlex_state__.buffer.<<("<head><title>T</title></head>")
-						end
-						nil)
 						flush() if __phlex_state__.should_render?
 						__phlex_done_1__ = true
 					ensure
@@ -294,7 +355,57 @@ class CompilerTest < Quickdraw::Test
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
+	test "nested elements share one guard, with the ASCII text around their content fused" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				div { h3 { @title }; p { "x" } }
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("<div><h3>")
+					end
+					nil)
+					__phlex_done_2__ = false
+					begin
+						if __phlex_state__.should_render?
+							if ::Phlex::SGML::SafeObject.===(@title)
+								__phlex_state__.append(@title.to_s)
+							elsif ::String.===(@title)
+								__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(@title))
+							elsif ::Symbol.===(@title)
+								__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(@title.name))
+							elsif nil.===(@title)
+								nil
+							else
+								if (__phlex_formatted_1__ = format_object(@title))
+									__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_formatted_1__))
+								end
+							end
+						end
+						__phlex_done_2__ = true
+					ensure
+						unless __phlex_done_2__
+							(if __phlex_state__.should_render?
+								__phlex_state__.buffer.<<("</h3></div>")
+							end
+							nil)
+						end
+					end
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("</h3><p>x</p></div>")
+					end
+					nil)
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY
@@ -310,19 +421,33 @@ class CompilerTest < Quickdraw::Test
 				begin
 					__phlex_self__ = self
 					@items.each { |i|
-						if self.equal?(__phlex_self__)
-							begin
+						begin
+							if __phlex_self__.__phlex_equal__?(self)
 								__phlex_state__ = @_state
 								(if __phlex_state__.should_render?
 									__phlex_state__.buffer.<<("<li>")
 								end
 								nil)
-								__phlex_done_1__ = false
+								__phlex_done_2__ = false
 								begin
-									__implicit_output__(i)
-									__phlex_done_1__ = true
+									if __phlex_state__.should_render?
+										if ::Phlex::SGML::SafeObject.===(i)
+											__phlex_state__.append(i.to_s)
+										elsif ::String.===(i)
+											__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(i))
+										elsif ::Symbol.===(i)
+											__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(i.name))
+										elsif nil.===(i)
+											nil
+										else
+											if (__phlex_formatted_1__ = format_object(i))
+												__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_formatted_1__))
+											end
+										end
+									end
+									__phlex_done_2__ = true
 								ensure
-									unless __phlex_done_1__
+									unless __phlex_done_2__
 										(if __phlex_state__.should_render?
 											__phlex_state__.buffer.<<("</li>")
 										end
@@ -333,17 +458,17 @@ class CompilerTest < Quickdraw::Test
 									__phlex_state__.buffer.<<("</li>")
 								end
 								nil)
-							rescue ::Exception => __phlex_exception__
-								::Kernel.raise(__map_exception__(__phlex_exception__))
+							else
+								li {
+									i
+								}
 							end
-						else
-							li {
-								i
-							}
+						rescue ::Exception => __phlex_exception__
+							::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 						end
 					}
 				rescue ::Exception => __phlex_exception__
-					::Kernel.raise(__map_exception__(__phlex_exception__))
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
 				end
 			end
 		RUBY

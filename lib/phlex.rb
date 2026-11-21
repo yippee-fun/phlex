@@ -66,6 +66,25 @@ module Phlex
 		end
 	end
 
+	# Rewrites the backtrace of an exception raised in compiled code to name the
+	# original lines. It's called on Phlex, not self, because a compiled block
+	# can run with any object as self.
+	def self.__map_exception__(exception)
+		return exception unless (locations = exception.backtrace_locations)
+
+		exception.set_backtrace(
+			locations.map do |loc|
+				if (generation = @compiled_source_maps[loc.path]) && (line = generation.lines[loc.lineno])
+					"#{generation.path}:#{line}:in '#{loc.label}'"
+				else
+					loc.to_s
+				end
+			end
+		)
+
+		exception
+	end
+
 	ATTRIBUTE_CACHE_EXPANSION_MUTEX = Mutex.new
 
 	def self.__expand_attribute_cache__(file_path)

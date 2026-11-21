@@ -73,7 +73,7 @@ module Phlex::SGML::Attributes
 		if Phlex::SGML::SafeObject === v
 			check_attribute_name(k, name, lower_name, simple_name)
 		else
-			if value != true && REF_ATTRIBUTES.include?(normalized_name) && drop_reference?(k, v, value)
+			if !true.equal?(value) && REF_ATTRIBUTES.include?(normalized_name) && drop_reference?(k, v, value)
 				# We just ignore these because they were likely not specified by the developer.
 				return buffer
 			end
@@ -133,7 +133,7 @@ module Phlex::SGML::Attributes
 		buffer = +""
 		value = attribute_value(k, name, v, buffer)
 
-		if value != true && !(Phlex::SGML::SafeObject === v) && drop_reference?(k, v, value)
+		if !true.equal?(value) && !(Phlex::SGML::SafeObject === v) && drop_reference?(k, v, value)
 			return ""
 		end
 

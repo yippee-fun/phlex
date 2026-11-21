@@ -35,7 +35,7 @@ class Phlex::Compiler::Environment
 	# The element a bare call to the method renders, if it's a registered
 	# element that no loaded descendant overrides.
 	def element(name)
-		return unless @inline
+		return unless @inline && kernel_block_given?
 		return @elements[name] if @elements.key?(name)
 
 		@elements[name] = resolve_element(name)
@@ -44,10 +44,22 @@ class Phlex::Compiler::Environment
 	# Whether a bare call to the method reaches one of the SGML helpers, such
 	# as `plain`, that no loaded descendant overrides.
 	def helper?(name)
-		return false unless @inline
+		return false unless @inline && kernel_block_given?
 		return @helpers[name] if @helpers.key?(name)
 
 		@helpers[name] = resolve_helper(name)
+	end
+
+	# Element and helper methods ask block_given? whether they were given a
+	# block, so they're only inlined while it's Kernel's.
+	def kernel_block_given?
+		return @kernel_block_given if defined?(@kernel_block_given)
+
+		@kernel_block_given = standard?(:block_given?, Kernel)
+	end
+
+	private def standard?(name, owner)
+		(method = instance_method(name)) && method.owner == owner && method.original_name == name && !overridden_by_descendant?(name, owner)
 	end
 
 	# Without the lexical scopes, the class and its ancestors are the best guess.
@@ -62,7 +74,7 @@ class Phlex::Compiler::Environment
 
 		owner = method.owner
 		return unless owner.respond_to?(:__element_registry__)
-		return unless method.source_location&.first == ELEMENTS_SOURCE_PATH
+		return unless method.source_location&.first == ELEMENTS_SOURCE_PATH && method.original_name == name
 
 		registry = owner.__element_registry__
 		return unless (tag = registry.elements[name])
@@ -74,7 +86,7 @@ class Phlex::Compiler::Environment
 	private def resolve_helper(name)
 		return false unless (method = instance_method(name))
 
-		HELPER_OWNERS.include?(method.owner) &&
+		HELPER_OWNERS.include?(method.owner) && method.original_name == name &&
 			HELPER_SOURCE_PATHS.include?(method.source_location&.first) &&
 			!overridden_by_descendant?(name, method.owner)
 	end

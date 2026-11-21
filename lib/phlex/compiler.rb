@@ -26,21 +26,45 @@ require "refract"
 # refused with a Phlex::Compiler::Error naming the file and line rather than
 # compiled approximately. Refused: a method marked `ruby2_keywords`, a `using`
 # that applies to only part of its file, two definitions of a method on one
-# line, a local named like one the compiler generates (`__phlex_…`), a file
-# edited since it was loaded, and redefining an inlined element or helper on
-# a single instance with `extend` or a singleton method. Redefining one on a
-# class or by including a module recompiles whatever inlined it.
+# line, a local or bare call named like a local the compiler generates
+# (`__phlex_…`), a file edited since it was loaded, a refinement in the file
+# of a method compiled code calls for the runtime, such as String#include?,
+# or such a core method redefined in Ruby, and redefining an inlined element
+# or helper on a single instance with `extend` or a singleton method.
+# Redefining one on a class or by including a module recompiles whatever
+# inlined it.
 #
-# Three differences remain, all deliberate:
+# Seven differences remain, all deliberate:
 # - Changing what an inlined element or helper resolves to through a module
 #   already mixed into a compiled component isn't seen: defining, removing or
 #   undefining it on that module, or mixing another module into it. Call
 #   `Phlex::Compiler.recompile` on each class whose methods inlined it.
 # - Attributes with literal keys are serialised without the attribute cache, so
 #   a value's `to_s`, `to_h` or `iso8601` runs on every render rather than once
-#   per distinct set of attributes.
+#   per distinct set of attributes, and its `hash` isn't called.
+# - Compiled code appends the text of neighbouring elements together and reads
+#   the state once per method. When an append itself fails, because the buffer
+#   is frozen or holds text in an encoding the new text can't join, the partial
+#   output, the exception raised and its `cause` can differ from element
+#   methods appending one by one. A buffer switched mid-element, by a Fiber
+#   suspended inside `capture`, and a method that started before rendering,
+#   can see a different buffer. Whether to render is checked at each append,
+#   where an element method checks once, which only matters to code starting
+#   a fragment mid-element. A State subclass overriding its methods sees them
+#   called a different number of times.
+# - Static text and attributes are escaped and serialised once, when
+#   compiling, outside `Regexp.timeout`, and so are references whose prefix
+#   is known. A core method compiled code calls that's redefined after
+#   compiling isn't noticed. A String subclass whose `gsub` returns something
+#   other than a String, which the serialiser's own paths treat differently,
+#   renders as its path for names it's seen before does.
 # - Method#source_location of a compiled method names the generated source;
-#   exceptions are mapped back to the real file.
+#   exceptions are mapped back to the real file. `local_variables` and
+#   `binding` in a compiled method also see the compiler's `__phlex_` locals.
+# - A block passed to a method the compiler doesn't know is compiled alongside
+#   a copy of the original, used when the block runs with another `self`. A
+#   literal Ruby reuses on each evaluation, such as a regular expression or a
+#   range, is a different object in each copy.
 #
 # Methods a component gains from mixins aren't compiled, which only costs speed.
 module Phlex::Compiler
@@ -53,7 +77,7 @@ module Phlex::Compiler
 	Target = Data.define(:component, :name, :line, :compiled, :replaced)
 
 	# What reopening a definition's class and module statements reached.
-	Probe = Data.define(:component, :set, :method_resolver)
+	Probe = Data.define(:component, :set, :method_resolver, :refinements)
 
 	MUTEX = Mutex.new
 
@@ -79,6 +103,22 @@ module Phlex::Compiler
 	# Compiled code builds splatted attributes with this rather than a Hash
 	# literal, since before Ruby 3.4 `**nil` is only allowed in a call.
 	def self.keywords(**keywords) = keywords
+
+	# Compiled code escapes quotes with this, so the match data gsub sets stays
+	# out of the component's method, as at runtime.
+	def self.escape_quotes(value) = value.gsub('"', "&quot;")
+
+	# Compiled code yields to an element's block with this when the block can't
+	# be inlined, as the element method yields to it.
+	def self.yield_component(component) = yield(component)
+
+	# Compiled code serialises one entry of a nested attribute hash with this,
+	# as the runtime does within the whole hash.
+	def self.nested_attributes(key, value, base)
+		buffer = +""
+		Phlex::SGML::Attributes.generate_nested_attributes({ key => value }, base, buffer)
+		buffer
+	end
 
 	# Compile each component on its first render. A component that fails to
 	# compile is reported to `on_failure` once and keeps rendering uncompiled,
@@ -257,16 +297,17 @@ module Phlex::Compiler
 	end
 
 	# Reopens the class and module statements around a definition with nothing
-	# inside but a call reporting the class reached and what `Set` names there.
-	# The method resolver captures the file's refinements, so element and helper
-	# lookup uses the same lexical scope as the compiled definitions. The
-	# statements are copied without their superclasses, so they only reopen.
+	# inside but a call reporting the class reached, what `Set` names there and
+	# the refinements active there. The method resolver captures the file's
+	# refinements, so element and helper lookup uses the same lexical scope as
+	# the compiled definitions. The statements are copied without their
+	# superclasses, so they only reopen.
 	# Bind and call separately: TruffleRuby's bind_call loses the caller's refinements.
 	def self.probe(namespace, usings: [])
 		report = parse(<<~RUBY, PROBE_PATH).statements.body.first
 			::Phlex::Compiler.__probe__(self, defined?(Set) && Set, ->(component, name) {
 				::Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind(component).call(name)
-			})
+			}, ::Module.used_modules)
 		RUBY
 		program = Refract::StatementsNode.new(body: [*usings, wrap_in_namespace(namespace, [report])])
 		source = Refract::Formatter.new.format_node(program).source
@@ -284,8 +325,8 @@ module Phlex::Compiler
 		SCOPES.pop
 	end
 
-	def self.__probe__(component, set, method_resolver)
-		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, set:, method_resolver:)
+	def self.__probe__(component, set, method_resolver, refinements)
+		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, set:, method_resolver:, refinements:)
 	end
 
 	# Whether the class is still the one its name refers to. After a reload the

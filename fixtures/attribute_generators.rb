@@ -39,4 +39,12 @@ module AttributeGenerators
 	VALUE = G.one_of(SCALAR, TOKENS, TOKENS.map { |tokens| Set.new(tokens) }, NESTED)
 
 	ATTRIBUTES = G.hash_of(KEY, VALUE, length: 0..4)
+
+	# Text that isn't valid UTF-8 or isn't ASCII-compatible, which some string
+	# operations refuse.
+	ENCODED_TEXT = G.one_of(
+		TEXT.map { |text| text.encode(Encoding::UTF_16LE) },
+		TEXT.map { |text| (text.b << "\xFF".b).force_encoding(Encoding::UTF_8) },
+		TEXT.map { |text| text.b << "\xFF".b },
+	)
 end

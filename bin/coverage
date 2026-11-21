@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-rm -rf ./coverage && COVERAGE=true bundle exec qd && open ./coverage/index.html
+bundle exec qd --coverage && open ./.quickdraw/coverage/index.html

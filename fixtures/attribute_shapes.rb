@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
-# Each shape passes a value to an element in a way the compiler compiles differently.
+# Each shape passes a value to an element in a way the compiler compiles
+# differently. Errors are rescued so partial output is compared too.
 class AttributeShapes < Phlex::HTML
-	SHAPES = %i[title href src id class style data interpolated interpolated_href splat mixed conditional].freeze
+	SHAPES = %i[title href src id class style data interpolated interpolated_only interpolated_href splat mixed conditional tokens nested prefixed_href].freeze
 
 	def initialize(shape, value)
 		@shape = shape
@@ -18,11 +19,17 @@ class AttributeShapes < Phlex::HTML
 		in :class then div(class: @value)
 		in :style then div(style: @value)
 		in :data then div(data: @value)
-		in :interpolated then div(title: "a #{@value}")
+		in :interpolated then div(title: "a #{@value}") { "x" }
+		in :interpolated_only then div(title: "#{@value}") { "x" } # rubocop:disable Style/RedundantInterpolation
 		in :interpolated_href then a(href: "#{@value}/")
 		in :splat then div(**@value)
 		in :mixed then a(id: "x", href: @value, class: ["a", @value], data: { value: @value })
 		in :conditional then a(href: (@value ? "/yes" : "javascript:no()"), title: (@value ? "yes" : nil))
+		in :tokens then div(class: ["a", ("b" if @value), (@value ? :c_d : nil)], title: @value) { "x" }
+		in :nested then div(data: { a: "x", b: @value, c_d: @value }, aria: { label: @value }) { "x" }
+		in :prefixed_href then a(href: "/posts/#{@value}", title: "mailto:#{@value}") { a(href: "mailto:#{@value}") }
 		end
+	rescue => error
+		plain "!#{error.class}"
 	end
 end

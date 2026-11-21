@@ -496,6 +496,10 @@ class Phlex::SGML
 	# time, so a change to one has to be seen. Nothing to do until something
 	# has been compiled.
 	private_class_method def self.__inlining_changed__(target, names)
+		if names.include?(:__phlex_equal__?) && !Phlex::SGML.equal?(target)
+			raise Phlex::NameError, "__phlex_equal__? is reserved for compiled blocks, so it can't be defined on #{target.inspect}."
+		end
+
 		Phlex::Compiler.inlining_changed(target, names) unless Phlex.__compiled_source_maps__.empty?
 	end
 
@@ -510,19 +514,9 @@ class Phlex::SGML
 		self
 	end
 
-	def __map_exception__(exception)
-		return exception unless (locations = exception.backtrace_locations)
-
-		exception.set_backtrace(
-			locations.map do |loc|
-				if (generation = Phlex.__compiled_source_maps__[loc.path]) && (line = generation.lines[loc.lineno])
-					"#{generation.path}:#{line}:in '#{loc.label}'"
-				else
-					loc.to_s
-				end
-			end
-		)
-
-		exception
-	end
+	# BasicObject#equal? under a name a component can't override. A compiled
+	# block runs its compiled body only when the component says the block's
+	# receiver is itself, rather than asking the receiver, which could be
+	# anything.
+	define_method(:__phlex_equal__?, BasicObject.instance_method(:equal?))
 end

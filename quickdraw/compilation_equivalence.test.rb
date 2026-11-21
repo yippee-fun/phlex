@@ -20,7 +20,7 @@ class CompilationEquivalenceTest < Quickdraw::Test
 	# Cases the compiler is expected to refuse, with the reason it must give.
 	REFUSED = {
 		"same_line_definitions" => /more than one method is defined on this line/,
-		"reserved_locals" => /__phlex_done_1__ is a local the compiler reserves/,
+		"reserved_locals" => /__phlex_done_1__ is a name the compiler reserves for locals/,
 		"refinement_mid_file" => /`using` applies to only part of the file/,
 		"ruby2_keywords" => /marked ruby2_keywords/,
 		"ruby2_keywords_reopened" => /marked ruby2_keywords/,
@@ -30,6 +30,13 @@ class CompilationEquivalenceTest < Quickdraw::Test
 		"conditional_using" => /isn.t a plain top-level statement naming a constant/,
 		"ruby2_keywords_splat" => /arguments the compiler can.t read/,
 		"refinement_same_line" => /`using` applies to only part of the file/,
+		"refined_core_method" => /refines String#include\?, which compiled code calls/,
+		"refined_escape" => /refines #<Class:\w+::Escape>#html_escape/,
+		"refined_symbol_name" => /refines Symbol#name/,
+		"refined_string_subclass" => /refines EquivalenceCases::RefinedStringSubclass::Title#include\?/,
+		"refined_hash_length" => /refines Hash#length/,
+		"refined_class_method" => /refines #<Class:Phlex::SGML::Elements>#normalize_img_attributes/,
+		"hidden_refinements" => /refines String#include\?/,
 	}.merge(
 		# Only CRuby can tell a method made by `def` from one made otherwise.
 		defined?(RubyVM::InstructionSequence) ? {} : { "superseded_definitions" => /the file has changed since it was loaded/ }

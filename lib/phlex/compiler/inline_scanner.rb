@@ -41,10 +41,13 @@ class Phlex::Compiler::InlineScanner < Refract::Visitor
 		end
 	end
 
+	# Before Ruby 4, a jump in a parameter default is only valid inside a block
+	# around the one it's in, so one there keeps the block being inlined a block.
 	[Refract::BlockNode, Refract::LambdaNode].each do |node_class|
 		visit node_class do |node|
+			visit node.parameters
 			@blocks += 1
-			super(node)
+			visit node.body
 			@blocks -= 1
 		end
 	end

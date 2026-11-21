@@ -12,7 +12,7 @@ class CompilationEquivalencePropertiesTest < Quickdraw::Test
 		Phlex::Compiler.compile(AttributeShapes)
 	end
 
-	fuzz "compiled attributes render as the interpreter renders them", one_of(*AttributeShapes::SHAPES), one_of(VALUE, ATTRIBUTES) do |shape, value|
+	fuzz "compiled attributes render as the interpreter renders them", one_of(*AttributeShapes::SHAPES), one_of(VALUE, ATTRIBUTES, ENCODED_TEXT) do |shape, value|
 		assert_equal render(AttributeShapes, shape, value), render(Interpreted, shape, value)
 	end
 
