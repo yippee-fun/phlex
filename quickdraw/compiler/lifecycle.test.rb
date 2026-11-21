@@ -400,6 +400,27 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a component that inlined an svg block is recompiled when Phlex::SVG changes" do
+		with_component_files(
+			"icon.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleIcon < Phlex::HTML
+					def view_template = svg { |s| s.path(d: "M0") }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleIcon)
+			assert LifecycleIcon.instance_variable_get(:@__phlex_inlined_svg__).include?(:path)
+			before = LifecycleIcon.instance_method(:view_template).source_location
+
+			# Aliasing a method to itself redefines it without changing it.
+			Phlex::SVG.class_eval { alias_method :path, :path }
+
+			refute_equal LifecycleIcon.instance_method(:view_template).source_location, before
+			assert_equal LifecycleIcon.new.call, %(<svg><path d="M0"></path></svg>)
+		end
+	end
+
 	test "bare whitespace relies on block_given?, which its runtime method asks" do
 		with_component_files(
 			"whitespace.rb" => <<~RUBY

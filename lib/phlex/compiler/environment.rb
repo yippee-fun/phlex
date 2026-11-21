@@ -7,16 +7,24 @@
 class Phlex::Compiler::Environment
 	ELEMENTS_SOURCE_PATH = Phlex::SGML::Elements.instance_method(:register_element).source_location[0]
 	HELPER_OWNERS = Set[Phlex::SGML, Phlex::HTML, Phlex::SVG].freeze
+	SGML_SOURCE_PATH = Phlex::SGML.instance_method(:plain).source_location[0]
 	HELPER_SOURCE_PATHS = Set[
-		Phlex::SGML.instance_method(:plain).source_location[0],
+		SGML_SOURCE_PATH,
 		Phlex::HTML.instance_method(:doctype).source_location[0],
 	].freeze
 
 	Element = Data.define(:tag, :void)
 
+	# What Phlex::HTML#svg's Phlex::SVG runs around its block, which compiled
+	# code skips when it inlines the block.
+	SVG_RENDER = %i[initialize render? before_template around_template after_template view_template internal_call __yield_content__ __implicit_output__].freeze
+
 	# The element and helper names whose implementation compiled methods have
 	# baked in, by inlining them or by relying on what they return.
 	attr_reader :inlined
+
+	# The Phlex::SVG methods an inlined svg block relies on.
+	attr_reader :inlined_svg
 
 	# With `inline: false` nothing is recognised, so every method compiles to
 	# its original definition. Used to restore a class before it's frozen.
@@ -28,6 +36,7 @@ class Phlex::Compiler::Environment
 		@elements = {}
 		@helpers = {}
 		@inlined = Set.new
+		@inlined_svg = Set.new
 	end
 
 	def standard_set? = @standard_set
@@ -48,6 +57,32 @@ class Phlex::Compiler::Environment
 		return @helpers[name] if @helpers.key?(name)
 
 		@helpers[name] = resolve_helper(name)
+	end
+
+	# An environment for the Phlex::SVG that `svg` renders around its block,
+	# if the block can be inlined: while svg is Phlex::HTML's, its super is
+	# the registered element, and Phlex::SVG renders as Phlex wrote it.
+	def svg_environment
+		return @svg_environment if defined?(@svg_environment)
+
+		@svg_environment = (Phlex::Compiler::Environment.new(Phlex::SVG, standard_set: @standard_set, method_resolver: @method_resolver) if inline_svg?)
+	end
+
+	private def inline_svg?
+		return false unless helper?(:svg) && (element = instance_method(:svg).super_method)
+		return false unless element.source_location&.first == ELEMENTS_SOURCE_PATH && element.original_name == :svg
+		return false unless element.owner.respond_to?(:__element_registry__) && element.owner.__element_registry__.elements[:svg] == "svg"
+
+		SVG_RENDER.all? do |name|
+			method = instance_method(name, Phlex::SVG)
+			# Lazy compilation compiles a component before rendering it as before.
+			method = method.super_method if method&.owner == Phlex::Compiler::LazyCompilation
+
+			method && method.original_name == name && (
+				(method.owner == Phlex::SGML && method.source_location&.first == SGML_SOURCE_PATH) ||
+				(name == :initialize && method.owner == BasicObject)
+			)
+		end
 	end
 
 	# Element and helper methods ask block_given? whether they were given a

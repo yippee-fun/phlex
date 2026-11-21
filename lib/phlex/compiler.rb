@@ -135,7 +135,9 @@ module Phlex::Compiler
 	# find it, without waiting for a compilation in progress, so compile with
 	# `Phlex::Compiler.compile` before starting them.
 	def self.enable!(on_failure: DEFAULT_FAILURE_HANDLER)
-		Phlex::SGML.prepend(LazyCompilation) unless Phlex::SGML < LazyCompilation
+		# Prepended under the lock, so it isn't taken for a change to what's been
+		# inlined: it only compiles a component before rendering it as before.
+		MUTEX.synchronize { Phlex::SGML.prepend(LazyCompilation) } unless Phlex::SGML < LazyCompilation
 		@on_failure = on_failure
 		@enabled = true
 	end
@@ -254,6 +256,9 @@ module Phlex::Compiler
 
 			inlined = result.component.instance_variable_get(:@__phlex_inlined__) || Set.new
 			result.component.instance_variable_set(:@__phlex_inlined__, (inlined | result.inlined).freeze)
+
+			inlined_svg = result.component.instance_variable_get(:@__phlex_inlined_svg__) || Set.new
+			result.component.instance_variable_set(:@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
 		end
 
 		nil
@@ -263,8 +268,9 @@ module Phlex::Compiler
 	# into a class or singleton class. A compiled class above or below it that
 	# inlined one of them is recompiled, and with the change now loaded it
 	# stops inlining that name, so the change takes effect just as it would
-	# have uncompiled. An override on a single instance can't be compiled for,
-	# so it's refused.
+	# have uncompiled. A class that inlined an svg block relying on one of them
+	# on Phlex::SVG is recompiled too. An override on a single instance can't
+	# be compiled for, so it's refused.
 	def self.inlining_changed(target, names)
 		return if Phlex.__main_ractor__? && MUTEX.owned?
 
@@ -272,6 +278,13 @@ module Phlex::Compiler
 		affected = related.select do |klass|
 			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end
+
+		if !target.singleton_class? && Phlex::SVG <= target
+			affected |= loaded_components.select do |klass|
+				(inlined = klass.instance_variable_get(:@__phlex_inlined_svg__)) && names.any? { |name| inlined.include?(name) }
+			end
+		end
+
 		return if affected.empty?
 
 		if target.singleton_class?
@@ -289,6 +302,7 @@ module Phlex::Compiler
 	def self.recompile(component, inline: true)
 		MUTEX.synchronize do
 			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
+			component.remove_instance_variable(:@__phlex_inlined_svg__) if component.instance_variable_defined?(:@__phlex_inlined_svg__)
 
 			defining_files(component).each do |path|
 				compile_file(path, components: [component], recompile: true, inline:)

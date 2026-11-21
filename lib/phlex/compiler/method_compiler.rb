@@ -210,6 +210,7 @@ module Phlex::Compiler
 				in :doctype then compile_doctype(node)
 				in :comment then compile_comment(node)
 				in :fragment then compile_fragment(node)
+				in :svg then compile_inline_svg(node)
 				else nil
 				end
 			end
@@ -303,6 +304,64 @@ module Phlex::Compiler
 				[call(Refract::NilNode.new, :===, content), Refract::NilNode.new],
 				otherwise: if_node(write(formatted, call(nil, :format_object, content)), [call(buffer, :<<, escaped(read(formatted)))])
 			)
+		end
+
+		# `svg { |s| s.path(d: "…") }` renders a Phlex::SVG around its block. When
+		# the block only calls Phlex::SVG's elements on its parameter, with
+		# static attributes and literal content, nothing it runs can tell the
+		# Phlex::SVG apart from text, so the whole element is serialised now.
+		private def compile_inline_svg(node)
+			return unless (svg = @environment.svg_environment)
+			return unless node.block in Refract::BlockNode[
+				parameters: Refract::BlockParametersNode[
+					locals: [],
+					parameters: Refract::ParametersNode[requireds: [Refract::RequiredParameterNode => parameter], optionals: [], rest: nil, posts: [], keywords: [], keyword_rest: nil, block: nil],
+				],
+			]
+
+			used = Set.new
+			return unless (body = svg_body(node.block.body, parameter.name, svg, used))
+			return unless (attributes = compile_attributes(node, ">"))
+
+			@environment.inlined << :block_given?
+			@environment.inlined_svg.merge(used).merge(Environment::SVG_RENDER)
+
+			statements([
+				*attributes.hoisted,
+				append(literal("<svg"), *attributes.parts, literal(">#{body}</svg>")),
+			])
+		end
+
+		private def svg_body(body, parameter, svg, used)
+			return "" if body.nil?
+
+			elements = body.body.map { |statement| svg_element(statement, parameter, svg, used) }
+			elements.join unless elements.include?(nil)
+		end
+
+		# An element called on the block's parameter, serialised as Phlex::SVG
+		# serialises it, or nil if it isn't static.
+		private def svg_element(node, parameter, svg, used)
+			return unless node in Refract::CallNode[receiver: Refract::LocalVariableReadNode[name: ^parameter], block: nil | Refract::BlockNode[parameters: nil]]
+			return unless (element = svg.element(node.name)) && !element.void
+			return if Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS.key?(node.name)
+
+			attributes = case node.arguments&.arguments
+				in nil then {}
+				in [Refract::KeywordHashNode => keyword_hash] then static_attributes(keyword_hash) or return
+				else return
+			end
+
+			content = case node.block
+				in nil | Refract::BlockNode[body: nil] then ""
+				in Refract::BlockNode[body: Refract::StatementsNode[body: [Refract::StringNode | Refract::SymbolNode => text]]] then Phlex::Escape.html_escape(text.unescaped)
+				in Refract::BlockNode[body:] then svg_body(body, parameter, svg, used) or return
+			end
+
+			used << node.name
+			"<#{element.tag}#{Phlex::SGML::Attributes.generate_attributes(attributes)}>#{content}</#{element.tag}>"
+		rescue Phlex::ArgumentError
+			nil
 		end
 
 		private def compile_void_element(node, tag)
