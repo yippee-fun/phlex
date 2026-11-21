@@ -50,7 +50,16 @@ module Phlex::Compiler::CoreCalls
 	PRIVATE_INSTANCE_METHODS = Module.instance_method(:private_instance_methods)
 
 	# The core methods, and whether they were public, as they were when Phlex loaded.
-	ORIGINALS = CALLS.select { |_receiver, names| names }.flat_map { |receiver, names|
+	SUBCLASSES = Class.instance_method(:subclasses)
+
+	# Phlex's own methods compiled code calls, whose redefinition would change
+	# it but not the runtime, which doesn't call them.
+	HELPERS = {
+		Phlex::Compiler.singleton_class => %i[keywords escape_quotes symbol_value yield_component nested_attributes],
+		Phlex::SGML::Attributes.singleton_class => %i[attribute reference_attribute generate_attributes],
+	}.freeze
+
+	ORIGINALS = CALLS.merge(HELPERS).select { |_receiver, names| names }.flat_map { |receiver, names|
 		names.filter_map do |name|
 			if receiver.method_defined?(name) || receiver.private_method_defined?(name)
 				[[receiver, name], [receiver.instance_method(name), receiver.public_method_defined?(name)]]
@@ -108,9 +117,23 @@ module Phlex::Compiler::CoreCalls
 
 		if receiver.ancestors.include?(target)
 			found_after?(receiver, target, name, missing: !called.nil?, phlex_only: called.nil?)
+		elsif receiver.singleton_class? || !(Module === target)
+			false
+		elsif called.nil?
+			# Only a method Phlex defines is called on a subclass of a Phlex receiver.
+			descends?(receiver, target) && (receiver.method_defined?(name) || receiver.private_method_defined?(name)) && phlex?(receiver.instance_method(name).owner)
 		else
-			!receiver.singleton_class? && Module === target && target.ancestors.include?(receiver)
+			descends?(receiver, target)
 		end
+	end
+
+	# Whether the target is a subclass of the receiver, or mixed into one, so
+	# a value compiled code receives could be one.
+	private def descends?(receiver, target)
+		return true if target.ancestors.include?(receiver)
+		return false unless Class === receiver
+
+		SUBCLASSES.bind_call(receiver).any? { |subclass| subclass.ancestors.include?(target) || descends?(subclass, target) }
 	end
 
 	# A named method compiled code calls that's missing is affected by a

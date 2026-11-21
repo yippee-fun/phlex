@@ -1062,7 +1062,11 @@ module Phlex::Compiler
 
 		private def compile_whitespace(node)
 			return keep_call(node, "it has arguments") if node.arguments
-			return raw(" ") if node.block.nil?
+
+			if node.block.nil?
+				@environment.inlined << :block_given?
+				return raw(" ")
+			end
 
 			compile_wrapped_content(node, " ", " ")
 		end

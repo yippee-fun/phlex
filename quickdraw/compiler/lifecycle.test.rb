@@ -400,6 +400,20 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "bare whitespace relies on block_given?, which its runtime method asks" do
+		with_component_files(
+			"whitespace.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleWhitespace < Phlex::HTML
+					def view_template = whitespace
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleWhitespace)
+			assert_equal LifecycleWhitespace.instance_variable_get(:@__phlex_inlined__), Set[:whitespace, :block_given?]
+		end
+	end
+
 	test "freezing a compiled class restores its definitions, so it still follows changes above it" do
 		with_component_files(
 			"frozen_parent.rb" => <<~RUBY,

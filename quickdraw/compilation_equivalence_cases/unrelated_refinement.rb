@@ -2,10 +2,13 @@
 
 module EquivalenceCases
 	module UnrelatedRefinement
+		class CustomState < Phlex::SGML::State; end
+
 		module Irrelevant
 			refine(Object) { def irrelevant = "irrelevant" }
 			refine(Object) { def tap = super } # rubocop:disable Lint/UselessMethodDefinition
 			refine(StandardError.singleton_class) { def ===(other) = super } # rubocop:disable Lint/UselessMethodDefinition
+			refine(CustomState) { def unrelated = nil }
 		end
 	end
 end
