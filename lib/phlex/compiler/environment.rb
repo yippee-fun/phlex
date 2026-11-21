@@ -69,9 +69,13 @@ class Phlex::Compiler::Environment
 	end
 
 	private def inline_svg?
-		return false unless helper?(:svg) && (element = instance_method(:svg).super_method)
+		return false unless helper?(:svg) && helper?(:render) && (element = instance_method(:svg).super_method)
 		return false unless element.source_location&.first == ELEMENTS_SOURCE_PATH && element.original_name == :svg
-		return false unless element.owner.respond_to?(:__element_registry__) && element.owner.__element_registry__.elements[:svg] == "svg"
+		return false unless element.owner.respond_to?(:__element_registry__)
+
+		registry = element.owner.__element_registry__
+		return false unless registry.elements[:svg] == "svg" && !registry.void_elements.key?(:svg)
+		return false unless sgml_new?
 
 		SVG_RENDER.all? do |name|
 			method = instance_method(name, Phlex::SVG)
@@ -83,6 +87,19 @@ class Phlex::Compiler::Environment
 				(name == :initialize && method.owner == BasicObject)
 			)
 		end
+	end
+
+	# Whether `render Phlex::SVG.new` builds and recognises the SVG as Phlex wrote it.
+	private def sgml_new?
+		(new = instance_method(:new, Phlex::SVG.singleton_class)) && new.owner == Phlex::SGML.singleton_class &&
+			new.original_name == :new && new.source_location&.first == SGML_SOURCE_PATH &&
+			instance_method(:allocate, Phlex::SVG.singleton_class)&.owner == Class &&
+			instance_method(:===, Phlex::SGML.singleton_class)&.owner == Module
+	end
+
+	# An element called on an explicit receiver, so only if it's public.
+	def public_element(name)
+		element(name) if @component.public_method_defined?(name)
 	end
 
 	# Element and helper methods ask block_given? whether they were given a

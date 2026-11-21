@@ -323,7 +323,7 @@ module Phlex::Compiler
 			return unless (body = svg_body(node.block.body, parameter.name, svg, used))
 			return unless (attributes = compile_attributes(node, ">"))
 
-			@environment.inlined << :block_given?
+			@environment.inlined.merge(%i[block_given? render])
 			@environment.inlined_svg.merge(used).merge(Environment::SVG_RENDER)
 
 			statements([
@@ -334,6 +334,7 @@ module Phlex::Compiler
 
 		private def svg_body(body, parameter, svg, used)
 			return "" if body.nil?
+			return unless Refract::StatementsNode === body
 
 			elements = body.body.map { |statement| svg_element(statement, parameter, svg, used) }
 			elements.join unless elements.include?(nil)
@@ -343,8 +344,9 @@ module Phlex::Compiler
 		# serialises it, or nil if it isn't static.
 		private def svg_element(node, parameter, svg, used)
 			return unless node in Refract::CallNode[receiver: Refract::LocalVariableReadNode[name: ^parameter], block: nil | Refract::BlockNode[parameters: nil]]
-			return unless (element = svg.element(node.name)) && !element.void
-			return if Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS.key?(node.name)
+			return unless (element = svg.public_element(node.name)) && !element.void
+			# A registered `head` flushes after closing.
+			return if element.tag == "head" || Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS.key?(node.name)
 
 			attributes = case node.arguments&.arguments
 				in nil then {}
@@ -360,7 +362,8 @@ module Phlex::Compiler
 
 			used << node.name
 			"<#{element.tag}#{Phlex::SGML::Attributes.generate_attributes(attributes)}>#{content}</#{element.tag}>"
-		rescue Phlex::ArgumentError
+		rescue Phlex::ArgumentError, ::ArgumentError, EncodingError
+			# The runtime raises these when rendering, if it reaches the element.
 			nil
 		end
 
