@@ -48,6 +48,7 @@ module Phlex::Compiler::CoreCalls
 	TARGET = Refinement.instance_method(:target)
 	INSTANCE_METHODS = Module.instance_method(:instance_methods)
 	PRIVATE_INSTANCE_METHODS = Module.instance_method(:private_instance_methods)
+	UNDEFINED_INSTANCE_METHODS = Module.instance_method(:undefined_instance_methods)
 
 	# The core methods, and whether they were public, as they were when Phlex loaded.
 	SUBCLASSES = Class.instance_method(:subclasses)
@@ -58,6 +59,8 @@ module Phlex::Compiler::CoreCalls
 		Phlex::Compiler.singleton_class => %i[keywords escape_quotes symbol_value yield_component nested_attributes],
 		Phlex::SGML::Attributes.singleton_class => %i[attribute reference_attribute generate_attributes],
 	}.freeze
+
+	PHLEX_PATH = "#{File.dirname(__dir__)}/"
 
 	ORIGINALS = CALLS.merge(HELPERS).select { |_receiver, names| names }.flat_map { |receiver, names|
 		names.filter_map do |name|
@@ -74,7 +77,8 @@ module Phlex::Compiler::CoreCalls
 		modules.each do |mod|
 			REFINEMENTS.bind_call(mod).each do |refinement|
 				target = TARGET.bind_call(refinement)
-				names = INSTANCE_METHODS.bind_call(refinement, false) | PRIVATE_INSTANCE_METHODS.bind_call(refinement, false)
+				names = INSTANCE_METHODS.bind_call(refinement, false) | PRIVATE_INSTANCE_METHODS.bind_call(refinement, false) |
+					UNDEFINED_INSTANCE_METHODS.bind_call(refinement)
 
 				calls.each do |receiver, called|
 					names.each do |name|
@@ -94,13 +98,20 @@ module Phlex::Compiler::CoreCalls
 		ORIGINALS.each do |(receiver, name), (original, public)|
 			method = receiver.instance_method(name)
 			changed = method != original || receiver.public_method_defined?(name) != public ||
-				(RUBY_ENGINE == "ruby" && NATIVE.include?(receiver) && defined_in_ruby?(method))
+				(RUBY_ENGINE == "ruby" && NATIVE.include?(receiver) && defined_in_ruby?(method)) ||
+				(HELPERS[receiver]&.include?(name) && !defined_by_phlex?(method))
 			return "#{receiver.inspect}##{name}" if changed
 		rescue NameError
 			return "#{receiver.inspect}##{name}"
 		end
 
 		nil
+	end
+
+	# The snapshot is taken when the compiler loads, which may be after an
+	# override, so helpers must also still be Phlex's own.
+	private def defined_by_phlex?(method)
+		method.source_location&.first&.start_with?(PHLEX_PATH)
 	end
 
 	# CRuby writes some core methods in Ruby, under `<internal:…>` paths.
@@ -128,8 +139,10 @@ module Phlex::Compiler::CoreCalls
 	end
 
 	# Whether the target is a subclass of the receiver, or mixed into one, so
-	# a value compiled code receives could be one.
+	# a value compiled code receives could be one. A module could also be
+	# extended onto any one value.
 	private def descends?(receiver, target)
+		return true unless Class === target
 		return true if target.ancestors.include?(receiver)
 		return false unless Class === receiver
 

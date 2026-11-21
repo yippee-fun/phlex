@@ -33,6 +33,8 @@ class CompilationEquivalenceTest < Quickdraw::Test
 		"refined_core_method" => /refines String#include\?, which compiled code calls/,
 		"refined_escape" => /refines #<Class:\w+::Escape>#html_escape/,
 		"refined_symbol_name" => /refines Symbol#name/,
+		"refined_undefined_method" => /refines Integer#to_s/,
+		"refined_extended_module" => /refines EquivalenceCases::RefinedExtendedModule::Label#include\?/,
 		"refined_string_subclass" => /refines EquivalenceCases::RefinedStringSubclass::Title#include\?/,
 		"refined_hash_length" => /refines Hash#length/,
 		"refined_string_subclass_module" => /refines EquivalenceCases::RefinedStringSubclassModule::Quoting#include\?/,
