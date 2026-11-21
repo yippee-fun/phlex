@@ -38,9 +38,11 @@ require "refract"
 # - Changing what an inlined element or helper resolves to through a module
 #   already mixed into a compiled component, or into Phlex::SVG for an inlined
 #   svg block, isn't seen: defining, removing or undefining it on that module,
-#   changing its visibility there, or mixing another module into it. Call
-#   `Phlex::Compiler.recompile` on each class whose methods inlined it. A
-#   method already running when one is redefined finishes as compiled.
+#   changing its visibility there, or mixing another module into it. Nor is
+#   changing the visibility of a method where it's defined, such as `new` on
+#   Phlex::SGML. Call `Phlex::Compiler.recompile` on each class whose methods
+#   inlined it. A method already running when one is redefined finishes as
+#   compiled.
 # - Attributes with literal keys are serialised without the attribute cache, so
 #   a value's `to_s`, `to_h` or `iso8601` runs on every render rather than once
 #   per distinct set of attributes, and its `hash` isn't called.

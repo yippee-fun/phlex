@@ -22,6 +22,9 @@ class Phlex::Compiler::Environment
 	# The class methods `render Phlex::SVG.new` calls.
 	SVG_CLASS_METHODS = %i[new allocate ===].freeze
 
+	# Asked by Phlex::SVG's render methods and elements, which an inlined block skips.
+	SVG_KERNEL_CALLS = %i[block_given?].freeze
+
 	# The element and helper names whose implementation compiled methods have
 	# baked in, by inlining them or by relying on what they return.
 	attr_reader :inlined
@@ -94,7 +97,8 @@ class Phlex::Compiler::Environment
 
 	# Whether `render Phlex::SVG.new` builds and recognises the SVG as Phlex wrote it.
 	private def sgml_new?
-		(new = instance_method(:new, Phlex::SVG.singleton_class)) && new.owner == Phlex::SGML.singleton_class &&
+		Phlex::SVG.singleton_class.public_method_defined?(:new) &&
+			(new = instance_method(:new, Phlex::SVG.singleton_class)) && new.owner == Phlex::SGML.singleton_class &&
 			new.original_name == :new && new.source_location&.first == SGML_SOURCE_PATH &&
 			instance_method(:allocate, Phlex::SVG.singleton_class)&.owner == Class &&
 			instance_method(:===, Phlex::SGML.singleton_class)&.owner == Module

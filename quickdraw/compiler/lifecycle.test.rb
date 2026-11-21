@@ -448,11 +448,66 @@ class CompilerLifecycleTest < Quickdraw::Test
 				Phlex::SVG.singleton_class.undef_method(:new)
 				refute LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:new)
 				assert_raises(NoMethodError) { LifecycleIconNew.new.call }
+
+				restore_svg_new
+				Phlex::Compiler.recompile(LifecycleIconNew)
+				assert LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__).include?(:new)
+
+				Phlex::SVG.singleton_class.__send__(:private, :new)
+				refute LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:new)
+				assert_raises(NoMethodError) { LifecycleIconNew.new.call }
 			ensure
-				# Replacing an undefined method is the only way to remove it on CRuby.
-				Phlex::SVG.define_singleton_method(:new, Phlex::SGML.singleton_class.instance_method(:new))
-				Phlex::SVG.singleton_class.remove_method(:new)
+				restore_svg_new
 			end
+		end
+	end
+
+	# Replacing an undefined method is the only way to remove it on CRuby.
+	private def restore_svg_new
+		Phlex::SVG.define_singleton_method(:new, Phlex::SGML.singleton_class.instance_method(:new))
+		Phlex::SVG.singleton_class.remove_method(:new)
+	end
+
+	test "a component that inlined an svg block is recompiled when Phlex::SVG redefines block_given?" do
+		with_component_files(
+			"icon.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleIconBlockGiven < Phlex::HTML
+					def view_template = svg { |s| s.circle(r: 1) }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleIconBlockGiven)
+			assert LifecycleIconBlockGiven.instance_variable_get(:@__phlex_inlined_svg__).include?(:block_given?)
+			before = LifecycleIconBlockGiven.instance_method(:view_template).source_location
+
+			begin
+				Phlex::SVG.define_method(:block_given?) { false }
+
+				refute_equal LifecycleIconBlockGiven.instance_method(:view_template).source_location, before
+				refute LifecycleIconBlockGiven.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:block_given?)
+			ensure
+				Phlex::SVG.remove_method(:block_given?)
+			end
+		end
+	end
+
+	test "a class method doesn't recompile what inlined an instance method of the same name" do
+		with_component_files(
+			"divider.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDivider < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleDivider)
+			assert LifecycleDivider.instance_variable_get(:@__phlex_inlined__).include?(:div)
+			before = LifecycleDivider.instance_method(:view_template).source_location
+
+			LifecycleDivider.define_singleton_method(:div) { nil }
+
+			assert_equal LifecycleDivider.instance_method(:view_template).source_location, before
 		end
 	end
 

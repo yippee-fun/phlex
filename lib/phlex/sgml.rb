@@ -506,19 +506,24 @@ class Phlex::SGML
 		Phlex::Compiler.inlining_changed(target, names) unless Phlex.__compiled_source_maps__.empty?
 	end
 
-	# Inlined svg blocks rely on how Phlex::SVG is built.
+	# Inlined svg blocks rely on the class methods that build a Phlex::SVG.
+	# Defined before the hooks below, which call it when it's defined.
+	private_class_method def self.__svg_class_changed__(method_name)
+		__inlining_changed__(self, [method_name]) if (method_name in :new | :allocate | :===) && Phlex::SVG <= self
+	end
+
 	private_class_method def self.singleton_method_added(method_name)
-		__inlining_changed__(self, [method_name])
+		__svg_class_changed__(method_name)
 		super
 	end
 
 	private_class_method def self.singleton_method_removed(method_name)
-		__inlining_changed__(self, [method_name])
+		__svg_class_changed__(method_name)
 		super
 	end
 
 	private_class_method def self.singleton_method_undefined(method_name)
-		__inlining_changed__(self, [method_name])
+		__svg_class_changed__(method_name)
 		super
 	end
 
