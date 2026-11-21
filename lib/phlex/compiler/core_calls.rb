@@ -40,6 +40,12 @@ module Phlex::Compiler::CoreCalls
 	# Core methods implemented in C on CRuby, which a definition in Ruby replaced.
 	NATIVE = [String, Symbol, Integer, Hash, String.singleton_class, Symbol.singleton_class, Exception.singleton_class, TrueClass, NilClass, Encoding, Kernel, Kernel.singleton_class].freeze
 
+	# Called unbound, so a refinement module can't hide what it refines.
+	REFINEMENTS = Module.instance_method(:refinements)
+	TARGET = Refinement.instance_method(:target)
+	INSTANCE_METHODS = Module.instance_method(:instance_methods)
+	PRIVATE_INSTANCE_METHODS = Module.instance_method(:private_instance_methods)
+
 	# The core methods, and whether they were public, as they were when Phlex loaded.
 	ORIGINALS = CALLS.select { |_receiver, names| names }.flat_map { |receiver, names|
 		names.filter_map do |name|
@@ -54,9 +60,9 @@ module Phlex::Compiler::CoreCalls
 		calls = CALLS.merge([component, *descendants].to_h { |receiver| [receiver, COMPONENT_CALLS] })
 
 		modules.each do |mod|
-			mod.refinements.each do |refinement|
-				target = refinement.target
-				names = refinement.instance_methods(false) | refinement.private_instance_methods(false)
+			REFINEMENTS.bind_call(mod).each do |refinement|
+				target = TARGET.bind_call(refinement)
+				names = INSTANCE_METHODS.bind_call(refinement, false) | PRIVATE_INSTANCE_METHODS.bind_call(refinement, false)
 
 				calls.each do |receiver, called|
 					names.each do |name|
@@ -109,11 +115,17 @@ module Phlex::Compiler::CoreCalls
 	# method counts, only those Phlex defines are called.
 	private def found_after?(receiver, target, name, missing:, phlex_only:)
 		owner = receiver.instance_method(name).owner
-		return false if phlex_only && !owner.name&.start_with?("Phlex")
+		return false if phlex_only && !phlex?(owner)
 
 		ancestors = receiver.ancestors
 		ancestors.index(target) <= ancestors.index(owner)
 	rescue NameError
 		missing
+	end
+
+	# A class method's owner is the singleton class of the module defining it.
+	private def phlex?(owner)
+		owner = owner.attached_object if owner.singleton_class?
+		Module === owner && owner.name&.start_with?("Phlex")
 	end
 end
