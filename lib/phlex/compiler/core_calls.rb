@@ -109,9 +109,13 @@ module Phlex::Compiler::CoreCalls
 	end
 
 	# The snapshot is taken when the compiler loads, which may be after an
-	# override, so helpers must also still be Phlex's own.
+	# override, so helpers must also still be Phlex's own, or phlex-native's.
 	private def defined_by_phlex?(method)
-		method.source_location&.first&.start_with?(PHLEX_PATH)
+		if (path = method.source_location&.first)
+			path.start_with?(PHLEX_PATH)
+		else
+			defined?(Phlex::Native::Attributes) && method.owner.equal?(Phlex::Native::Attributes)
+		end
 	end
 
 	# CRuby writes some core methods in Ruby, under `<internal:…>` paths.

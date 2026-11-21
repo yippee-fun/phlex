@@ -1,11 +1,19 @@
 # frozen_string_literal: true
 
-Phlex::SVG::StandardElements.register_element :stream_head, tag: "head"
-Phlex::SVG::StandardElements.register_element :private_mark
-Phlex::SVG::StandardElements.__send__(:private, :private_mark)
-
 module EquivalenceCases
 	module InlineSvgFallbacks
+		# Mixed into Phlex::SVG rather than registered on its standard elements,
+		# which other tests enumerate.
+		module Elements
+			extend Phlex::SGML::Elements
+
+			register_element :stream_head, tag: "head"
+			register_element :private_mark
+			private :private_mark
+		end
+
+		Phlex::SVG.include(Elements)
+
 		class InlineSvgFallbacks < Phlex::HTML
 			def self.equivalence_scenarios
 				{ "invalid attribute" => -> (klass) { klass.new(invalid: true).call } }
