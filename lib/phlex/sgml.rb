@@ -293,15 +293,18 @@ class Phlex::SGML
 			end
 			state.buffer << cached_buffer
 		else
+			found = false
+
 			fragment_map.each do |fragment_name, (offset, length, nested_fragments)|
 				if state.fragments.include?(fragment_name)
+					found = true
 					state.fragments.delete(fragment_name)
 					state.fragments.subtract(nested_fragments)
 					state.buffer << cached_buffer.byteslice(offset, length)
 				end
 			end
 
-			state.halt_if_all_fragments_found
+			state.halt_if_all_fragments_found if found
 		end
 
 		nil

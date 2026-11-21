@@ -56,12 +56,12 @@ class Phlex::SGML::State
 
 	def end_fragment(id, halt: true)
 		if caching?
-			byte_length = nil
+			current_byte_offset = 0
 			cache_stack.reverse_each do |(cache_buffer, fragment_map, open_fragments)| # We'll iterate deepest to shallowest
+				current_byte_offset += cache_buffer.bytesize
 				fragment = fragment_map[id]
 				next if fragment[1]                                         # An earlier fragment with this name has already ended
-				byte_length ||= cache_buffer.bytesize - fragment[0]         # The byte length is the difference between the current byte offset and the byte offset of the fragment
-				fragment[1] = byte_length                                   # All cache contexts use the same byte length
+				fragment[1] = current_byte_offset - fragment[0]             # The byte length is the difference between the current byte offset and the byte offset of the fragment
 				if (descendants = open_fragments.delete(id))
 					fragment[2] = descendants.to_a
 				end
@@ -86,7 +86,19 @@ class Phlex::SGML::State
 
 		cache_stack.reverse_each do |(cache_buffer, fragment_map, open_fragments)|
 			offset += cache_buffer.bytesize
-			next if fragment_map.key?(id)
+
+			if (fragment = fragment_map[id])
+				# An open fragment with this name ends where the recorded one does.
+				unless fragment[1]
+					fragment[1] = offset + length - fragment[0]
+					if (descendants = open_fragments.delete(id))
+						fragment[2] = descendants.to_a
+					end
+				end
+
+				next
+			end
+
 			fragment_map[id] = [offset, length, nested_fragments]
 
 			open_fragments.delete(id)
