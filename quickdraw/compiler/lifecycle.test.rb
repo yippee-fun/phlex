@@ -526,6 +526,31 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "an svg block isn't inlined while a core method building Phlex::SVG is replaced" do
+		with_component_files(
+			"icon.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleIconAllocate < Phlex::HTML
+					def view_template = svg { |s| s.circle(r: 1) }
+				end
+			RUBY
+		) do
+			Class.class_eval do
+				alias_method :__lifecycle_allocate__, :allocate
+				def allocate = __lifecycle_allocate__
+			end
+
+			Phlex::Compiler.compile(LifecycleIconAllocate)
+			refute LifecycleIconAllocate.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:circle)
+			assert_equal LifecycleIconAllocate.new.call, %(<svg><circle r="1"></circle></svg>)
+		ensure
+			Class.class_eval do
+				alias_method :allocate, :__lifecycle_allocate__
+				remove_method :__lifecycle_allocate__
+			end
+		end
+	end
+
 	test "a class method doesn't recompile what inlined an instance method of the same name" do
 		with_component_files(
 			"divider.rb" => <<~RUBY

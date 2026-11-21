@@ -118,6 +118,11 @@ module Phlex::Compiler::CoreCalls
 		end
 	end
 
+	# Whether a core method is the original, as far as the engine can tell.
+	def native?(method)
+		RUBY_ENGINE != "ruby" || !defined_in_ruby?(method)
+	end
+
 	# CRuby writes some core methods in Ruby, under `<internal:…>` paths.
 	private def defined_in_ruby?(method)
 		(path = method.source_location&.first) && !path.start_with?("<internal:")

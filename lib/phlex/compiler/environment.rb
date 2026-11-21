@@ -21,7 +21,16 @@ class Phlex::Compiler::Environment
 
 	# The core methods Phlex::SGML.new and render call on the Phlex::SVG, and
 	# block_given?, which its render methods and elements ask, by owner.
-	SVG_CORE = { initialize: BasicObject, __send__: BasicObject, instance_variable_set: Kernel, block_given?: Kernel }.freeze
+	# Each as it was when the compiler loaded.
+	SVG_CORE = {
+		initialize: BasicObject.instance_method(:initialize),
+		__send__: BasicObject.instance_method(:__send__),
+		instance_variable_set: Kernel.instance_method(:instance_variable_set),
+		block_given?: Kernel.instance_method(:block_given?),
+	}.freeze
+
+	CLASS_ALLOCATE = Class.instance_method(:allocate)
+	MODULE_CASE_EQUALITY = Module.instance_method(:===)
 
 	# The class methods `render Phlex::SVG.new` calls.
 	SVG_CLASS_METHODS = %i[new allocate ===].freeze
@@ -89,9 +98,7 @@ class Phlex::Compiler::Environment
 		# render calls it on the Phlex::SVG.
 		return false unless Phlex::SVG.public_method_defined?(:internal_call)
 
-		return false unless SVG_CORE.all? do |name, owner|
-			(method = instance_method(name, Phlex::SVG)) && method.owner == owner && method.original_name == name
-		end
+		return false unless SVG_CORE.all? { |name, original| core?(instance_method(name, Phlex::SVG), original) }
 
 		SVG_RENDER.all? do |name|
 			method = instance_method(name, Phlex::SVG)
@@ -107,8 +114,14 @@ class Phlex::Compiler::Environment
 		Phlex::SVG.singleton_class.public_method_defined?(:new) &&
 			(new = instance_method(:new, Phlex::SVG.singleton_class)) && new.owner == Phlex::SGML.singleton_class &&
 			new.original_name == :new && new.source_location&.first == SGML_SOURCE_PATH &&
-			instance_method(:allocate, Phlex::SVG.singleton_class)&.owner == Class &&
-			instance_method(:===, Phlex::SGML.singleton_class)&.owner == Module
+			core?(instance_method(:allocate, Phlex::SVG.singleton_class), CLASS_ALLOCATE) &&
+			core?(instance_method(:===, Phlex::SGML.singleton_class), MODULE_CASE_EQUALITY)
+	end
+
+	# Still the core method, unless it was replaced before the compiler loaded
+	# on an engine that can't tell.
+	private def core?(method, original)
+		method == original && Phlex::Compiler::CoreCalls.native?(method)
 	end
 
 	# An element called on an explicit receiver, so only if it's public.
