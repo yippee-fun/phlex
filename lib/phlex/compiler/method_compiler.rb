@@ -12,6 +12,10 @@ module Phlex::Compiler
 		# A part of the opening tag that runs a serialiser, which can raise.
 		Serialized = Data.define(:node)
 
+		# A value appended between the attribute's name and closing quote, with its
+		# quotes escaped, when the condition holds, or else the fallback's text.
+		Typed = Data.define(:condition, :value, :name, :branches, :otherwise)
+
 		TokenChoice = Data.define(:condition, :truthy, :falsy)
 		TOKEN_CONDITIONS_LIMIT = 3
 
@@ -579,12 +583,7 @@ module Phlex::Compiler
 			end
 
 			if safe_prefix
-				return [
-					Serialized.new(elsif_chain(
-						[decodable(value), Refract::InterpolatedStringNode.new(parts: [string(" #{name}=\""), embedded(quoted(value)), string('"')])],
-						otherwise: call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value)
-					)),
-				]
+				return [Typed.new(condition: decodable(value), value:, name:, branches: [], otherwise: call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value))]
 			end
 
 			if reference
@@ -592,7 +591,7 @@ module Phlex::Compiler
 			end
 
 			value = hoisted_local(value, hoisted) unless hoist
-			[Serialized.new(typed_attribute(value, name) { call(constant("Phlex::SGML::Attributes"), :attribute, key, string(name), value) })]
+			[typed_attribute(value, name) { call(constant("Phlex::SGML::Attributes"), :attribute, key, string(name), value) }]
 		end
 
 		# Whether an interpolated reference starts with text that rules out a
@@ -620,17 +619,38 @@ module Phlex::Compiler
 			)
 		end
 
-		# What the serialiser returns, without calling it for true, nil, false or
-		# a String, built by appending as the serialiser builds it, since that
-		# decides its encoding. The value is read more than once, so it must be a
-		# local of the compiler's, which a String's methods can't reassign.
+		# A String value only needs its quotes escaped, and anything else is
+		# serialised as the serialiser does, without calling it for true, nil or
+		# false. The value is read more than once, so it must be a local of the
+		# compiler's, which a String's methods can't reassign.
 		private def typed_attribute(value, name)
-			elsif_chain(
-				[call(Refract::TrueNode.new, :===, value), string(" #{name}")],
-				[call(constant("String"), :===, value), call(call(call(string(" #{name}=\""), :+@), :<<, quoted(value)), :<<, string('"'))],
-				[value, yield],
-				otherwise: string("")
+			branches = [[call(Refract::TrueNode.new, :===, value), string(" #{name}")], [value, yield]]
+			Typed.new(condition: call(constant("String"), :===, value), value:, name:, branches:, otherwise: string(""))
+		end
+
+		# Escapes the value in the guard, to be appended as it is, which is only
+		# safe for the last value serialised: a later serialiser could change it.
+		private def choice(typed)
+			escaped = @locals.fresh(:escaped)
+			text = @locals.fresh(:text)
+
+			statement = if_node(
+				typed.condition,
+				[write(escaped, quoted(typed.value))],
+				else_body: [write(escaped, Refract::NilNode.new), write(text, fallback(typed))]
 			)
+
+			[statement, Output::Choice.new(escaped:, text:, prefix: " #{typed.name}=\"", suffix: '"')]
+		end
+
+		private def fallback(typed)
+			typed.branches.empty? ? typed.otherwise : elsif_chain(*typed.branches, otherwise: typed.otherwise)
+		end
+
+		# Builds the attribute's text in the guard, as the serialiser builds it.
+		private def built(typed)
+			text = call(call(call(string(" #{typed.name}=\""), :+@), :<<, quoted(typed.value)), :<<, string('"'))
+			elsif_chain([typed.condition, text], *typed.branches, otherwise: typed.otherwise)
 		end
 
 		# A hash of nested attributes with literal keys, such as `data:`, is
@@ -668,7 +688,7 @@ module Phlex::Compiler
 					literal(text)
 				in [:dynamic, nested_key, nested_name, nested_value]
 					nested_value = hoisted_local(nested_value, hoisted)
-					Serialized.new(typed_attribute(nested_value, nested_name) { call(constant("Phlex::Compiler"), :nested_attributes, nested_key, nested_value, string(base)) })
+					typed_attribute(nested_value, nested_name) { call(constant("Phlex::Compiler"), :nested_attributes, nested_key, nested_value, string(base)) }
 				end
 			end
 		end
@@ -677,10 +697,6 @@ module Phlex::Compiler
 			branches.reverse.reduce(Refract::ElseNode.new(statements: statements([otherwise]))) do |subsequent, (predicate, body)|
 				Refract::IfNode.new(inline: false, predicate:, statements: statements([body]), subsequent:)
 			end
-		end
-
-		private def embedded(node)
-			Refract::EmbeddedStatementsNode.new(statements: statements([node]))
 		end
 
 		# A list of literal tokens, some chosen by conditions, is serialised now
@@ -776,18 +792,30 @@ module Phlex::Compiler
 		private def attribute_parts(parts, closing)
 			writes = []
 
-			parts = parts.map do |part|
+			last = parts.rindex { |part| part in Serialized | Typed }
+
+			parts = parts.each_with_index.map do |part, index|
+				part = Serialized.new(built(part)) if Typed === part && index != last
+
 				case part
 				in Serialized[node]
 					local = @locals.fresh(:attribute)
 					writes << write(local, node)
 					expression(read(local))
+				in Typed
+					statement, choice = choice(part)
+					writes << statement
+					choice
 				else
 					part
 				end
 			end
 
-			parts[0] = Output::Guarded.new(statements: writes, result: parts[0], closing:) if writes.any?
+			return parts if writes.empty?
+
+			# A choice is appended as statements, so the guard can't return it.
+			parts.unshift(literal("")) if Output::Choice === parts.first
+			parts[0] = Output::Guarded.new(statements: writes, result: parts[0], closing:)
 			parts
 		end
 

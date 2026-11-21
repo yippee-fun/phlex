@@ -67,25 +67,34 @@ class CompilerTest < Quickdraw::Test
 					__phlex_value_1__ = @cls
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
-							__phlex_done_3__ = false
-							__phlex_attribute_2__ = if true.===(__phlex_value_1__)
-								" class"
-							elsif ::String.===(__phlex_value_1__)
-								' class="'.+@.<<((if __phlex_value_1__.include?('"')
+							__phlex_done_4__ = false
+							if ::String.===(__phlex_value_1__)
+								__phlex_escaped_2__ = (if __phlex_value_1__.include?('"')
 									::Phlex::Compiler.escape_quotes(__phlex_value_1__)
 								else
 									__phlex_value_1__
-								end)).<<('"')
-							elsif __phlex_value_1__
-								::Phlex::SGML::Attributes.attribute(:class, "class", __phlex_value_1__)
+								end)
 							else
-								""
+								__phlex_escaped_2__ = nil
+								__phlex_text_3__ = if true.===(__phlex_value_1__)
+									" class"
+								elsif __phlex_value_1__
+									::Phlex::SGML::Attributes.attribute(:class, "class", __phlex_value_1__)
+								else
+									""
+								end
 							end
-							__phlex_done_3__ = true
-							__phlex_attribute_2__
+							__phlex_done_4__ = true
+							""
 						ensure
-							__phlex_state__.buffer.<<(">") unless __phlex_done_3__
-						end).<<(">x</div>")
+							__phlex_state__.buffer.<<(">") unless __phlex_done_4__
+						end)
+						if __phlex_escaped_2__
+							__phlex_state__.buffer.<<(' class="').<<(__phlex_escaped_2__).<<('"')
+						else
+							__phlex_state__.buffer.<<(__phlex_text_3__)
+						end
+						__phlex_state__.buffer.<<(">x</div>")
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
@@ -107,25 +116,34 @@ class CompilerTest < Quickdraw::Test
 					__phlex_value_1__ = dom_id
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
-							__phlex_done_3__ = false
-							__phlex_attribute_2__ = if true.===(__phlex_value_1__)
-								" id"
-							elsif ::String.===(__phlex_value_1__)
-								' id="'.+@.<<((if __phlex_value_1__.include?('"')
+							__phlex_done_4__ = false
+							if ::String.===(__phlex_value_1__)
+								__phlex_escaped_2__ = (if __phlex_value_1__.include?('"')
 									::Phlex::Compiler.escape_quotes(__phlex_value_1__)
 								else
 									__phlex_value_1__
-								end)).<<('"')
-							elsif __phlex_value_1__
-								::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
+								end)
 							else
-								""
+								__phlex_escaped_2__ = nil
+								__phlex_text_3__ = if true.===(__phlex_value_1__)
+									" id"
+								elsif __phlex_value_1__
+									::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
+								else
+									""
+								end
 							end
-							__phlex_done_3__ = true
-							__phlex_attribute_2__
+							__phlex_done_4__ = true
+							""
 						ensure
-							__phlex_state__.buffer.<<(">") unless __phlex_done_3__
-						end).<<(">x</div>")
+							__phlex_state__.buffer.<<(">") unless __phlex_done_4__
+						end)
+						if __phlex_escaped_2__
+							__phlex_state__.buffer.<<(' id="').<<(__phlex_escaped_2__).<<('"')
+						else
+							__phlex_state__.buffer.<<(__phlex_text_3__)
+						end
+						__phlex_state__.buffer.<<(">x</div>")
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
@@ -148,26 +166,35 @@ class CompilerTest < Quickdraw::Test
 					__phlex_value_2__ = dom_id
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<a").<<(begin
-							__phlex_done_5__ = false
+							__phlex_done_6__ = false
 							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.reference_attribute(:href, "href", __phlex_value_1__)
-							__phlex_attribute_4__ = if true.===(__phlex_value_2__)
-								" id"
-							elsif ::String.===(__phlex_value_2__)
-								' id="'.+@.<<((if __phlex_value_2__.include?('"')
+							if ::String.===(__phlex_value_2__)
+								__phlex_escaped_4__ = (if __phlex_value_2__.include?('"')
 									::Phlex::Compiler.escape_quotes(__phlex_value_2__)
 								else
 									__phlex_value_2__
-								end)).<<('"')
-							elsif __phlex_value_2__
-								::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+								end)
 							else
-								""
+								__phlex_escaped_4__ = nil
+								__phlex_text_5__ = if true.===(__phlex_value_2__)
+									" id"
+								elsif __phlex_value_2__
+									::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+								else
+									""
+								end
 							end
-							__phlex_done_5__ = true
+							__phlex_done_6__ = true
 							__phlex_attribute_3__
 						ensure
-							__phlex_state__.buffer.<<(">") unless __phlex_done_5__
-						end).<<(' class="x"').<<(__phlex_attribute_4__).<<(">x</a>")
+							__phlex_state__.buffer.<<(">") unless __phlex_done_6__
+						end).<<(' class="x"')
+						if __phlex_escaped_4__
+							__phlex_state__.buffer.<<(' id="').<<(__phlex_escaped_4__).<<('"')
+						else
+							__phlex_state__.buffer.<<(__phlex_text_5__)
+						end
+						__phlex_state__.buffer.<<(">x</a>")
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__
@@ -194,25 +221,34 @@ class CompilerTest < Quickdraw::Test
 					__phlex_value_2__ = @id
 					(if __phlex_state__.should_render?
 						__phlex_state__.buffer.<<("<div").<<(begin
-							__phlex_done_4__ = false
-							__phlex_attribute_3__ = if true.===(__phlex_value_2__)
-								" id"
-							elsif ::String.===(__phlex_value_2__)
-								' id="'.+@.<<((if __phlex_value_2__.include?('"')
+							__phlex_done_5__ = false
+							if ::String.===(__phlex_value_2__)
+								__phlex_escaped_3__ = (if __phlex_value_2__.include?('"')
 									::Phlex::Compiler.escape_quotes(__phlex_value_2__)
 								else
 									__phlex_value_2__
-								end)).<<('"')
-							elsif __phlex_value_2__
-								::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+								end)
 							else
-								""
+								__phlex_escaped_3__ = nil
+								__phlex_text_4__ = if true.===(__phlex_value_2__)
+									" id"
+								elsif __phlex_value_2__
+									::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+								else
+									""
+								end
 							end
-							__phlex_done_4__ = true
+							__phlex_done_5__ = true
 							__phlex_value_1__
 						ensure
-							__phlex_state__.buffer.<<("></div>") unless __phlex_done_4__
-						end).<<(__phlex_attribute_3__).<<("></div>")
+							__phlex_state__.buffer.<<("></div>") unless __phlex_done_5__
+						end)
+						if __phlex_escaped_3__
+							__phlex_state__.buffer.<<(' id="').<<(__phlex_escaped_3__).<<('"')
+						else
+							__phlex_state__.buffer.<<(__phlex_text_4__)
+						end
+						__phlex_state__.buffer.<<("></div>")
 					end
 					nil)
 				rescue ::Exception => __phlex_exception__

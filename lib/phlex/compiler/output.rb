@@ -14,6 +14,11 @@ module Phlex::Compiler::Output
 	# A Ruby expression that evaluates to the text to append, and may raise.
 	Expression = Data.define(:node)
 
+	# An attribute whose value was serialised into locals: a String's escaped
+	# text, appended between the prefix and suffix, or for any other value the
+	# whole text. Appended as statements, so the String needn't be copied.
+	Choice = Data.define(:escaped, :text, :prefix, :suffix)
+
 	# Statements that serialise attributes into locals, then the part to
 	# append, with the closing text appended instead if the statements exit
 	# early. The runtime closes an opening tag however serialisation exits.
