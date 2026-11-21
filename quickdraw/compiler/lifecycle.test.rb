@@ -97,12 +97,12 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 				locked = Queue.new
 				release = Queue.new
-				recompiling = Thread.new do
-					Phlex::Compiler::MUTEX.synchronize do
-						locked << true
-						release.pop
-					end
-				end
+				Pause.gate = -> {
+					Pause.gate = nil
+					locked << true
+					release.pop
+				}
+				recompiling = Thread.new { Phlex::Compiler.recompile(LifecycleWaits) }
 				locked.pop
 
 				render = Thread.new { LifecycleWaits.call }
@@ -113,6 +113,46 @@ class CompilerLifecycleTest < Quickdraw::Test
 				release << true
 				assert_equal render.value, "<div>waits</div>"
 				recompiling.join
+			ensure
+				Pause.gate = nil
+				release&.<< true
+				Phlex::Compiler.disable!
+			end
+		end
+	end
+
+	test "a lazy render of a compiled component doesn't wait for another component compiling" do
+		with_component_files(
+			"prompt.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecyclePrompt < Phlex::HTML
+					def view_template = div { "prompt" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.enable!
+			begin
+				LifecyclePrompt.call
+				assert Phlex::Compiler.compiled?(LifecyclePrompt)
+
+				locked = Queue.new
+				release = Queue.new
+				compiling = Thread.new do
+					Phlex::Compiler::MUTEX.synchronize do
+						locked << true
+						release.pop
+					end
+				end
+				locked.pop
+
+				render = Thread.new { LifecyclePrompt.call }
+
+				finished = render.join(2)
+				release << true
+
+				assert finished
+				assert_equal render.value, "<div>prompt</div>"
+				compiling.join
 			ensure
 				release&.<< true
 				Phlex::Compiler.disable!
@@ -180,6 +220,23 @@ class CompilerLifecycleTest < Quickdraw::Test
 	end
 
 	Phlex::Compiler::MethodCompiler.prepend(Sabotage)
+
+	# Calls the gate, if set, as the compiler compiles each method.
+	module Pause
+		def self.gate = @gate
+
+		def self.gate=(gate)
+			@gate = gate
+		end
+
+		def compile(node, **)
+			Pause.gate&.call
+
+			super
+		end
+	end
+
+	Phlex::Compiler::MethodCompiler.prepend(Pause)
 
 	test "a component that fails to compile on first render is reported once and renders uncompiled" do
 		with_component_files(
