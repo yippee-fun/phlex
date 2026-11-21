@@ -32,7 +32,8 @@ class Phlex::SGML
 		proc { |c| c.render(self) }
 	end
 
-	def call(buffer = +"", context: {}, fragments: nil, &)
+	# Components can only be rendered once, because Phlex can't reset their instance variables. Pass `rerenderable: true` to allow the component to be rendered again.
+	def call(buffer = +"", context: {}, fragments: nil, rerenderable: false, &)
 		state = Phlex::SGML::State.new(
 			user_context: context,
 			output_buffer: buffer,
@@ -42,12 +43,14 @@ class Phlex::SGML
 		internal_call(parent: nil, state:, &)
 
 		state.output_buffer << state.buffer
+	ensure
+		@_state = nil if rerenderable && @_state.equal?(state)
 	end
 
 	def internal_call(parent: nil, state: nil, &block)
 		if @_state
 			raise Phlex::DoubleRenderError.new(
-				"You can't render a #{self.class.name} more than once."
+				"You can't render a #{self.class.name} more than once. To render a component more than once, pass `rerenderable: true` to `call` each time you render it."
 			)
 		end
 
@@ -96,7 +99,7 @@ class Phlex::SGML
 	end
 
 	# Returns `false` before rendering and `true` once the component has started rendering.
-	# It will not reset back to false after rendering.
+	# It will not reset back to false after rendering, unless the component was rendered with `rerenderable: true`.
 	def rendering?
 		!!@_state
 	end
