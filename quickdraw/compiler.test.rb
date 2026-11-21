@@ -74,15 +74,21 @@ class CompilerTest < Quickdraw::Test
 								else
 									__phlex_value_1__
 								end)
+							elsif true.===(__phlex_value_1__)
+								__phlex_escaped_2__ = nil
+								__phlex_text_3__ = " class"
+							elsif __phlex_value_1__
+								if ::Symbol.===(__phlex_value_1__)
+									__phlex_escaped_2__ = ::Phlex::Compiler.symbol_value(__phlex_value_1__)
+								elsif (::Integer.===(__phlex_value_1__) || ::Float.===(__phlex_value_1__))
+									__phlex_escaped_2__ = __phlex_value_1__.to_s
+								else
+									__phlex_escaped_2__ = nil
+									__phlex_text_3__ = ::Phlex::SGML::Attributes.attribute(:class, "class", __phlex_value_1__)
+								end
 							else
 								__phlex_escaped_2__ = nil
-								__phlex_text_3__ = if true.===(__phlex_value_1__)
-									" class"
-								elsif __phlex_value_1__
-									::Phlex::SGML::Attributes.attribute(:class, "class", __phlex_value_1__)
-								else
-									""
-								end
+								__phlex_text_3__ = ""
 							end
 							__phlex_done_4__ = true
 							""
@@ -123,15 +129,21 @@ class CompilerTest < Quickdraw::Test
 								else
 									__phlex_value_1__
 								end)
+							elsif true.===(__phlex_value_1__)
+								__phlex_escaped_2__ = nil
+								__phlex_text_3__ = " id"
+							elsif __phlex_value_1__
+								if ::Symbol.===(__phlex_value_1__)
+									__phlex_escaped_2__ = ::Phlex::Compiler.symbol_value(__phlex_value_1__)
+								elsif (::Integer.===(__phlex_value_1__) || ::Float.===(__phlex_value_1__))
+									__phlex_escaped_2__ = __phlex_value_1__.to_s
+								else
+									__phlex_escaped_2__ = nil
+									__phlex_text_3__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
+								end
 							else
 								__phlex_escaped_2__ = nil
-								__phlex_text_3__ = if true.===(__phlex_value_1__)
-									" id"
-								elsif __phlex_value_1__
-									::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_1__)
-								else
-									""
-								end
+								__phlex_text_3__ = ""
 							end
 							__phlex_done_4__ = true
 							""
@@ -174,15 +186,21 @@ class CompilerTest < Quickdraw::Test
 								else
 									__phlex_value_2__
 								end)
+							elsif true.===(__phlex_value_2__)
+								__phlex_escaped_4__ = nil
+								__phlex_text_5__ = " id"
+							elsif __phlex_value_2__
+								if ::Symbol.===(__phlex_value_2__)
+									__phlex_escaped_4__ = ::Phlex::Compiler.symbol_value(__phlex_value_2__)
+								elsif (::Integer.===(__phlex_value_2__) || ::Float.===(__phlex_value_2__))
+									__phlex_escaped_4__ = __phlex_value_2__.to_s
+								else
+									__phlex_escaped_4__ = nil
+									__phlex_text_5__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+								end
 							else
 								__phlex_escaped_4__ = nil
-								__phlex_text_5__ = if true.===(__phlex_value_2__)
-									" id"
-								elsif __phlex_value_2__
-									::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
-								else
-									""
-								end
+								__phlex_text_5__ = ""
 							end
 							__phlex_done_6__ = true
 							__phlex_attribute_3__
@@ -228,15 +246,21 @@ class CompilerTest < Quickdraw::Test
 								else
 									__phlex_value_2__
 								end)
+							elsif true.===(__phlex_value_2__)
+								__phlex_escaped_3__ = nil
+								__phlex_text_4__ = " id"
+							elsif __phlex_value_2__
+								if ::Symbol.===(__phlex_value_2__)
+									__phlex_escaped_3__ = ::Phlex::Compiler.symbol_value(__phlex_value_2__)
+								elsif (::Integer.===(__phlex_value_2__) || ::Float.===(__phlex_value_2__))
+									__phlex_escaped_3__ = __phlex_value_2__.to_s
+								else
+									__phlex_escaped_3__ = nil
+									__phlex_text_4__ = ::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
+								end
 							else
 								__phlex_escaped_3__ = nil
-								__phlex_text_4__ = if true.===(__phlex_value_2__)
-									" id"
-								elsif __phlex_value_2__
-									::Phlex::SGML::Attributes.attribute(:id, "id", __phlex_value_2__)
-								else
-									""
-								end
+								__phlex_text_4__ = ""
 							end
 							__phlex_done_5__ = true
 							__phlex_value_1__

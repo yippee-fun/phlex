@@ -108,6 +108,13 @@ module Phlex::Compiler
 	# out of the component's method, as at runtime.
 	def self.escape_quotes(value) = value.gsub('"', "&quot;")
 
+	# Compiled code writes a Symbol attribute value with this, as the serialiser does.
+	def self.symbol_value(symbol)
+		name = symbol.name
+		name = name.tr("_", "-") if name.include?("_")
+		name.include?('"') ? name.gsub('"', "&quot;") : name
+	end
+
 	# Compiled code yields to an element's block with this when the block can't
 	# be inlined, as the element method yields to it.
 	def self.yield_component(component) = yield(component)

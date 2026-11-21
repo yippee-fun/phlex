@@ -12,9 +12,14 @@ module Phlex::Compiler
 		# A part of the opening tag that runs a serialiser, which can raise.
 		Serialized = Data.define(:node)
 
-		# A value appended between the attribute's name and closing quote, with its
-		# quotes escaped, when the condition holds, or else the fallback's text.
-		Typed = Data.define(:condition, :value, :name, :branches, :otherwise)
+		# How a value is serialised, as cases tested in order: each a condition
+		# and an outcome, with an outcome for when none holds. An outcome is a
+		# Value, whose text goes between the attribute's name and closing quote,
+		# Text, which is the attribute's whole text, or further Cases.
+		Typed = Data.define(:name, :cases)
+		Cases = Data.define(:cases, :otherwise)
+		Value = Data.define(:node)
+		Text = Data.define(:node)
 
 		TokenChoice = Data.define(:condition, :truthy, :falsy)
 		TOKEN_CONDITIONS_LIMIT = 3
@@ -583,7 +588,8 @@ module Phlex::Compiler
 			end
 
 			if safe_prefix
-				return [Typed.new(condition: decodable(value), value:, name:, branches: [], otherwise: call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value))]
+				serialized = call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value)
+				return [Typed.new(name:, cases: Cases.new(cases: [[decodable(value), Value.new(quoted(value))]], otherwise: Text.new(serialized)))]
 			end
 
 			if reference
@@ -619,38 +625,69 @@ module Phlex::Compiler
 			)
 		end
 
-		# A String value only needs its quotes escaped, and anything else is
-		# serialised as the serialiser does, without calling it for true, nil or
-		# false. The value is read more than once, so it must be a local of the
-		# compiler's, which a String's methods can't reassign.
+		# A String only needs its quotes escaped, a Symbol its name too with
+		# underscores as dashes, and a number is written as it is. Anything else
+		# is serialised as the serialiser does, without calling it for true, nil
+		# or false, which come first as they do there. The value is read more
+		# than once, so it must be a local of the compiler's, which a String's
+		# methods can't reassign.
 		private def typed_attribute(value, name)
-			branches = [[call(Refract::TrueNode.new, :===, value), string(" #{name}")], [value, yield]]
-			Typed.new(condition: call(constant("String"), :===, value), value:, name:, branches:, otherwise: string(""))
+			number = Refract::OrNode.new(left: call(constant("Integer"), :===, value), operator: "||", right: call(constant("Float"), :===, value))
+
+			truthy = Cases.new(
+				cases: [
+					[call(constant("Symbol"), :===, value), Value.new(call(constant("Phlex::Compiler"), :symbol_value, value))],
+					[number, Value.new(call(value, :to_s))],
+				],
+				otherwise: Text.new(yield)
+			)
+
+			cases = Cases.new(
+				cases: [
+					[call(constant("String"), :===, value), Value.new(quoted(value))],
+					[call(Refract::TrueNode.new, :===, value), Text.new(string(" #{name}"))],
+					[value, truthy],
+				],
+				otherwise: Text.new(string(""))
+			)
+
+			Typed.new(name:, cases:)
 		end
 
-		# Escapes the value in the guard, to be appended as it is, which is only
-		# safe for the last value serialised: a later serialiser could change it.
+		# Writes the value's text in the guard, to be appended as it is, which is
+		# only safe for the last value serialised: a later serialiser could change
+		# a String in place.
 		private def choice(typed)
 			escaped = @locals.fresh(:escaped)
 			text = @locals.fresh(:text)
 
-			statement = if_node(
-				typed.condition,
-				[write(escaped, quoted(typed.value))],
-				else_body: [write(escaped, Refract::NilNode.new), write(text, fallback(typed))]
-			)
+			statement = lower_cases(typed.cases) do |outcome|
+				case outcome
+				in Value[node] then [write(escaped, node)]
+				in Text[node] then [write(escaped, Refract::NilNode.new), write(text, node)]
+				end
+			end
 
 			[statement, Output::Choice.new(escaped:, text:, prefix: " #{typed.name}=\"", suffix: '"')]
 		end
 
-		private def fallback(typed)
-			typed.branches.empty? ? typed.otherwise : elsif_chain(*typed.branches, otherwise: typed.otherwise)
-		end
-
 		# Builds the attribute's text in the guard, as the serialiser builds it.
 		private def built(typed)
-			text = call(call(call(string(" #{typed.name}=\""), :+@), :<<, quoted(typed.value)), :<<, string('"'))
-			elsif_chain([typed.condition, text], *typed.branches, otherwise: typed.otherwise)
+			lower_cases(typed.cases) do |outcome|
+				case outcome
+				in Value[node] then call(call(call(string(" #{typed.name}=\""), :+@), :<<, node), :<<, string('"'))
+				in Text[node] then node
+				end
+			end
+		end
+
+		private def lower_cases(outcome, &)
+			case outcome
+			in Cases[cases:, otherwise:]
+				elsif_chain(*cases.map { |condition, nested| [condition, lower_cases(nested, &)] }, otherwise: lower_cases(otherwise, &))
+			else
+				yield outcome
+			end
 		end
 
 		# A hash of nested attributes with literal keys, such as `data:`, is
@@ -693,9 +730,10 @@ module Phlex::Compiler
 			end
 		end
 
+		# Each body is a node, or an array of statements.
 		private def elsif_chain(*branches, otherwise:)
-			branches.reverse.reduce(Refract::ElseNode.new(statements: statements([otherwise]))) do |subsequent, (predicate, body)|
-				Refract::IfNode.new(inline: false, predicate:, statements: statements([body]), subsequent:)
+			branches.reverse.reduce(Refract::ElseNode.new(statements: statements(Array(otherwise)))) do |subsequent, (predicate, body)|
+				Refract::IfNode.new(inline: false, predicate:, statements: statements(Array(body)), subsequent:)
 			end
 		end
 
