@@ -534,12 +534,15 @@ module Phlex::Compiler
 				return nested
 			end
 
-			quotable = ascii_compatible_interpolation?(value)
+			# An interpolation is always a String, so it only needs its quotes
+			# escaped. That can raise, as for a string that isn't ASCII-compatible,
+			# or on TruffleRuby one that isn't valid, so it's done inside the guard.
+			quotable = Refract::InterpolatedStringNode === value
 			safe_prefix = reference && quotable && safe_reference_prefix?(value)
 			value = hoisted_local(value, hoisted) if hoist || (quotable && !reference) || safe_prefix
 
 			if quotable && !reference
-				return [literal(" #{name}=\""), expression(quoted(value)), literal('"')]
+				return [literal(" #{name}=\""), Serialized.new(quoted(value)), literal('"')]
 			end
 
 			if safe_prefix
@@ -715,13 +718,6 @@ module Phlex::Compiler
 			in Refract::ArrayNode then node.elements.map { |element| token_literal(element) }
 			else throw :dynamic
 			end
-		end
-
-		# An interpolation is always a String, so it only needs its quotes escaped,
-		# which can only raise if its encoding isn't ASCII-compatible. Literal text
-		# rules that out, as interpolating such a string into it raises first.
-		private def ascii_compatible_interpolation?(node)
-			Refract::InterpolatedStringNode === node && node.parts.any? { |part| Refract::StringNode === part && !part.unescaped.empty? }
 		end
 
 		# The runtime only copies the string if it has quotes to escape.
