@@ -12,6 +12,15 @@ module Phlex::Compiler
 		# A part of the opening tag that runs a serialiser, which can raise.
 		Serialized = Data.define(:node)
 
+		# How a value is serialised, as cases tested in order: each a condition
+		# and an outcome, with an outcome for when none holds. An outcome is a
+		# Value, whose text goes between the attribute's name and closing quote,
+		# Text, which is the attribute's whole text, or further Cases.
+		Typed = Data.define(:name, :cases)
+		Cases = Data.define(:cases, :otherwise)
+		Value = Data.define(:node)
+		Text = Data.define(:node)
+
 		TokenChoice = Data.define(:condition, :truthy, :falsy)
 		TOKEN_CONDITIONS_LIMIT = 3
 
@@ -201,6 +210,7 @@ module Phlex::Compiler
 				in :doctype then compile_doctype(node)
 				in :comment then compile_comment(node)
 				in :fragment then compile_fragment(node)
+				in :svg then compile_inline_svg(node)
 				else nil
 				end
 			end
@@ -294,6 +304,67 @@ module Phlex::Compiler
 				[call(Refract::NilNode.new, :===, content), Refract::NilNode.new],
 				otherwise: if_node(write(formatted, call(nil, :format_object, content)), [call(buffer, :<<, escaped(read(formatted)))])
 			)
+		end
+
+		# `svg { |s| s.path(d: "…") }` renders a Phlex::SVG around its block. When
+		# the block only calls Phlex::SVG's elements on its parameter, with
+		# static attributes and literal content, nothing it runs can tell the
+		# Phlex::SVG apart from text, so the whole element is serialised now.
+		private def compile_inline_svg(node)
+			return unless (svg = @environment.svg_environment)
+			return unless node.block in Refract::BlockNode[
+				parameters: Refract::BlockParametersNode[
+					locals: [],
+					parameters: Refract::ParametersNode[requireds: [Refract::RequiredParameterNode => parameter], optionals: [], rest: nil, posts: [], keywords: [], keyword_rest: nil, block: nil],
+				],
+			]
+
+			used = Set.new
+			return unless (body = svg_body(node.block.body, parameter.name, svg, used))
+			return unless (attributes = compile_attributes(node, ">"))
+
+			@environment.inlined.merge(%i[block_given? render])
+			@environment.inlined_svg.merge(used).merge(Environment::SVG_DEPENDENCIES)
+
+			statements([
+				*attributes.hoisted,
+				append(literal("<svg"), *attributes.parts, literal(">#{body}</svg>")),
+			])
+		end
+
+		private def svg_body(body, parameter, svg, used)
+			return "" if body.nil?
+			return unless Refract::StatementsNode === body
+
+			elements = body.body.map { |statement| svg_element(statement, parameter, svg, used) }
+			elements.join unless elements.include?(nil)
+		end
+
+		# An element called on the block's parameter, serialised as Phlex::SVG
+		# serialises it, or nil if it isn't static.
+		private def svg_element(node, parameter, svg, used)
+			return unless node in Refract::CallNode[receiver: Refract::LocalVariableReadNode[name: ^parameter], block: nil | Refract::BlockNode[parameters: nil]]
+			return unless (element = svg.public_element(node.name)) && !element.void
+			# A registered `head` flushes after closing.
+			return if element.tag == "head" || Phlex::SGML::Elements::ATTRIBUTE_NORMALIZERS.key?(node.name)
+
+			attributes = case node.arguments&.arguments
+				in nil then {}
+				in [Refract::KeywordHashNode => keyword_hash] then static_attributes(keyword_hash) or return
+				else return
+			end
+
+			content = case node.block
+				in nil | Refract::BlockNode[body: nil] then ""
+				in Refract::BlockNode[body: Refract::StatementsNode[body: [Refract::StringNode | Refract::SymbolNode => text]]] then Phlex::Escape.html_escape(text.unescaped)
+				in Refract::BlockNode[body:] then svg_body(body, parameter, svg, used) or return
+			end
+
+			used << node.name
+			"<#{element.tag}#{Phlex::SGML::Attributes.generate_attributes(attributes)}>#{content}</#{element.tag}>"
+		rescue Phlex::ArgumentError, ::ArgumentError, EncodingError
+			# The runtime raises these when rendering, if it reaches the element.
+			nil
 		end
 
 		private def compile_void_element(node, tag)
@@ -579,12 +650,8 @@ module Phlex::Compiler
 			end
 
 			if safe_prefix
-				return [
-					Serialized.new(elsif_chain(
-						[decodable(value), Refract::InterpolatedStringNode.new(parts: [string(" #{name}=\""), embedded(quoted(value)), string('"')])],
-						otherwise: call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value)
-					)),
-				]
+				serialized = call(constant("Phlex::SGML::Attributes"), :reference_attribute, key, string(name), value)
+				return [Typed.new(name:, cases: Cases.new(cases: [[decodable(value), Value.new(quoted(value))]], otherwise: Text.new(serialized)))]
 			end
 
 			if reference
@@ -592,7 +659,7 @@ module Phlex::Compiler
 			end
 
 			value = hoisted_local(value, hoisted) unless hoist
-			[Serialized.new(typed_attribute(value, name) { call(constant("Phlex::SGML::Attributes"), :attribute, key, string(name), value) })]
+			[typed_attribute(value, name) { call(constant("Phlex::SGML::Attributes"), :attribute, key, string(name), value) }]
 		end
 
 		# Whether an interpolated reference starts with text that rules out a
@@ -620,17 +687,69 @@ module Phlex::Compiler
 			)
 		end
 
-		# What the serialiser returns, without calling it for true, nil, false or
-		# a String, built by appending as the serialiser builds it, since that
-		# decides its encoding. The value is read more than once, so it must be a
-		# local of the compiler's, which a String's methods can't reassign.
+		# A String only needs its quotes escaped, a Symbol its name too with
+		# underscores as dashes, and a number is written as it is. Anything else
+		# is serialised as the serialiser does, without calling it for true, nil
+		# or false, which come first as they do there. The value is read more
+		# than once, so it must be a local of the compiler's, which a String's
+		# methods can't reassign.
 		private def typed_attribute(value, name)
-			elsif_chain(
-				[call(Refract::TrueNode.new, :===, value), string(" #{name}")],
-				[call(constant("String"), :===, value), call(call(call(string(" #{name}=\""), :+@), :<<, quoted(value)), :<<, string('"'))],
-				[value, yield],
-				otherwise: string("")
+			number = Refract::OrNode.new(left: call(constant("Integer"), :===, value), operator: "||", right: call(constant("Float"), :===, value))
+
+			truthy = Cases.new(
+				cases: [
+					[call(constant("Symbol"), :===, value), Value.new(call(constant("Phlex::Compiler"), :symbol_value, value))],
+					[number, Value.new(call(value, :to_s))],
+				],
+				otherwise: Text.new(yield)
 			)
+
+			cases = Cases.new(
+				cases: [
+					[call(constant("String"), :===, value), Value.new(quoted(value))],
+					[call(Refract::TrueNode.new, :===, value), Text.new(string(" #{name}"))],
+					[value, truthy],
+				],
+				otherwise: Text.new(string(""))
+			)
+
+			Typed.new(name:, cases:)
+		end
+
+		# Writes the value's text in the guard, to be appended as it is, which is
+		# only safe for the last value serialised: a later serialiser could change
+		# a String in place.
+		private def choice(typed)
+			escaped = @locals.fresh(:escaped)
+			text = @locals.fresh(:text)
+
+			statement = lower_cases(typed.cases) do |outcome|
+				case outcome
+				in Value[node] then [write(escaped, node)]
+				in Text[node] then [write(escaped, Refract::NilNode.new), write(text, node)]
+				end
+			end
+
+			[statement, Output::Choice.new(escaped:, text:, prefix: " #{typed.name}=\"", suffix: '"')]
+		end
+
+		# Builds the attribute's text in the guard, as the serialiser builds it.
+		private def built(typed)
+			lower_cases(typed.cases) do |outcome|
+				case outcome
+				in Value[node] then call(call(call(string(" #{typed.name}=\""), :+@), :<<, node), :<<, string('"'))
+				in Text[node] then node
+				end
+			end
+		end
+
+		private def lower_cases(outcome, &)
+			case outcome
+			in Cases[cases:, otherwise:]
+				elsif_chain(*cases.map { |condition, nested| [condition, lower_cases(nested, &)] }, otherwise: lower_cases(otherwise, &))
+			else
+				yield outcome
+			end
 		end
 
 		# A hash of nested attributes with literal keys, such as `data:`, is
@@ -668,19 +787,16 @@ module Phlex::Compiler
 					literal(text)
 				in [:dynamic, nested_key, nested_name, nested_value]
 					nested_value = hoisted_local(nested_value, hoisted)
-					Serialized.new(typed_attribute(nested_value, nested_name) { call(constant("Phlex::Compiler"), :nested_attributes, nested_key, nested_value, string(base)) })
+					typed_attribute(nested_value, nested_name) { call(constant("Phlex::Compiler"), :nested_attributes, nested_key, nested_value, string(base)) }
 				end
 			end
 		end
 
+		# Each body is a node, or an array of statements.
 		private def elsif_chain(*branches, otherwise:)
-			branches.reverse.reduce(Refract::ElseNode.new(statements: statements([otherwise]))) do |subsequent, (predicate, body)|
-				Refract::IfNode.new(inline: false, predicate:, statements: statements([body]), subsequent:)
+			branches.reverse.reduce(Refract::ElseNode.new(statements: statements(Array(otherwise)))) do |subsequent, (predicate, body)|
+				Refract::IfNode.new(inline: false, predicate:, statements: statements(Array(body)), subsequent:)
 			end
-		end
-
-		private def embedded(node)
-			Refract::EmbeddedStatementsNode.new(statements: statements([node]))
 		end
 
 		# A list of literal tokens, some chosen by conditions, is serialised now
@@ -776,18 +892,30 @@ module Phlex::Compiler
 		private def attribute_parts(parts, closing)
 			writes = []
 
-			parts = parts.map do |part|
+			last = parts.rindex { |part| part in Serialized | Typed }
+
+			parts = parts.each_with_index.map do |part, index|
+				part = Serialized.new(built(part)) if Typed === part && index != last
+
 				case part
 				in Serialized[node]
 					local = @locals.fresh(:attribute)
 					writes << write(local, node)
 					expression(read(local))
+				in Typed
+					statement, choice = choice(part)
+					writes << statement
+					choice
 				else
 					part
 				end
 			end
 
-			parts[0] = Output::Guarded.new(statements: writes, result: parts[0], closing:) if writes.any?
+			return parts if writes.empty?
+
+			# A choice is appended as statements, so the guard can't return it.
+			parts.unshift(literal("")) if Output::Choice === parts.first
+			parts[0] = Output::Guarded.new(statements: writes, result: parts[0], closing:)
 			parts
 		end
 
@@ -996,7 +1124,11 @@ module Phlex::Compiler
 
 		private def compile_whitespace(node)
 			return keep_call(node, "it has arguments") if node.arguments
-			return raw(" ") if node.block.nil?
+
+			if node.block.nil?
+				@environment.inlined << :block_given?
+				return raw(" ")
+			end
 
 			compile_wrapped_content(node, " ", " ")
 		end

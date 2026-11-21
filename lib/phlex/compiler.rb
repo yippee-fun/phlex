@@ -36,9 +36,13 @@ require "refract"
 #
 # Seven differences remain, all deliberate:
 # - Changing what an inlined element or helper resolves to through a module
-#   already mixed into a compiled component isn't seen: defining, removing or
-#   undefining it on that module, or mixing another module into it. Call
-#   `Phlex::Compiler.recompile` on each class whose methods inlined it.
+#   already mixed into a compiled component, or into Phlex::SVG for an inlined
+#   svg block, isn't seen: defining, removing or undefining it on that module,
+#   changing its visibility there, or mixing another module into it. Nor is
+#   changing the visibility of a method where it's defined, such as `new` on
+#   Phlex::SGML. Call `Phlex::Compiler.recompile` on each class whose methods
+#   inlined it. A method already running when one is redefined finishes as
+#   compiled.
 # - Attributes with literal keys are serialised without the attribute cache, so
 #   a value's `to_s`, `to_h` or `iso8601` runs on every render rather than once
 #   per distinct set of attributes, and its `hash` isn't called.
@@ -48,10 +52,14 @@ require "refract"
 #   output, the exception raised and its `cause` can differ from element
 #   methods appending one by one. A buffer switched mid-element, by a Fiber
 #   suspended inside `capture`, and a method that started before rendering,
-#   can see a different buffer. Whether to render is checked at each append,
-#   where an element method checks once, which only matters to code starting
-#   a fragment mid-element. A State subclass overriding its methods sees them
-#   called a different number of times.
+#   can see a different buffer, and the buffer itself passed as an attribute
+#   value is read after the attribute's name is appended to it. Whether to
+#   render is checked at each append, where an element method checks once,
+#   which only matters to code starting a fragment mid-element. A State
+#   subclass overriding its methods sees them called a different number of
+#   times, and an inlined svg block skips the State and core methods the
+#   runtime calls to render its Phlex::SVG, such as `around_render` and
+#   `Thread#[]=`.
 # - Static text and attributes are escaped and serialised once, when
 #   compiling, outside `Regexp.timeout`, and so are references whose prefix
 #   is known. A core method compiled code calls that's redefined after
@@ -108,6 +116,13 @@ module Phlex::Compiler
 	# out of the component's method, as at runtime.
 	def self.escape_quotes(value) = value.gsub('"', "&quot;")
 
+	# Compiled code writes a Symbol attribute value with this, as the serialiser does.
+	def self.symbol_value(symbol)
+		name = symbol.name
+		name = name.tr("_", "-") if name.include?("_")
+		name.include?('"') ? name.gsub('"', "&quot;") : name
+	end
+
 	# Compiled code yields to an element's block with this when the block can't
 	# be inlined, as the element method yields to it.
 	def self.yield_component(component) = yield(component)
@@ -128,7 +143,9 @@ module Phlex::Compiler
 	# find it, without waiting for a compilation in progress, so compile with
 	# `Phlex::Compiler.compile` before starting them.
 	def self.enable!(on_failure: DEFAULT_FAILURE_HANDLER)
-		Phlex::SGML.prepend(LazyCompilation) unless Phlex::SGML < LazyCompilation
+		# Prepended under the lock, so it isn't taken for a change to what's been
+		# inlined: it only compiles a component before rendering it as before.
+		MUTEX.synchronize { Phlex::SGML.prepend(LazyCompilation) } unless Phlex::SGML < LazyCompilation
 		@on_failure = on_failure
 		@enabled = true
 	end
@@ -247,6 +264,9 @@ module Phlex::Compiler
 
 			inlined = result.component.instance_variable_get(:@__phlex_inlined__) || Set.new
 			result.component.instance_variable_set(:@__phlex_inlined__, (inlined | result.inlined).freeze)
+
+			inlined_svg = result.component.instance_variable_get(:@__phlex_inlined_svg__) || Set.new
+			result.component.instance_variable_set(:@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
 		end
 
 		nil
@@ -256,8 +276,9 @@ module Phlex::Compiler
 	# into a class or singleton class. A compiled class above or below it that
 	# inlined one of them is recompiled, and with the change now loaded it
 	# stops inlining that name, so the change takes effect just as it would
-	# have uncompiled. An override on a single instance can't be compiled for,
-	# so it's refused.
+	# have uncompiled. A class that inlined an svg block relying on one of them
+	# on Phlex::SVG is recompiled too. An override on a single instance can't
+	# be compiled for, so it's refused.
 	def self.inlining_changed(target, names)
 		return if Phlex.__main_ractor__? && MUTEX.owned?
 
@@ -265,6 +286,13 @@ module Phlex::Compiler
 		affected = related.select do |klass|
 			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end
+
+		if !target.singleton_class? && Phlex::SVG <= target
+			affected |= loaded_components.select do |klass|
+				(inlined = klass.instance_variable_get(:@__phlex_inlined_svg__)) && names.any? { |name| inlined.include?(name) }
+			end
+		end
+
 		return if affected.empty?
 
 		if target.singleton_class?
@@ -282,6 +310,7 @@ module Phlex::Compiler
 	def self.recompile(component, inline: true)
 		MUTEX.synchronize do
 			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
+			component.remove_instance_variable(:@__phlex_inlined_svg__) if component.instance_variable_defined?(:@__phlex_inlined_svg__)
 
 			defining_files(component).each do |path|
 				compile_file(path, components: [component], recompile: true, inline:)

@@ -7,16 +7,43 @@
 class Phlex::Compiler::Environment
 	ELEMENTS_SOURCE_PATH = Phlex::SGML::Elements.instance_method(:register_element).source_location[0]
 	HELPER_OWNERS = Set[Phlex::SGML, Phlex::HTML, Phlex::SVG].freeze
+	SGML_SOURCE_PATH = Phlex::SGML.instance_method(:plain).source_location[0]
 	HELPER_SOURCE_PATHS = Set[
-		Phlex::SGML.instance_method(:plain).source_location[0],
+		SGML_SOURCE_PATH,
 		Phlex::HTML.instance_method(:doctype).source_location[0],
 	].freeze
 
 	Element = Data.define(:tag, :void)
 
+	# What Phlex::HTML#svg's Phlex::SVG runs around its block, which compiled
+	# code skips when it inlines the block.
+	SVG_RENDER = %i[render? before_template around_template after_template view_template internal_call __yield_content__ __implicit_output__].freeze
+
+	# The core methods Phlex::SGML.new and render call on the Phlex::SVG, and
+	# block_given?, which its render methods and elements ask, by owner.
+	# Each as it was when the compiler loaded.
+	SVG_CORE = {
+		initialize: BasicObject.instance_method(:initialize),
+		__send__: BasicObject.instance_method(:__send__),
+		instance_variable_set: Kernel.instance_method(:instance_variable_set),
+		block_given?: Kernel.instance_method(:block_given?),
+	}.freeze
+
+	CLASS_ALLOCATE = Class.instance_method(:allocate)
+	MODULE_CASE_EQUALITY = Module.instance_method(:===)
+
+	# The class methods `render Phlex::SVG.new` calls.
+	SVG_CLASS_METHODS = %i[new allocate ===].freeze
+
+	# Everything an inlined svg block relies on besides the elements it calls.
+	SVG_DEPENDENCIES = [*SVG_RENDER, *SVG_CORE.keys, *SVG_CLASS_METHODS].freeze
+
 	# The element and helper names whose implementation compiled methods have
 	# baked in, by inlining them or by relying on what they return.
 	attr_reader :inlined
+
+	# The Phlex::SVG methods an inlined svg block relies on.
+	attr_reader :inlined_svg
 
 	# With `inline: false` nothing is recognised, so every method compiles to
 	# its original definition. Used to restore a class before it's frozen.
@@ -28,6 +55,7 @@ class Phlex::Compiler::Environment
 		@elements = {}
 		@helpers = {}
 		@inlined = Set.new
+		@inlined_svg = Set.new
 	end
 
 	def standard_set? = @standard_set
@@ -48,6 +76,57 @@ class Phlex::Compiler::Environment
 		return @helpers[name] if @helpers.key?(name)
 
 		@helpers[name] = resolve_helper(name)
+	end
+
+	# An environment for the Phlex::SVG that `svg` renders around its block,
+	# if the block can be inlined: while svg is Phlex::HTML's, its super is
+	# the registered element, and Phlex::SVG renders as Phlex wrote it.
+	def svg_environment
+		return @svg_environment if defined?(@svg_environment)
+
+		@svg_environment = (Phlex::Compiler::Environment.new(Phlex::SVG, standard_set: @standard_set, method_resolver: @method_resolver) if inline_svg?)
+	end
+
+	private def inline_svg?
+		return false unless helper?(:svg) && helper?(:render) && (element = instance_method(:svg).super_method)
+		return false unless element.source_location&.first == ELEMENTS_SOURCE_PATH && element.original_name == :svg
+		return false unless element.owner.respond_to?(:__element_registry__)
+
+		registry = element.owner.__element_registry__
+		return false unless registry.elements[:svg] == "svg" && !registry.void_elements.key?(:svg)
+		return false unless sgml_new?
+		# render calls it on the Phlex::SVG.
+		return false unless Phlex::SVG.public_method_defined?(:internal_call)
+
+		return false unless SVG_CORE.all? { |name, original| core?(instance_method(name, Phlex::SVG), original) }
+
+		SVG_RENDER.all? do |name|
+			method = instance_method(name, Phlex::SVG)
+			# Lazy compilation compiles a component before rendering it as before.
+			method = method.super_method if method&.owner == Phlex::Compiler::LazyCompilation
+
+			method && method.original_name == name && method.owner == Phlex::SGML && method.source_location&.first == SGML_SOURCE_PATH
+		end
+	end
+
+	# Whether `render Phlex::SVG.new` builds and recognises the SVG as Phlex wrote it.
+	private def sgml_new?
+		Phlex::SVG.singleton_class.public_method_defined?(:new) &&
+			(new = instance_method(:new, Phlex::SVG.singleton_class)) && new.owner == Phlex::SGML.singleton_class &&
+			new.original_name == :new && new.source_location&.first == SGML_SOURCE_PATH &&
+			core?(instance_method(:allocate, Phlex::SVG.singleton_class), CLASS_ALLOCATE) &&
+			core?(instance_method(:===, Phlex::SGML.singleton_class), MODULE_CASE_EQUALITY)
+	end
+
+	# Still the core method, unless it was replaced before the compiler loaded
+	# on an engine that can't tell.
+	private def core?(method, original)
+		method == original && Phlex::Compiler::CoreCalls.native?(method)
+	end
+
+	# An element called on an explicit receiver, so only if it's public.
+	def public_element(name)
+		element(name) if @component.public_method_defined?(name)
 	end
 
 	# Element and helper methods ask block_given? whether they were given a

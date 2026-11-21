@@ -26,7 +26,7 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 			in Output::Enclosed
 				body.concat(enclose(child))
 			in Output::Opening
-				body << chain(child.parts, read(child.buffer))
+				body.concat(appends(child.parts, read(child.buffer)))
 			else
 				body << visit(child)
 			end
@@ -85,7 +85,23 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 	# before it has already reached the buffer, as at runtime. The whole
 	# statement evaluates to nil, like the element methods it replaces.
 	private def append(parts)
-		parenthesized([if_node(should_render, [chain(parts, buffer)]), Refract::NilNode.new])
+		parenthesized([if_node(should_render, appends(parts, buffer)), Refract::NilNode.new])
+	end
+
+	# One chain for each run of parts, and a choice of appends for each Choice.
+	private def appends(parts, receiver)
+		parts.slice_when { |a, b| Output::Choice === a || Output::Choice === b }.map do |run|
+			case run
+			in [Output::Choice => choice]
+				if_node(
+					read(choice.escaped),
+					[chain([Output::Literal.new(choice.prefix), Output::Expression.new(read(choice.escaped)), Output::Literal.new(choice.suffix)], receiver)],
+					else_body: [call(receiver, :<<, read(choice.text))]
+				)
+			else
+				chain(run, receiver)
+			end
+		end
 	end
 
 	private def chain(parts, receiver)
