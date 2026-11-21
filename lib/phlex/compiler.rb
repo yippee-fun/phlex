@@ -38,7 +38,8 @@ require "refract"
 # - Changing what an inlined element or helper resolves to through a module
 #   already mixed into a compiled component isn't seen: defining, removing or
 #   undefining it on that module, or mixing another module into it. Call
-#   `Phlex::Compiler.recompile` on each class whose methods inlined it.
+#   `Phlex::Compiler.recompile` on each class whose methods inlined it. A
+#   method already running when one is redefined finishes as compiled.
 # - Attributes with literal keys are serialised without the attribute cache, so
 #   a value's `to_s`, `to_h` or `iso8601` runs on every render rather than once
 #   per distinct set of attributes, and its `hash` isn't called.
@@ -48,10 +49,12 @@ require "refract"
 #   output, the exception raised and its `cause` can differ from element
 #   methods appending one by one. A buffer switched mid-element, by a Fiber
 #   suspended inside `capture`, and a method that started before rendering,
-#   can see a different buffer. Whether to render is checked at each append,
-#   where an element method checks once, which only matters to code starting
-#   a fragment mid-element. A State subclass overriding its methods sees them
-#   called a different number of times.
+#   can see a different buffer, and the buffer itself passed as an attribute
+#   value is read after the attribute's name is appended to it. Whether to
+#   render is checked at each append, where an element method checks once,
+#   which only matters to code starting a fragment mid-element. A State
+#   subclass overriding its methods sees them called a different number of
+#   times.
 # - Static text and attributes are escaped and serialised once, when
 #   compiling, outside `Regexp.timeout`, and so are references whose prefix
 #   is known. A core method compiled code calls that's redefined after
