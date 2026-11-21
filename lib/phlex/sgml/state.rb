@@ -91,9 +91,8 @@ class Phlex::SGML::State
 				# An open fragment with this name ends where the recorded one does.
 				unless fragment[1]
 					fragment[1] = offset + length - fragment[0]
-					if (descendants = open_fragments.delete(id))
-						fragment[2] = descendants.to_a
-					end
+					descendants = open_fragments.delete(id)
+					fragment[2] = descendants ? descendants.merge(nested_fragments).to_a : nested_fragments
 				end
 
 				next
