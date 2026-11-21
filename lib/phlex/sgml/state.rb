@@ -107,9 +107,9 @@ class Phlex::SGML::State
 	end
 
 	# A capture has no cache stack until it needs to track a fragment.
-	# While it has none, `@buffer` is the buffer being captured into.
+	# While it has none, `buffer` is the buffer being captured into.
 	private def cache_stack
-		@cache_stack ||= [[@buffer, {}, {}]]
+		@cache_stack ||= [[buffer, {}, {}]]
 	end
 
 	def capture(cache: false)
