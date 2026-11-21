@@ -192,6 +192,54 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 		end
 	end
 
+	class ImportedFragmentsTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(key, cache_store:, same_name:)
+			@key = key
+			@cache_store = cache_store
+			@same_name = same_name
+		end
+
+		def view_template
+			if @key
+				cache(@key, @same_name) { parent { cache(@same_name) { inner } } }
+			else
+				parent { inner }
+			end
+		end
+
+		def parent
+			fragment("parent") do
+				plain "A"
+				yield
+				plain "C"
+			end
+		end
+
+		def inner
+			if @same_name
+				fragment("parent") { child }
+			else
+				child
+			end
+		end
+
+		def child
+			fragment("child") { plain "B" }
+		end
+	end
+
+	test "a parent selected with a child from an inner cache renders the child once" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		# Uncached, then both caches cold, then only the inner cache warm, then both warm.
+		[nil, 1, 2, 2].each do |key|
+			assert_equal ImportedFragmentsTest.new(key, cache_store:, same_name: false).call(fragments: ["parent", "child"]), "ABC"
+			assert_equal ImportedFragmentsTest.new(key, cache_store:, same_name: true).call(fragments: ["parent", "child"]), "AB"
+		end
+	end
+
 	test "a fragment in a discarded capture doesn't claim the fragment's name in the cache" do
 		cache_store = Phlex::FIFOCacheStore.new
 

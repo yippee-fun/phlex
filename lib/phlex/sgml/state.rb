@@ -81,8 +81,15 @@ class Phlex::SGML::State
 
 			if (fragment = fragment_map[id])
 				# An open fragment with this name ends where the recorded one does.
-				fragment[1] ||= offset + length - fragment[0]
+				unless fragment[1]
+					fragment[1] = offset + length - fragment[0]
+					fragment[2].concat(nested_fragments)
+				end
 			else
+				fragment_map.each_value do |(_offset, open_length, open_nested_fragments)|
+					open_nested_fragments << id unless open_length
+				end
+
 				fragment_map[id] = [offset, length, nested_fragments]
 			end
 		end
