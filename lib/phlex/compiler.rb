@@ -103,6 +103,7 @@ module Phlex::Compiler
 	SCOPES = []
 
 	@enabled = false
+	@recompiling = false
 	@generations = 0
 	@on_failure = DEFAULT_FAILURE_HANDLER
 
@@ -158,12 +159,15 @@ module Phlex::Compiler
 		component.instance_variable_get(:@__phlex_compiled__) == true
 	end
 
-	# The failure check and the compilation share the lock, so two first
-	# renders racing each other still compile and report once, and a render
-	# that starts while a recompilation holds it waits for the new methods.
-	# The handler runs outside it, since it may well render something.
+	# Runs on every render, so a component that's compiled, or failed to,
+	# returns without the lock, and doesn't wait for another to compile. The
+	# check is repeated under the lock, so two first renders racing each other
+	# still compile and report once. A render that starts during a
+	# recompilation takes the lock, and so waits for the new methods. The
+	# handler runs outside it, since it may well render something.
 	def self.compile_on_first_render(component)
 		return unless Phlex.__main_ractor__?
+		return if !@recompiling && (compiled?(component) || FAILURES.key?(component))
 
 		error = MUTEX.synchronize do
 			return if compiled?(component) || FAILURES.key?(component)
@@ -309,12 +313,16 @@ module Phlex::Compiler
 	# Compiles the component's methods again, replacing the compiled ones.
 	def self.recompile(component, inline: true)
 		MUTEX.synchronize do
+			# Its subclasses render the methods being replaced too.
+			@recompiling = true
 			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
 			component.remove_instance_variable(:@__phlex_inlined_svg__) if component.instance_variable_defined?(:@__phlex_inlined_svg__)
 
 			defining_files(component).each do |path|
 				compile_file(path, components: [component], recompile: true, inline:)
 			end
+		ensure
+			@recompiling = false
 		end
 	end
 
