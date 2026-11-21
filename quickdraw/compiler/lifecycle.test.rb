@@ -492,6 +492,40 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a component that inlined an svg block is recompiled when what builds or renders Phlex::SVG changes" do
+		with_component_files(
+			"icon.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleIconSetup < Phlex::HTML
+					def view_template = svg { |s| s.circle(r: 1) }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleIconSetup)
+			inlined = -> { LifecycleIconSetup.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:circle) }
+			assert inlined.call
+
+			begin
+				Phlex::SVG.define_method(:instance_variable_set) { |*| raise "no blocks" }
+				refute inlined.call
+				assert_raises(RuntimeError) { LifecycleIconSetup.new.call }
+			ensure
+				Phlex::SVG.remove_method(:instance_variable_set)
+			end
+
+			Phlex::Compiler.recompile(LifecycleIconSetup)
+			assert inlined.call
+
+			begin
+				Phlex::SVG.__send__(:private, :internal_call)
+				refute inlined.call
+				assert_raises(NoMethodError) { LifecycleIconSetup.new.call }
+			ensure
+				Phlex::SVG.remove_method(:internal_call)
+			end
+		end
+	end
+
 	test "a class method doesn't recompile what inlined an instance method of the same name" do
 		with_component_files(
 			"divider.rb" => <<~RUBY

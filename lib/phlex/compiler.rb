@@ -57,7 +57,9 @@ require "refract"
 #   render is checked at each append, where an element method checks once,
 #   which only matters to code starting a fragment mid-element. A State
 #   subclass overriding its methods sees them called a different number of
-#   times.
+#   times, and an inlined svg block skips the State and core methods the
+#   runtime calls to render its Phlex::SVG, such as `around_render` and
+#   `Thread#[]=`.
 # - Static text and attributes are escaped and serialised once, when
 #   compiling, outside `Regexp.timeout`, and so are references whose prefix
 #   is known. A core method compiled code calls that's redefined after

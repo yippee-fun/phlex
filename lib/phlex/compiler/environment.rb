@@ -17,13 +17,17 @@ class Phlex::Compiler::Environment
 
 	# What Phlex::HTML#svg's Phlex::SVG runs around its block, which compiled
 	# code skips when it inlines the block.
-	SVG_RENDER = %i[initialize render? before_template around_template after_template view_template internal_call __yield_content__ __implicit_output__].freeze
+	SVG_RENDER = %i[render? before_template around_template after_template view_template internal_call __yield_content__ __implicit_output__].freeze
+
+	# The core methods Phlex::SGML.new and render call on the Phlex::SVG, and
+	# block_given?, which its render methods and elements ask, by owner.
+	SVG_CORE = { initialize: BasicObject, __send__: BasicObject, instance_variable_set: Kernel, block_given?: Kernel }.freeze
 
 	# The class methods `render Phlex::SVG.new` calls.
 	SVG_CLASS_METHODS = %i[new allocate ===].freeze
 
-	# Asked by Phlex::SVG's render methods and elements, which an inlined block skips.
-	SVG_KERNEL_CALLS = %i[block_given?].freeze
+	# Everything an inlined svg block relies on besides the elements it calls.
+	SVG_DEPENDENCIES = [*SVG_RENDER, *SVG_CORE.keys, *SVG_CLASS_METHODS].freeze
 
 	# The element and helper names whose implementation compiled methods have
 	# baked in, by inlining them or by relying on what they return.
@@ -82,16 +86,19 @@ class Phlex::Compiler::Environment
 		registry = element.owner.__element_registry__
 		return false unless registry.elements[:svg] == "svg" && !registry.void_elements.key?(:svg)
 		return false unless sgml_new?
+		# render calls it on the Phlex::SVG.
+		return false unless Phlex::SVG.public_method_defined?(:internal_call)
+
+		return false unless SVG_CORE.all? do |name, owner|
+			(method = instance_method(name, Phlex::SVG)) && method.owner == owner && method.original_name == name
+		end
 
 		SVG_RENDER.all? do |name|
 			method = instance_method(name, Phlex::SVG)
 			# Lazy compilation compiles a component before rendering it as before.
 			method = method.super_method if method&.owner == Phlex::Compiler::LazyCompilation
 
-			method && method.original_name == name && (
-				(method.owner == Phlex::SGML && method.source_location&.first == SGML_SOURCE_PATH) ||
-				(name == :initialize && method.owner == BasicObject)
-			)
+			method && method.original_name == name && method.owner == Phlex::SGML && method.source_location&.first == SGML_SOURCE_PATH
 		end
 	end
 
