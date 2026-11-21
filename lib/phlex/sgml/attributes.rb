@@ -179,7 +179,12 @@ module Phlex::SGML::Attributes
 			v.to_s.gsub('"', "&quot;")
 		else
 			if v.respond_to?(:to_h)
-				generate_nested_attributes(v.to_h, "#{name}-", buffer)
+				case k
+				when :style
+					generate_styles(v.to_h)&.gsub('"', "&quot;")
+				else
+					generate_nested_attributes(v.to_h, "#{name}-", buffer)
+				end
 			else
 				raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
 			end

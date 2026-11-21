@@ -43,6 +43,7 @@ class Phlex::SGML::State
 			current_byte_offset = 0                                 		# Start tracking the byte offset of this fragment from the start of the cache buffer
 			cache_stack.reverse_each do |(cache_buffer, fragment_map, open_fragments)| # We'll iterate deepest to shallowest
 				current_byte_offset += cache_buffer.bytesize		      		# Add the length of the cache buffer to the current byte offset
+				next if fragment_map.key?(id)                         		# Only the first fragment with a given name can be selected
 				fragment_map[id] = [current_byte_offset, nil, []]     		# Record the byte offset, length, and store a list of the nested fragments
 
 				# Visit only open ancestors; allocate descendant sets on their first child.
@@ -57,10 +58,12 @@ class Phlex::SGML::State
 		if caching?
 			byte_length = nil
 			cache_stack.reverse_each do |(cache_buffer, fragment_map, open_fragments)| # We'll iterate deepest to shallowest
-				byte_length ||= cache_buffer.bytesize - fragment_map[id][0] # The byte length is the difference between the current byte offset and the byte offset of the fragment
-				fragment_map[id][1] = byte_length                           # All cache contexts use the same byte length
+				fragment = fragment_map[id]
+				next if fragment[1]                                         # An earlier fragment with this name has already ended
+				byte_length ||= cache_buffer.bytesize - fragment[0]         # The byte length is the difference between the current byte offset and the byte offset of the fragment
+				fragment[1] = byte_length                                   # All cache contexts use the same byte length
 				if (descendants = open_fragments.delete(id))
-					fragment_map[id][2] = descendants.to_a
+					fragment[2] = descendants.to_a
 				end
 			end
 		end
@@ -71,7 +74,11 @@ class Phlex::SGML::State
 		@fragment_depth -= 1
 		@should_render = @fragment_depth > 0
 		# Don't replace an exception or nonlocal exit with the render halt signal.
-		throw @halt_signal if halt && @fragments.length == 0
+		halt_if_all_fragments_found if halt
+	end
+
+	def halt_if_all_fragments_found
+		throw @halt_signal if @fragments.length == 0
 	end
 
 	def record_fragment(id, offset, length, nested_fragments)
@@ -79,6 +86,7 @@ class Phlex::SGML::State
 
 		cache_stack.reverse_each do |(cache_buffer, fragment_map, open_fragments)|
 			offset += cache_buffer.bytesize
+			next if fragment_map.key?(id)
 			fragment_map[id] = [offset, length, nested_fragments]
 
 			open_fragments.delete(id)

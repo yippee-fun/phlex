@@ -300,6 +300,8 @@ class Phlex::SGML
 					state.buffer << cached_buffer.byteslice(offset, length)
 				end
 			end
+
+			state.halt_if_all_fragments_found
 		end
 
 		nil

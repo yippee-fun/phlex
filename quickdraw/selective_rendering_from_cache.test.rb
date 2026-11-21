@@ -202,4 +202,90 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 			assert_equal InvalidUTF8CacheTest.new(cache_store:).call(fragments: ["after"]), "<span>b</span>"
 		end
 	end
+
+	class HaltTest < Phlex::HTML
+		attr_reader :cache_store, :events
+
+		def initialize(cache_store:)
+			@cache_store = cache_store
+			@events = []
+		end
+
+		def view_template
+			cache do
+				fragment("target") { h1 { "Target" } }
+			end
+
+			@events << :after_cache
+			fragment("other") { h1 { "Other" } }
+		end
+
+		private def after_template
+			@events << :after_template
+		end
+	end
+
+	test "halts after selecting the last fragment from a cache" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		2.times do
+			component = HaltTest.new(cache_store:)
+			assert_equal component.call(fragments: ["target"]), "<h1>Target</h1>"
+			assert_equal component.events, []
+		end
+	end
+
+	test "keeps rendering after a cache when fragments remain" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		2.times do
+			component = HaltTest.new(cache_store:)
+			assert_equal component.call(fragments: ["target", "other"]), "<h1>Target</h1><h1>Other</h1>"
+			assert_equal component.events, [:after_cache]
+		end
+	end
+
+	class DuplicateTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(cache_store:, cached:)
+			@cache_store = cache_store
+			@cached = cached
+		end
+
+		def view_template
+			if @cached
+				cache { cache { content } }
+			else
+				content
+			end
+		end
+
+		def content
+			fragment("target") { h1 { "First" } }
+			fragment("wrapper") do
+				fragment("target") { h1 { "Second" } }
+			end
+		end
+	end
+
+	test "duplicate fragment names select the first fragment, cached or not" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		assert_equal DuplicateTest.new(cache_store:, cached: false).call(fragments: ["target"]), "<h1>First</h1>"
+
+		2.times do
+			assert_equal DuplicateTest.new(cache_store:, cached: true).call(fragments: ["target"]), "<h1>First</h1>"
+		end
+	end
+
+	test "a duplicate fragment name doesn't change the fragment that contains it" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		assert_equal DuplicateTest.new(cache_store:, cached: false).call(fragments: ["wrapper"]), "<h1>Second</h1>"
+
+		2.times do
+			assert_equal DuplicateTest.new(cache_store:, cached: true).call(fragments: ["wrapper"]), "<h1>Second</h1>"
+		end
+	end
 end
