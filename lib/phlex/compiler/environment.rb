@@ -59,7 +59,7 @@ class Phlex::Compiler::Environment
 	end
 
 	private def standard?(name, owner)
-		(method = instance_method(name)) && method.owner == owner && !overridden_by_descendant?(name, owner)
+		(method = instance_method(name)) && method.owner == owner && method.original_name == name && !overridden_by_descendant?(name, owner)
 	end
 
 	# Without the lexical scopes, the class and its ancestors are the best guess.
@@ -74,7 +74,7 @@ class Phlex::Compiler::Environment
 
 		owner = method.owner
 		return unless owner.respond_to?(:__element_registry__)
-		return unless method.source_location&.first == ELEMENTS_SOURCE_PATH
+		return unless method.source_location&.first == ELEMENTS_SOURCE_PATH && method.original_name == name
 
 		registry = owner.__element_registry__
 		return unless (tag = registry.elements[name])
@@ -86,7 +86,7 @@ class Phlex::Compiler::Environment
 	private def resolve_helper(name)
 		return false unless (method = instance_method(name))
 
-		HELPER_OWNERS.include?(method.owner) &&
+		HELPER_OWNERS.include?(method.owner) && method.original_name == name &&
 			HELPER_SOURCE_PATHS.include?(method.source_location&.first) &&
 			!overridden_by_descendant?(name, method.owner)
 	end

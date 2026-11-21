@@ -196,7 +196,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 				@diagnostics.refuse(definitions.first.node, "#{redefined} is redefined, and compiled code calls it where the runtime calls the original")
 			end
 
-			if (refined = Phlex::Compiler::CoreCalls.refined(probe.refinements, probe.component))
+			if (refined = Phlex::Compiler::CoreCalls.refined(probe.refinements, probe.component, (Class === probe.component) ? Phlex::Compiler.descendants_of(probe.component) : []))
 				@diagnostics.refuse(@usings.first&.node || definitions.first.node, "this file refines #{refined}, which compiled code calls where the runtime calls it unrefined")
 			end
 		end

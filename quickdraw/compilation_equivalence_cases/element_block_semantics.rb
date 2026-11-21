@@ -7,6 +7,8 @@ module EquivalenceCases
 				plain([1].map { div { break "x" } }.join)
 				head { break }
 				div { |component| 1 }
+				div { fragment(:f) { break "from fragment" } }
+				div { |_, path = __FILE__| File.basename(path) }
 			end
 
 			def flush = plain("flushed")
@@ -38,9 +40,16 @@ module EquivalenceCases
 
 		class OtherReceiver < Phlex::HTML
 			def view_template
+				other_receiver_with_parameter
 				comment { span }
 			rescue NameError
 				plain "rescued"
+			end
+
+			private def other_receiver_with_parameter
+				comment { |_| span }
+			rescue NameError
+				plain "rescued parameter"
 			end
 
 			private def __yield_content__(&) = Object.new.instance_exec(&)

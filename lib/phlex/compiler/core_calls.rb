@@ -7,29 +7,30 @@
 module Phlex::Compiler::CoreCalls
 	extend self
 
-	# Receiver class => methods called on it, or nil for any it defines.
+	# Receiver class => methods called on it, or nil for any that Phlex defines.
 	CALLS = {
 		String => %i[<< include? ascii_only? encoding valid_encoding? +@],
 		Symbol => %i[name],
-		Integer => %i[==],
+		Integer => %i[== >],
+		Hash => %i[length],
 		String.singleton_class => %i[===],
 		Symbol.singleton_class => %i[===],
 		Phlex::SGML::SafeObject.singleton_class => %i[===],
 		Exception.singleton_class => %i[===],
-		TrueClass => %i[===],
-		NilClass => %i[===],
+		TrueClass => %i[=== ==],
+		NilClass => %i[=== ==],
 		Encoding => %i[equal?],
 		Set.singleton_class => %i[[]],
+		Kernel => %i[block_given?],
 		Kernel.singleton_class => %i[raise],
 		Phlex::SGML::SafeObject => %i[to_s],
 		Phlex.singleton_class => %i[__map_exception__],
 		Phlex::Escape.singleton_class => %i[html_escape],
+		Phlex.__attribute_cache__.singleton_class => %i[fetch],
 		Phlex::SGML::Attributes.singleton_class => nil,
 		Phlex::SGML::Elements.singleton_class => nil,
 		Phlex::Compiler.singleton_class => nil,
 		Phlex::SGML::State => nil,
-		Phlex::AttributeCache => nil,
-		Phlex.__attribute_cache__.class => nil,
 	}.freeze
 
 	# Called on the component itself, where element methods call them from
@@ -37,16 +38,20 @@ module Phlex::Compiler::CoreCalls
 	COMPONENT_CALLS = %i[block_given? __phlex_equal__? format_object __implicit_output__ __yield_content__ __text__ flush].freeze
 
 	# Core methods implemented in C on CRuby, which a definition in Ruby replaced.
-	NATIVE = [String, Symbol, Integer, String.singleton_class, Symbol.singleton_class, Exception.singleton_class, TrueClass, NilClass, Encoding, Kernel.singleton_class].freeze
+	NATIVE = [String, Symbol, Integer, Hash, String.singleton_class, Symbol.singleton_class, Exception.singleton_class, TrueClass, NilClass, Encoding, Kernel, Kernel.singleton_class].freeze
 
-	# The core methods as they were when Phlex loaded.
+	# The core methods, and whether they were public, as they were when Phlex loaded.
 	ORIGINALS = CALLS.select { |_receiver, names| names }.flat_map { |receiver, names|
-		names.filter_map { |name| [[receiver, name], receiver.instance_method(name)] if receiver.method_defined?(name) }
+		names.filter_map do |name|
+			if receiver.method_defined?(name) || receiver.private_method_defined?(name)
+				[[receiver, name], [receiver.instance_method(name), receiver.public_method_defined?(name)]]
+			end
+		end
 	}.to_h.freeze
 
 	# The first refined method compiled code calls, as "Class#method".
-	def refined(modules, component)
-		calls = CALLS.merge(component => COMPONENT_CALLS)
+	def refined(modules, component, descendants = [])
+		calls = CALLS.merge([component, *descendants].to_h { |receiver| [receiver, COMPONENT_CALLS] })
 
 		modules.each do |mod|
 			mod.refinements.each do |refinement|
@@ -64,12 +69,14 @@ module Phlex::Compiler::CoreCalls
 		nil
 	end
 
-	# The first core method compiled code calls that's been redefined since
-	# Phlex loaded, or in Ruby where CRuby implements it in C.
+	# The first core method compiled code calls that's been redefined, or had
+	# its visibility changed, since Phlex loaded, or that's defined in Ruby
+	# where CRuby implements it in C.
 	def redefined
-		ORIGINALS.each do |(receiver, name), original|
+		ORIGINALS.each do |(receiver, name), (original, public)|
 			method = receiver.instance_method(name)
-			changed = method != original || (RUBY_ENGINE == "ruby" && NATIVE.include?(receiver) && defined_in_ruby?(method))
+			changed = method != original || receiver.public_method_defined?(name) != public ||
+				(RUBY_ENGINE == "ruby" && NATIVE.include?(receiver) && defined_in_ruby?(method))
 			return "#{receiver.inspect}##{name}" if changed
 		rescue NameError
 			return "#{receiver.inspect}##{name}"
@@ -83,24 +90,29 @@ module Phlex::Compiler::CoreCalls
 		(path = method.source_location&.first) && !path.start_with?("<internal:")
 	end
 
-	# A refinement of the receiver or a subclass applies to the calls it
-	# names. One of an ancestor only applies where the method would otherwise
-	# be found at or above that ancestor.
+	# A refinement applies to a call when its target comes no later in the
+	# receiver's ancestors than where the method would otherwise be found. A
+	# refinement of a subclass applies too, as the receiver may be one, except
+	# for a class method, called on that class.
 	private def affects?(receiver, called, target, name)
-		if Module === target && target.ancestors.include?(receiver)
-			called.nil? || called.include?(name)
-		elsif receiver.ancestors.include?(target)
-			(called.nil? || called.include?(name)) && found_above?(receiver, target, name, missing: !called.nil?)
+		return false unless called.nil? || called.include?(name)
+
+		if receiver.ancestors.include?(target)
+			found_after?(receiver, target, name, missing: !called.nil?, phlex_only: called.nil?)
 		else
-			false
+			!receiver.singleton_class? && Module === target && target.ancestors.include?(receiver)
 		end
 	end
 
 	# A named method compiled code calls that's missing is affected by a
-	# refinement defining it; any other missing method isn't called.
-	private def found_above?(receiver, target, name, missing:)
+	# refinement defining it; any other missing method isn't called. Where any
+	# method counts, only those Phlex defines are called.
+	private def found_after?(receiver, target, name, missing:, phlex_only:)
 		owner = receiver.instance_method(name).owner
-		target.ancestors.include?(owner)
+		return false if phlex_only && !owner.name&.start_with?("Phlex")
+
+		ancestors = receiver.ancestors
+		ancestors.index(target) <= ancestors.index(owner)
 	rescue NameError
 		missing
 	end

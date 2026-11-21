@@ -205,7 +205,7 @@ module Phlex::Compiler
 				end
 			end
 
-			@environment.inlined.merge([node.name, :block_given?]) if compiled && (@appends > appends || !(Refract::CallNode === compiled))
+			@environment.inlined << node.name if compiled && (@appends > appends || !(Refract::CallNode === compiled))
 			compiled
 		end
 
@@ -227,6 +227,8 @@ module Phlex::Compiler
 
 			attributes = compile_attributes(node, node.block ? ">" : "></#{tag}>")
 			return compile_call_with_content(node, because: "it has positional arguments") unless attributes
+
+			@environment.inlined << :block_given?
 
 			statements([
 				*attributes.hoisted,
@@ -323,8 +325,13 @@ module Phlex::Compiler
 
 		private def compile_block_unguarded(block)
 			case block
-			in Refract::BlockNode if block.body then block.copy(body: visit(block.body))
-			else visit(block)
+			in Refract::BlockNode if block.body
+				block.copy(
+					parameters: without_compiling_calls(because: "it's in a parameter default") { visit(block.parameters) },
+					body: visit(block.body)
+				)
+			else
+				visit(block)
 			end
 		end
 
@@ -413,7 +420,12 @@ module Phlex::Compiler
 			in nil | Refract::NilNode
 				true
 			in Refract::CallNode if node.receiver.nil?
-				known = @environment.element(node.name) || (@environment.helper?(node.name) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw) || render_returns_nil?(node)
+				# A `break` in its block returns from the call with its value.
+				known = !((Refract::BlockNode === node.block) && breaks?(node.block)) && (
+					@environment.element(node.name) ||
+					(@environment.helper?(node.name) && node.name in :plain | :whitespace | :doctype | :comment | :fragment | :raw) ||
+					render_returns_nil?(node)
+				)
 				relied << node.name if known
 				known
 			in Refract::IfNode
@@ -955,16 +967,17 @@ module Phlex::Compiler
 			return keep_call(node, "it has a block") if node.block
 			return keep_call(node, "__text__ is overridden") unless @environment.helper?(:__text__)
 
-			@environment.inlined << :__text__
-
-			case node.arguments&.arguments
-			in [Refract::StringNode | Refract::SymbolNode => text] then plain(text.unescaped)
-			in [Refract::InterpolatedStringNode => interpolated]
-				text = @locals.fresh(:text)
-				statements([write(text, visit(interpolated)), append(expression(escaped(read(text))))])
-			in [Refract::NilNode] then Refract::NilNode.new
-			else keep_call(node, "its argument isn't a literal or an interpolation")
+			compiled = case node.arguments&.arguments
+				in [Refract::StringNode | Refract::SymbolNode => text] then plain(text.unescaped)
+				in [Refract::InterpolatedStringNode => interpolated]
+					text = @locals.fresh(:text)
+					statements([write(text, visit(interpolated)), append(expression(escaped(read(text))))])
+				in [Refract::NilNode] then Refract::NilNode.new
+				else return keep_call(node, "its argument isn't a literal or an interpolation")
 			end
+
+			@environment.inlined.merge(%i[__text__ block_given?])
+			compiled
 		end
 
 		# `raw safe("…")` is a literal that skips escaping.
@@ -1000,14 +1013,14 @@ module Phlex::Compiler
 		# The runtime yields with __yield_content__, so its content is only
 		# inlined while that's Phlex's.
 		private def compile_wrapped_content(node, opening, closing)
-			return compile_call_with_content(node, because: "its block is forwarded or #{UNINLINABLE_BLOCK}") unless inlinable_content?(node.block)
-
 			unless @environment.helper?(:__yield_content__) && @environment.helper?(:__implicit_output__)
 				# The block may be yielded with another `self`, so calls in it are compiled behind a check.
 				return keep_call(node, "__yield_content__ or __implicit_output__ is overridden")
 			end
 
-			@environment.inlined.merge(%i[__yield_content__ __implicit_output__])
+			return compile_call_with_content(node, because: "its block is forwarded or #{UNINLINABLE_BLOCK}") unless inlinable_content?(node.block)
+
+			@environment.inlined.merge(%i[__yield_content__ __implicit_output__ block_given?])
 			statements([raw(opening), *compile_content(node), raw(closing)])
 		end
 

@@ -34,6 +34,7 @@ class CompilationEquivalenceTest < Quickdraw::Test
 		"refined_escape" => /refines #<Class:\w+::Escape>#html_escape/,
 		"refined_symbol_name" => /refines Symbol#name/,
 		"refined_string_subclass" => /refines EquivalenceCases::RefinedStringSubclass::Title#include\?/,
+		"refined_hash_length" => /refines Hash#length/,
 	}.merge(
 		# Only CRuby can tell a method made by `def` from one made otherwise.
 		defined?(RubyVM::InstructionSequence) ? {} : { "superseded_definitions" => /the file has changed since it was loaded/ }

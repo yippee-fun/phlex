@@ -4,6 +4,8 @@ module EquivalenceCases
 	module UnrelatedRefinement
 		module Irrelevant
 			refine(Object) { def irrelevant = "irrelevant" }
+			refine(Object) { def tap = super } # rubocop:disable Lint/UselessMethodDefinition
+			refine(StandardError.singleton_class) { def ===(other) = super } # rubocop:disable Lint/UselessMethodDefinition
 		end
 	end
 end
