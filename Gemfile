@@ -7,7 +7,7 @@ gemspec
 
 group :test do
 	gem "sus"
-	gem "quickdraw", github: "joeldrapper/quickdraw"
+	gem "quickdraw", github: "joeldrapper/quickdraw", ref: "bde2d5124320248627edc70141d2b4ca95d4e336"
 	gem "simplecov", require: false
 	gem "selenium-webdriver"
 end
@@ -20,4 +20,4 @@ group :development do
 	gem "benchmark-ips"
 end
 
-gem "refract", github: "yippee-fun/refract"
+gem "refract", "1.1.0"
