@@ -324,7 +324,7 @@ module Phlex::Compiler
 			return unless (attributes = compile_attributes(node, ">"))
 
 			@environment.inlined.merge(%i[block_given? render])
-			@environment.inlined_svg.merge(used).merge(Environment::SVG_RENDER)
+			@environment.inlined_svg.merge(used).merge(Environment::SVG_RENDER).merge(Environment::SVG_CLASS_METHODS)
 
 			statements([
 				*attributes.hoisted,

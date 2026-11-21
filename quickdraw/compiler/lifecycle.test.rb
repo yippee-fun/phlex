@@ -421,6 +421,26 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a component that inlined an svg block is recompiled when Phlex::SVG.new changes" do
+		with_component_files(
+			"icon.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleIconNew < Phlex::HTML
+					def view_template = svg { |s| s.circle(r: 1) }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleIconNew)
+			assert LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__).include?(:new)
+			before = LifecycleIconNew.instance_method(:view_template).source_location
+
+			Phlex::SGML.singleton_class.alias_method :new, :new
+
+			refute_equal LifecycleIconNew.instance_method(:view_template).source_location, before
+			assert_equal LifecycleIconNew.new.call, %(<svg><circle r="1"></circle></svg>)
+		end
+	end
+
 	test "bare whitespace relies on block_given?, which its runtime method asks" do
 		with_component_files(
 			"whitespace.rb" => <<~RUBY

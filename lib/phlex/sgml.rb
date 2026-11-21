@@ -506,6 +506,12 @@ class Phlex::SGML
 		Phlex::Compiler.inlining_changed(target, names) unless Phlex.__compiled_source_maps__.empty?
 	end
 
+	# Inlined svg blocks rely on how Phlex::SVG is built.
+	private_class_method def self.singleton_method_added(method_name)
+		__inlining_changed__(self, [method_name])
+		super
+	end
+
 	private def singleton_method_added(method_name)
 		self.class.__send__(:__inlining_changed__, singleton_class, [method_name])
 		super

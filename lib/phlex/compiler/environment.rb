@@ -19,6 +19,9 @@ class Phlex::Compiler::Environment
 	# code skips when it inlines the block.
 	SVG_RENDER = %i[initialize render? before_template around_template after_template view_template internal_call __yield_content__ __implicit_output__].freeze
 
+	# The class methods `render Phlex::SVG.new` calls.
+	SVG_CLASS_METHODS = %i[new allocate ===].freeze
+
 	# The element and helper names whose implementation compiled methods have
 	# baked in, by inlining them or by relying on what they return.
 	attr_reader :inlined

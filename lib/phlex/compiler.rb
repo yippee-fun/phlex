@@ -36,8 +36,9 @@ require "refract"
 #
 # Seven differences remain, all deliberate:
 # - Changing what an inlined element or helper resolves to through a module
-#   already mixed into a compiled component isn't seen: defining, removing or
-#   undefining it on that module, or mixing another module into it. Call
+#   already mixed into a compiled component, or into Phlex::SVG for an inlined
+#   svg block, isn't seen: defining, removing or undefining it on that module,
+#   changing its visibility there, or mixing another module into it. Call
 #   `Phlex::Compiler.recompile` on each class whose methods inlined it. A
 #   method already running when one is redefined finishes as compiled.
 # - Attributes with literal keys are serialised without the attribute cache, so
