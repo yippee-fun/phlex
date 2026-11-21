@@ -440,7 +440,17 @@ class CompilerLifecycleTest < Quickdraw::Test
 				refute_equal LifecycleIconNew.instance_method(:view_template).source_location, before
 				refute LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:new)
 				assert_equal LifecycleIconNew.new.call, %(<svg><circle r="1"></circle></svg>)
+
+				Phlex::SVG.singleton_class.remove_method(:new)
+				Phlex::Compiler.recompile(LifecycleIconNew)
+				assert LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__).include?(:new)
+
+				Phlex::SVG.singleton_class.undef_method(:new)
+				refute LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:new)
+				assert_raises(NoMethodError) { LifecycleIconNew.new.call }
 			ensure
+				# Replacing an undefined method is the only way to remove it on CRuby.
+				Phlex::SVG.define_singleton_method(:new, Phlex::SGML.singleton_class.instance_method(:new))
 				Phlex::SVG.singleton_class.remove_method(:new)
 			end
 		end

@@ -512,6 +512,16 @@ class Phlex::SGML
 		super
 	end
 
+	private_class_method def self.singleton_method_removed(method_name)
+		__inlining_changed__(self, [method_name])
+		super
+	end
+
+	private_class_method def self.singleton_method_undefined(method_name)
+		__inlining_changed__(self, [method_name])
+		super
+	end
+
 	private def singleton_method_added(method_name)
 		self.class.__send__(:__inlining_changed__, singleton_class, [method_name])
 		super
