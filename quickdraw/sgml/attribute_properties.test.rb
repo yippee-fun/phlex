@@ -9,7 +9,7 @@ class AttributePropertiesTest < Quickdraw::Test
 
 	Attributes = Phlex::SGML::Attributes
 
-	URL_ATTRIBUTES = Set["href", "src", "action", "formaction", "lowsrc", "dynsrc", "background", "ping", "xlink:href"].freeze
+	URL_ATTRIBUTES = Set["href", "src", "action", "formaction", "lowsrc", "dynsrc", "background", "ping", "xlink:href", "to", "from", "by", "values", "data"].freeze
 	UNSAFE_ATTRIBUTES = Set["srcdoc", "sandbox", "http-equiv"].freeze
 	EVENT_HANDLER = /\Aon[a-z]+\z/
 
