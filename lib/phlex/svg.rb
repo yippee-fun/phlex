@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 class Phlex::SVG < Phlex::SGML
+	# Elements `tag` won't render, since its name may come from a user.
+	UNSAFE_TAGS = Set.new(%w[script style]).freeze
+
 	include StandardElements
 
 	# Returns the string "image/svg+xml"
@@ -13,6 +16,11 @@ class Phlex::SVG < Phlex::SGML
 		nil
 	end
 
+	# Output a CDATA section, whose content isn't escaped.
+	#
+	# @note A CDATA section is only safe inside an `<svg>` element, or in an SVG
+	#   document. In HTML outside one, a browser reads it as a comment that ends
+	#   at the first `>`, so the rest of its content would be parsed as markup.
 	def cdata(content = nil, &block)
 		state = @_state
 		return unless state.should_render?
@@ -41,20 +49,42 @@ class Phlex::SVG < Phlex::SGML
 			raise Phlex::ArgumentError.new("Expected the tag name to be a Symbol.")
 		end
 
+		# The name passed to `tag` may come from a user, so it can't render an
+		# element whose content or attributes run as code or change where code loads from.
+		if (unsafe_tag = StandardElements.__registered_elements__[name]) && UNSAFE_TAGS.include?(unsafe_tag)
+			raise Phlex::ArgumentError.new("`tag` can't render <#{unsafe_tag}>. Call `#{unsafe_tag}` directly instead.")
+		end
+
 			if (tag = StandardElements.__registered_elements__[name]) || ((tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z0-9-]+\z/))
 			if attributes.length > 0 # with attributes
 				if block_given # with content block
-					buffer << "<#{tag}" << (Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes)) << ">"
-					__yield_content__(&)
-					buffer << "</#{tag}>"
+					buffer << "<#{tag}"
+					begin
+						buffer << (Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes))
+					ensure
+						buffer << ">"
+					end
+					begin
+						__yield_content__(&)
+					ensure
+						buffer << "</#{tag}>"
+					end
 				else # without content
-					buffer << "<#{tag}" << (::Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes)) << "></#{tag}>"
+					buffer << "<#{tag}"
+					begin
+						buffer << (::Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes))
+					ensure
+						buffer << "></#{tag}>"
+					end
 				end
 			else # without attributes
 				if block_given # with content block
 					buffer << ("<#{tag}>")
-					__yield_content__(&)
-					buffer << "</#{tag}>"
+					begin
+						__yield_content__(&)
+					ensure
+						buffer << "</#{tag}>"
+					end
 				else # without content
 					buffer << "<#{tag}></#{tag}>"
 				end

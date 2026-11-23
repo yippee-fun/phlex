@@ -24,20 +24,24 @@ class Phlex::FIFO
 	end
 
 	def []=(key, value)
-		return if value.bytesize > @max_value_bytesize
+		store(key.hash, key, value)
+	end
 
-		digest = key.hash
+	# `bytesize` is what the entry counts against the budget, which is the
+	# value's unless the caller also counts its key.
+	private def store(digest, key, value, bytesize = value.bytesize)
+		return if bytesize > @max_value_bytesize
 
 		@mutex.synchronize do
 			# Check the key definitely doesn't exist now we have the lock
 			return if @store[digest]
 
-			@store[digest] = [key, value].freeze
-			@bytesize += value.bytesize
+			@store[digest] = [key, value, bytesize].freeze
+			@bytesize += bytesize
 
 			while @bytesize > @max_bytesize
-				_k, v = @store.shift
-				@bytesize -= v[1].bytesize
+				_k, entry = @store.shift
+				@bytesize -= entry[2]
 			end
 		end
 	end
