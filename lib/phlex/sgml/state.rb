@@ -7,6 +7,7 @@ class Phlex::SGML::State
 		@user_context = user_context
 		@fragments = fragments
 		@fragment_depth = 0
+		@rendering_fragments = nil
 		@cache_stack = []
 		@halt_signal = nil
 		@output_buffer = output_buffer
@@ -34,7 +35,10 @@ class Phlex::SGML::State
 	end
 
 	def begin_fragment(id)
-		@fragment_depth += 1 if @fragments&.include?(id)
+		# A selected fragment ends at the first end of its name, so count it once however deeply the name is nested.
+		if @fragments&.include?(id) && (@rendering_fragments ||= Set.new).add?(id)
+			@fragment_depth += 1
+		end
 
 		if caching?
 			current_byte_offset = 0                                 		# Start tracking the byte offset of this fragment from the start of the cache buffer
