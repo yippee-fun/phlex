@@ -184,7 +184,7 @@ class AttributesTest < Quickdraw::Test
 		assert_equal with_single_quotes, %(<div attribute="with 'single quotes'"></div>)
 
 		with_html = phlex { div(attribute: "with <html>") }
-		assert_equal with_html, %(<div attribute="with <html>"></div>)
+		assert_equal with_html, %(<div attribute="with &lt;html&gt;"></div>)
 
 		with_double_quotes = phlex { div(attribute: 'with "double quotes"') }
 		assert_equal with_double_quotes, %(<div attribute="with &quot;double quotes&quot;"></div>)
@@ -210,7 +210,7 @@ class AttributesTest < Quickdraw::Test
 		assert_equal symbol_with_single_quotes, %(<div attribute="with 'single quotes'"></div>)
 
 		symbol_with_html = phlex { div(attribute: :"with <html>") }
-		assert_equal symbol_with_html, %(<div attribute="with <html>"></div>)
+		assert_equal symbol_with_html, %(<div attribute="with &lt;html&gt;"></div>)
 
 		symbol_with_double_quotes = phlex { div(attribute: :'with "double quotes"') }
 		assert_equal symbol_with_double_quotes, %(<div attribute="with &quot;double quotes&quot;"></div>)
@@ -382,7 +382,7 @@ class AttributesTest < Quickdraw::Test
 		assert_equal with_single_quotes, %(<div data-controller="with 'single quotes'"></div>)
 
 		with_html = phlex { div(data: { controller: "with <html>" }) }
-		assert_equal with_html, %(<div data-controller="with <html>"></div>)
+		assert_equal with_html, %(<div data-controller="with &lt;html&gt;"></div>)
 
 		with_double_quotes = phlex { div(data: { controller: 'with "double quotes"' }) }
 		assert_equal with_double_quotes, %(<div data-controller="with &quot;double quotes&quot;"></div>)
@@ -402,7 +402,7 @@ class AttributesTest < Quickdraw::Test
 		assert_equal output, %(<div data-controller="with 'single quotes'"></div>)
 
 		output = phlex { div(data: { controller: :"with <html>" }) }
-		assert_equal output, %(<div data-controller="with <html>"></div>)
+		assert_equal output, %(<div data-controller="with &lt;html&gt;"></div>)
 
 		output = phlex { div(data: { controller: :'with "double quotes"' }) }
 		assert_equal output, %(<div data-controller="with &quot;double quotes&quot;"></div>)
@@ -746,5 +746,132 @@ class AttributesTest < Quickdraw::Test
 
 		output = phlex { input(:accept => ["image/jpeg", "image/png"], "type" => "file") }
 		assert_equal output, %(<input accept="image/jpeg, image/png" type="file">)
+	end
+
+	test "attribute values can't end an enclosing noscript or comment" do
+		assert_equal phlex { noscript { img(alt: "</noscript><img src=x onerror=alert(1)>") } }, %(<noscript><img alt="&lt;/noscript&gt;&lt;img src=x onerror=alert(1)&gt;"></noscript>)
+		assert_equal phlex { comment { span(title: "--><img src=x onerror=alert(1)>") } }, %(<!-- <span title="--&gt;&lt;img src=x onerror=alert(1)&gt;"></span> -->)
+	end
+
+	test "angle brackets are escaped in every kind of attribute value" do
+		assert_equal phlex { div(title: :"<x>") }, %(<div title="&lt;x&gt;"></div>)
+		assert_equal phlex { div(class: ["<a>", :"<b>"]) }, %(<div class="&lt;a&gt; &lt;b&gt;"></div>)
+		assert_equal phlex { div(data: { x: "<y>", z: :"<w>" }) }, %(<div data-x="&lt;y&gt;" data-z="&lt;w&gt;"></div>)
+		assert_equal phlex { div(style: { content: "'<x>'" }) }, %(<div style="content: '&lt;x&gt;';"></div>)
+		assert_equal phlex { div(style: ["content: '<x>'"]) }, %(<div style="content: '&lt;x&gt;';"></div>)
+		assert_equal phlex { div(title: safe("<x>")) }, %(<div title="&lt;x&gt;"></div>)
+		assert_equal phlex { a(href: "/search?q=<x>") }, %(<a href="/search?q=&lt;x&gt;"></a>)
+	end
+
+	test "SVG animation values that are script URLs are dropped" do
+		svg = -> (&block) { Class.new(Phlex::SVG) { define_method(:view_template, &block) }.call }
+
+		assert_equal svg.() { set(attributeName: "href", to: "javascript:alert(1)") }, %(<set attributeName="href"></set>)
+		assert_equal svg.() { animate(attributeName: "href", from: "javascript:alert(1)", to: "#a") }, %(<animate attributeName="href" to="#a"></animate>)
+		assert_equal svg.() { animate(attributeName: "href", by: "javascript:alert(1)") }, %(<animate attributeName="href"></animate>)
+		assert_equal svg.() { animate(attributeName: "href", values: "javascript:alert(1)") }, %(<animate attributeName="href"></animate>)
+		assert_equal svg.() { set(attributeName: "href", to: "JavaScript&colon;alert(1)") }, %(<set attributeName="href"></set>)
+		assert_equal svg.() { set("attributename" => "href", "TO" => "javascript:alert(1)") }, %(<set attributename="href"></set>)
+	end
+
+	test "every entry of an SVG animation's values is checked" do
+		svg = -> (&block) { Class.new(Phlex::SVG) { define_method(:view_template, &block) }.call }
+
+		assert_equal svg.() { animate(attributeName: "href", values: "#a;javascript:alert(1)") }, %(<animate attributeName="href"></animate>)
+		assert_equal svg.() { animate(attributeName: "href", values: "#a; javascript:alert(1)") }, %(<animate attributeName="href"></animate>)
+		assert_equal svg.() { animate(attributeName: "href", values: "#a&#59;javascript:alert(1)") }, %(<animate attributeName="href"></animate>)
+		assert_equal svg.() { animate(attributeName: "href", values: "#a&semi;javascript:alert(1)") }, %(<animate attributeName="href"></animate>)
+		assert_equal svg.() { animate(attributeName: "href", values: ["#a;", "javascript:alert(1)"]) }, %(<animate attributeName="href"></animate>)
+		assert_equal svg.() { animate(attributeName: "x", values: "0;10;0") }, %(<animate attributeName="x" values="0;10;0"></animate>)
+		assert_equal svg.() { animate(attributeName: "href", values: "#a;#b") }, %(<animate attributeName="href" values="#a;#b"></animate>)
+	end
+
+	test "only safe values skip the checks for unsafe names and script URLs" do
+		# Like Rails' html_safe strings, which phlex-rails makes safe objects.
+		html_safe = Class.new(String) { include Phlex::SGML::SafeObject }
+		safe_object = Class.new { include Phlex::SGML::SafeObject; def to_s = "alert(1)" }
+
+		assert_equal phlex { a(href: html_safe.new("javascript:alert(1)")) }, %(<a></a>)
+		assert_equal phlex { a("href" => html_safe.new("javascript:alert(1)")) }, %(<a></a>)
+		assert_raises(Phlex::ArgumentError) { phlex { div(onclick: html_safe.new("alert(1)")) } }
+		assert_raises(Phlex::ArgumentError) { phlex { div(onclick: safe_object.new) } }
+		assert_raises(Phlex::ArgumentError) { phlex { iframe(srcdoc: html_safe.new("<script></script>")) } }
+		assert_raises(Phlex::ArgumentError) { phlex { meta(http: { equiv: safe_object.new }) } }
+
+		assert_equal phlex { a(href: safe("javascript:alert(1)")) }, %(<a href="javascript:alert(1)"></a>)
+		assert_equal phlex { div(onclick: safe("alert(1)")) }, %(<div onclick="alert(1)"></div>)
+		assert_equal phlex { meta(http: { equiv: safe("refresh") }) }, %(<meta http-equiv="refresh">)
+	end
+
+	test "nested names that spell an unsafe name are refused" do
+		assert_raises(Phlex::ArgumentError) { phlex { meta(http: { equiv: "refresh" }) } }
+		assert_raises(Phlex::ArgumentError) { phlex { meta(http: { equiv: :refresh }) } }
+		assert_raises(Phlex::ArgumentError) { phlex { meta(http: { equiv: true }) } }
+		assert_raises(Phlex::ArgumentError) { phlex { meta("HTTP" => { "Equiv" => "refresh" }) } }
+		assert_equal phlex { div(data: { equiv: "x" }) }, %(<div data-equiv="x"></div>)
+	end
+
+	test "character references to surrogates or past Unicode don't raise" do
+		assert_equal phlex { a(href: "/&#xD800;") }, %(<a href="/&#xD800;"></a>)
+		assert_equal phlex { a(href: "/&#1114112;") }, %(<a href="/&#1114112;"></a>)
+		assert_equal phlex { a(href: "&#xD800;javascript:alert(1)") }, %(<a></a>)
+		assert_equal phlex { a(href: "j&#xD800;avascript:alert(1)") }, %(<a></a>)
+	end
+
+	test "a values list can't hide an entry behind a reference the decoder removes" do
+		svg = -> (&block) { Class.new(Phlex::SVG) { define_method(:view_template, &block) }.call }
+
+		["#a&zz;javascript:alert(1)", "#a&TAB;javascript:alert(1)", "#a&ampx;javascript:alert(1)", "#a&#38;zz;javascript:alert(1)"].each do |values|
+			assert_equal svg.() { animate(attributeName: "href", values:) }, %(<animate attributeName="href"></animate>)
+		end
+	end
+
+	test "a namespaced name is a reference if its local name is one" do
+		svg = -> (&block) { Class.new(Phlex::SVG) { define_method(:view_template, &block) }.call }
+
+		assert_equal svg.() { a("xmlns:x": "http://www.w3.org/1999/xlink", "x:href": "javascript:alert(1)") }, %(<a xmlns:x="http://www.w3.org/1999/xlink"></a>)
+		assert_equal svg.() { a("X:HREF" => "javascript:alert(1)") }, %(<a></a>)
+		assert_equal svg.() { set("x:to": "javascript:alert(1)") }, %(<set></set>)
+		assert_equal svg.() { animate("x:values": "#a;javascript:alert(1)") }, %(<animate></animate>)
+		assert_equal svg.() { a("x:href": "#a") }, %(<a x:href="#a"></a>)
+	end
+
+	test "a nested name can't be a namespaced reference" do
+		assert_raises(Phlex::ArgumentError) { phlex { a(x: { "a:href" => "/a" }) } }
+		assert_equal phlex { div(data: { "a:b" => "c" }) }, %(<div data-a:b="c"></div>)
+	end
+
+	test "numeric references with very many digits decode as U+FFFD without parsing them" do
+		assert_equal Phlex::SGML::Attributes.decode_html_character_references("&##{'9' * 100_000};"), "\uFFFD"
+		assert_equal Phlex::SGML::Attributes.decode_html_character_references("&#x#{'f' * 100_000};"), "\uFFFD"
+		assert_equal Phlex::SGML::Attributes.decode_html_character_references("&##{'0' * 100_000}106;"), "j"
+		assert_equal Phlex::SGML::Attributes.decode_html_character_references("&#11141110;"), "\uFFFD"
+		assert_equal phlex { a(href: "&##{'0' * 50}106;avascript:alert(1)") }, %(<a></a>)
+	end
+
+	test "a URL attribute can't take its value from a nested root key" do
+		[{ _: "javascript:alert(1)" }, { _: { _: "javascript:alert(1)" } }, { _: ["javascript:alert(1)"] }, Class.new { def to_h = { _: "javascript:alert(1)" } }.new].each do |value|
+			assert_raises(Phlex::ArgumentError) { phlex { iframe(src: value) } }
+			assert_raises(Phlex::ArgumentError) { phlex { a(href: value) } }
+			assert_raises(Phlex::ArgumentError) { Class.new(Phlex::SVG) { define_method(:view_template) { set(attributeName: "href", to: value) } }.call }
+		end
+
+		# Rescued, nothing of the value is left behind.
+		component = Class.new(Phlex::HTML) { define_method(:view_template) { begin; iframe(src: { _: "javascript:alert(1)" }); rescue Phlex::ArgumentError; nil; end } }
+		refute component.call.include?("javascript")
+	end
+
+	test "data is checked as a URL unless it's a Hash of data attributes" do
+		assert_equal phlex { object(data: "javascript:alert(1)") }, %(<object></object>)
+		assert_equal phlex { object(data: :"javascript:alert(1)") }, %(<object></object>)
+		assert_equal phlex { object(data: ["javascript:alert(1)"]) }, %(<object></object>)
+		assert_equal phlex { object("data" => "javascript:alert(1)") }, %(<object></object>)
+		assert_equal phlex { object(DATA: "JavaScript&colon;alert(1)") }, %(<object></object>)
+		2.times { assert_equal phlex { object(data: "javascript:alert(1)") }, %(<object></object>) }
+
+		assert_equal phlex { object(data: "/files/report.pdf", type: "application/pdf") }, %(<object data="/files/report.pdf" type="application/pdf"></object>)
+		assert_equal phlex { div(data: { controller: "x", action: "javascript:y" }) }, %(<div data-controller="x" data-action="javascript:y"></div>)
+		assert_equal phlex { div(data: []) }, %(<div></div>)
+		assert_equal phlex { object(data: safe("javascript:alert(1)")) }, %(<object data="javascript:alert(1)"></object>)
 	end
 end

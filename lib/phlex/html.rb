@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 class Phlex::HTML < Phlex::SGML
+	# Elements `tag` won't render, since its name may come from a user.
+	UNSAFE_TAGS = Set.new(%w[script style base]).freeze
+
 	extend Phlex::SGML::Elements
 	include VoidElements, StandardElements
 
@@ -55,28 +58,50 @@ class Phlex::HTML < Phlex::SGML
 			raise Phlex::ArgumentError.new("Expected the tag name to be a Symbol.")
 		end
 
+		# The name passed to `tag` may come from a user, so it can't render an
+		# element whose content or attributes run as code or change where code loads from.
+		if (unsafe_tag = StandardElements.__registered_elements__[name] || VoidElements.__registered_elements__[name]) && UNSAFE_TAGS.include?(unsafe_tag)
+			raise Phlex::ArgumentError.new("`tag` can't render <#{unsafe_tag}>. Call `#{unsafe_tag}` directly instead.")
+		end
+
 		if (tag = StandardElements.__registered_elements__[name]) || ((tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z0-9-]+\z/))
 			if attributes.length > 0 # with attributes
 				if block_given # with content block
-					buffer << "<#{tag}" << (Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes)) << ">"
-					if tag == "svg"
-						render Phlex::SVG.new(&)
-					else
-						__yield_content__(&)
+					buffer << "<#{tag}"
+					begin
+						buffer << (Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes))
+					ensure
+						buffer << ">"
 					end
-					buffer << "</#{tag}>"
+					begin
+						if tag == "svg"
+							render Phlex::SVG.new(&)
+						else
+							__yield_content__(&)
+						end
+					ensure
+						buffer << "</#{tag}>"
+					end
 				else # without content
-					buffer << "<#{tag}" << (::Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes)) << "></#{tag}>"
+					buffer << "<#{tag}"
+					begin
+						buffer << (::Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes))
+					ensure
+						buffer << "></#{tag}>"
+					end
 				end
 			else # without attributes
 				if block_given # with content block
 					buffer << ("<#{tag}>")
-					if tag == "svg"
-						render Phlex::SVG.new(&)
-					else
-						__yield_content__(&)
+					begin
+						if tag == "svg"
+							render Phlex::SVG.new(&)
+						else
+							__yield_content__(&)
+						end
+					ensure
+						buffer << "</#{tag}>"
 					end
-					buffer << "</#{tag}>"
 				else # without content
 					buffer << "<#{tag}></#{tag}>"
 				end
@@ -87,7 +112,12 @@ class Phlex::HTML < Phlex::SGML
 			end
 
 			if attributes.length > 0 # with attributes
-				buffer << "<#{tag}" << (::Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes)) << ">"
+				buffer << "<#{tag}"
+				begin
+					buffer << (::Phlex::ATTRIBUTE_CACHE[attributes] ||= Phlex::SGML::Attributes.generate_attributes(attributes))
+				ensure
+					buffer << ">"
+				end
 			else # without attributes
 				buffer << "<#{tag}>"
 			end

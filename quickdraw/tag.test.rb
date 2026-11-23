@@ -23,7 +23,7 @@ class TagTest < Quickdraw::Test
 		end
 	end
 
-	Phlex::HTML::VoidElements.__registered_elements__.each do |method_name, tag|
+	Phlex::HTML::VoidElements.__registered_elements__.reject { |_, tag| Phlex::HTML::UNSAFE_TAGS.include?(tag) }.each do |method_name, tag|
 		test "<#{tag}> HTML tag without attributes" do
 			output = HTMLComponent.call(tag.to_sym)
 
@@ -51,7 +51,7 @@ HTML
 		end
 	end
 
-	Phlex::HTML::StandardElements.__registered_elements__.each do |method_name, tag|
+	Phlex::HTML::StandardElements.__registered_elements__.reject { |_, tag| Phlex::HTML::UNSAFE_TAGS.include?(tag) }.each do |method_name, tag|
 		test "<#{tag}> HTML tag without attributes" do
 			output = HTMLComponent.call(tag.to_sym)
 
@@ -89,7 +89,7 @@ HTML
 		end
 	end
 
-	Phlex::SVG::StandardElements.__registered_elements__.each do |method_name, tag|
+	Phlex::SVG::StandardElements.__registered_elements__.reject { |_, tag| Phlex::SVG::UNSAFE_TAGS.include?(tag) }.each do |method_name, tag|
 		test "<#{tag}> SVG tag without attributes" do
 			output = SVGComponent.call(tag.to_sym)
 
@@ -183,5 +183,37 @@ HTML
 		end
 
 		assert_equal error.message, "Invalid SVG tag: x-widget onclick=alert(1)"
+	end
+
+	# The name passed to `tag` may come from a user.
+	test "tag won't render elements whose content or attributes run as code" do
+		%i[script style base].each do |name|
+			error = assert_raises(Phlex::ArgumentError) { HTMLComponent.call(name) { "alert(1)" } }
+			assert_equal error.message, "`tag` can't render <#{name}>. Call `#{name}` directly instead."
+		end
+
+		assert_raises(Phlex::ArgumentError) { HTMLComponent.call(:script, src: "/app.js") }
+		assert_raises(Phlex::ArgumentError) { HTMLComponent.call(:base, href: "/") }
+
+		svg = Class.new(Phlex::SVG) { define_method(:initialize) { |name| @name = name }; define_method(:view_template) { tag(@name) { "alert(1)" } } }
+		%i[script style].each { |name| assert_raises(Phlex::ArgumentError) { svg.new(name).call } }
+
+		# Calling the element directly still works.
+		assert_equal Class.new(Phlex::HTML) { define_method(:view_template) { script { "" } } }.call, "<script></script>"
+	end
+
+	test "tag closes its tags when its attributes or content raise" do
+		html = Class.new(Phlex::HTML) do
+			define_method(:view_template) do
+				[-> { tag(:div, href: { _: "javascript:x" }) }, -> { tag(:div, href: { _: "javascript:x" }) { "c" } }, -> { tag(:img, src: { _: "javascript:x" }) }, -> { tag(:"x-y") { raise Phlex::ArgumentError } }].each do |call|
+					call.()
+				rescue Phlex::ArgumentError
+					nil
+				end
+				plain "|"
+			end
+		end
+
+		assert_equal html.call, "<div></div><div><img><x-y></x-y>|"
 	end
 end

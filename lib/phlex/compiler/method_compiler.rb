@@ -120,41 +120,67 @@ module Phlex::Compiler
 			end
 		end
 
+		# Like the element methods, the opening tag is closed even if serialising
+		# its attributes raises, and the closing tag is written even if the
+		# content raises, so output after a rescued error isn't read as part of
+		# an unclosed tag.
 		def compile_standard_element(node, tag)
 			node => Refract::CallNode
 
-			Refract::StatementsNode.new(
-				body: [
-					raw("<#{tag}"),
-					*(
-						if node.arguments
-							compile_phlex_attributes(node.arguments)
-						end
-					),
-					raw(">"),
-					*(
-						if node.block
-							compile_phlex_block(node.block)
-						end
-					),
-					raw("</#{tag}>"),
-				]
-			)
+			attributes = (compile_phlex_attributes(node.arguments) if node.arguments)
+			content = (compile_phlex_block(node.block) if node.block)
+
+			if content
+				Refract::StatementsNode.new(
+					body: [
+						raw("<#{tag}"),
+						*opening_tag_attributes(attributes, ">"),
+						ensuring([content], [raw("</#{tag}>")]),
+					]
+				)
+			else
+				Refract::StatementsNode.new(
+					body: [
+						raw("<#{tag}"),
+						*opening_tag_attributes(attributes, "></#{tag}>"),
+					]
+				)
+			end
 		end
 
 		def compile_void_element(node, tag)
 			node => Refract::CallNode
 
+			attributes = (compile_phlex_attributes(node.arguments) if node.arguments)
+
 			Refract::StatementsNode.new(
 				body: [
 					raw("<#{tag}"),
-					*(
-						if node.arguments
-							compile_phlex_attributes(node.arguments)
-						end
-					),
-					raw(">"),
+					*opening_tag_attributes(attributes, ">"),
 				]
+			)
+		end
+
+		# Attributes serialised now can't raise, so only a runtime call needs the ensure.
+		private def opening_tag_attributes(attributes, closing)
+			case attributes
+			when nil
+				[raw(closing)]
+			when Refract::CallNode
+				[ensuring([attributes], [raw(closing)])]
+			else
+				[attributes, raw(closing)]
+			end
+		end
+
+		private def ensuring(statements, ensured)
+			Refract::BeginNode.new(
+				statements: Refract::StatementsNode.new(body: statements),
+				rescue_clause: nil,
+				else_clause: nil,
+				ensure_clause: Refract::EnsureNode.new(
+					statements: Refract::StatementsNode.new(body: ensured)
+				)
 			)
 		end
 

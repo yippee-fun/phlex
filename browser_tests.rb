@@ -244,6 +244,35 @@ class UnsafeSvgXlinkHref < Phlex::HTML
 	end
 end
 
+class UnsafeSvgAnimationReferences < Phlex::HTML
+	def view_template
+		render Layout do
+			svg do |s|
+				s.a(href: "#safe") { s.set(attributeName: "href", to: "javascript:alert(1)"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", to: "javascript:alert(2)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", from: "javascript:alert(3)", to: "#safe", dur: "100s"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "#safe;javascript:alert(4)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "#safe&#59;javascript:alert(5)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "#safe&semi;javascript:alert(6)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(id: "target", href: "#safe") { s.text(y: 10) { "x" } }
+				s.set(href: "#target", attributeName: "href", to: "javascript:alert(7)")
+			end
+		end
+	end
+end
+
+class RawTextBreakouts < Phlex::HTML
+	def view_template
+		render Layout do
+			noscript { img(alt: "</noscript><img src=x onerror=alert(1)>") }
+			comment { span(title: "--><img src=x onerror=alert(2)>") }
+			textarea { span(title: "</textarea><img src=x onerror=alert(3)>") }
+			noscript { div(data: { x: "</noscript><img src=x onerror=alert(4)>" }) }
+			noscript { div(title: safe("</noscript><img src=x onerror=alert(5)>")) }
+		end
+	end
+end
+
 class Browser
 	MUTEX = { safari: Mutex.new, chrome: Mutex.new, firefox: Mutex.new }
 
@@ -353,6 +382,18 @@ Browser.open_each do |browser|
 	browser.execute_script("document.querySelectorAll('x-widget').forEach(function(node) { node.click(); });")
 	browser.each_alert do
 		raise "Failed with unsafe custom tag names"
+	end
+
+	browser.load_string(UnsafeSvgAnimationReferences.new.call)
+	sleep 0.1 # Lets the animations reach the values they freeze at.
+	browser.execute_script("document.querySelectorAll('svg a').forEach(function(node) { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); });")
+	browser.each_alert do
+		raise "Failed with unsafe SVG animation references"
+	end
+
+	browser.load_string(RawTextBreakouts.new.call)
+	browser.each_alert do
+		raise "Failed with attribute values in raw text elements and comments"
 	end
 
 	browser.load_string(UnsafeSvgXlinkHref.new.call)

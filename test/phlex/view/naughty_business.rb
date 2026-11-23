@@ -53,7 +53,7 @@ describe Phlex::HTML do
 		end
 
 		it "escapes the attributes" do
-			expect(output).to be == %(<article id="&quot;><script type=&quot;text/javascript&quot; src=&quot;bad_script.js&quot;></script>"></article>)
+			expect(output).to be == %(<article id="&quot;&gt;&lt;script type=&quot;text/javascript&quot; src=&quot;bad_script.js&quot;&gt;&lt;/script&gt;"></article>)
 		end
 	end
 
