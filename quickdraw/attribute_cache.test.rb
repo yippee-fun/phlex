@@ -29,18 +29,21 @@ class AttributeCacheTest < Quickdraw::Test
 		assert_equal fetch({ "title" => "b", :title => "a" }), %( title="b" title="a")
 	end
 
-	test "misses when a string is safe, or a subclass, but the cached one isn't" do
+	test "misses when a value is safe, or a subclass, but the cached one isn't" do
 		fetch({ id: "a", href: "javascript:x()" })
 
-		assert_equal fetch({ id: "a", href: safe_string("javascript:x()") }), %( id="a" href="javascript:x()")
-		assert_equal fetch({ id: "a", href: SafeString.new("javascript:x()") }), %( id="a" href="javascript:x()")
+		assert_equal fetch({ id: "a", href: Phlex::SGML::SafeValue.new("javascript:x()") }), %( id="a" href="javascript:x()")
+		# Only Phlex's own safe values skip the script URL check.
+		assert_equal fetch({ id: "a", href: safe_string("javascript:x()") }), %( id="a")
+		assert_equal fetch({ id: "a", href: SafeString.new("javascript:x()") }), %( id="a")
 		assert_equal fetch({ id: "a", href: Class.new(String).new("javascript:x()") }), %( id="a")
 	end
 
 	test "never answers for a plain string with a safe one's output" do
-		fetch({ id: "a", onclick: safe_string("x()") })
+		fetch({ id: "a", onclick: Phlex::SGML::SafeValue.new("x()") })
 
 		assert_raises(Phlex::ArgumentError) { fetch({ id: "a", onclick: "x()" }) }
+		assert_raises(Phlex::ArgumentError) { fetch({ id: "a", onclick: safe_string("x()") }) }
 	end
 
 	test "misses when a string has another encoding" do
@@ -101,7 +104,7 @@ class AttributeCacheTest < Quickdraw::Test
 			[{ a: Phlex::SGML::SafeValue.new("x") }, { a: Phlex::SGML::SafeValue.new("x".b) }],
 		].each do |cached, given|
 			cache = Cache.new
-			cache.__send__(:store, given.hash, cache.__send__(:snapshot, cached), "cached")
+			cache.__send__(:store, given.hash, cache.__send__(:snapshot, cached, [Float::INFINITY]), "cached")
 
 			assert_equal cache[given], nil
 			assert_equal cache.fetch(given) { "generated" }, "generated"
@@ -148,5 +151,31 @@ class AttributeCacheTest < Quickdraw::Test
 
 		@cache[{ id: Set["b"] }] = %( id="b")
 		assert_equal @cache.size, 1
+	end
+
+	test "doesn't cache attributes whose snapshot would cost more than a value may" do
+		# Skipped nils and empty strings render nothing, but the snapshot keeps them.
+		assert_equal fetch({ data: { a: "x", b: [nil] * 10_000 } }), %( data-a="x")
+		assert_equal fetch({ data: { a: "y", b: [""] * 10_000 } }), %( data-a="y")
+		assert_equal fetch({ title: "x", class: [nil] * 10_000 }), %( title="x")
+		@cache[{ title: "z", class: [nil] * 10_000 }] = %( title="z")
+
+		assert_equal @cache.size, 0
+		assert_equal @cache.bytesize, 0
+	end
+
+	test "counts each snapshot against the budget along with its value" do
+		fetch({ title: "abc" })
+
+		# The value's 12 bytes, a slot each for the Hash, its key and its value, and the value's bytes.
+		assert_equal @cache.bytesize, 12 + (3 * Cache::SLOT_BYTESIZE) + 3
+	end
+
+	test "evicts by what each entry cost" do
+		cache = Cache.new(max_bytesize: 200)
+		20.times { |i| cache.fetch({ title: "t#{i}" }) { Phlex::SGML::Attributes.generate_attributes({ title: "t#{i}" }) } }
+
+		assert cache.bytesize <= 200
+		assert cache.size < 20
 	end
 end

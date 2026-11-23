@@ -19,7 +19,8 @@ class XSSTest < Quickdraw::Test
 
 			addEventListener("click", (event) => {
 				const link = event.target.closest("a")
-				const href = link?.getAttribute("href") ?? link?.getAttribute("xlink:href")
+				// An SVG link's href can be animated, so it's read as the browser will use it.
+				const href = link instanceof SVGAElement ? link.href.animVal : (link?.getAttribute("href") ?? link?.getAttribute("xlink:href"))
 				if (href == null) return
 
 				try {
@@ -162,6 +163,71 @@ class XSSTest < Quickdraw::Test
 				ignore_warnings { s.a("xlink:href": "javascript&#58alert(1)") { "x" } }
 			end
 		end
+	end
+
+	# SVG animations write `to`, `from` and `values` to the attribute named by
+	# `attributeName`, so a link's href can become a script URL after it's parsed.
+	class SvgAnimationReferences < Page
+		private def content
+			svg do |s|
+				s.a(href: "#safe") { s.set(attributeName: "href", to: "javascript:alert(1)"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", to: "javascript:alert(2)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", from: "javascript:alert(3)", to: "#safe", dur: "100s"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "javascript:alert(4)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "#safe;javascript:alert(5)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "#safe&#59;javascript:alert(6)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "#safe&semi;javascript:alert(7)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", by: "javascript:alert(8)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.set("attributename" => "href", :to => "javascript:alert(9)"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.set(attributeName: "href", to: "javascript&colon;alert(10)"); s.text(y: 10) { "x" } }
+				# References the decoder removes but browsers keep, with the `;` they hide.
+				["&zz;", "&TAB;", "&ampx;", "&#38;zz;"].each_with_index do |reference, index|
+					s.a(href: "#safe") { s.animate(attributeName: "href", values: "#safe#{reference}javascript:alert(#{12 + index})", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				end
+				s.a(id: "target", href: "#safe") { s.text(y: 10) { "x" } }
+				s.set(href: "#target", attributeName: "href", to: "javascript:alert(11)")
+			end
+		end
+	end
+
+	# An element whose content isn't parsed as markup, or a comment, ends at its
+	# end tag or `-->` even inside an attribute value.
+	class RawTextBreakouts < Page
+		private def content
+			noscript { img(alt: "</noscript><img src=x onerror=alert(1)>") }
+			comment { span(title: "--><img src=x onerror=alert(2)>") }
+			textarea { span(title: "</textarea><img src=x onerror=alert(3)>") }
+			noscript { div(data: { x: "</noscript><img src=x onerror=alert(4)>" }) }
+			noscript { div(class: ["</noscript><img src=x onerror=alert(5)>"]) }
+			noscript { div(style: { content: "'</noscript><img src=x onerror=alert(6)>'" }) }
+			noscript { div(title: safe("</noscript><img src=x onerror=alert(7)>")) }
+		end
+	end
+
+	# A user-provided tag name with user-provided content or attributes.
+	class UserTagNames < Page
+		private def content
+			%i[script style base].each do |name|
+				ignore_warnings { tag(name) { "alert(1)" } }
+				ignore_warnings { tag(name, src: "data:text/javascript,alert(2)", href: "data:text/javascript,alert(3)") }
+			end
+
+			svg do |s|
+				%i[script style].each { |name| ignore_warnings { s.tag(name) { "alert(4)" } } }
+			end
+		end
+	end
+
+	test "user-provided tag names" do
+		assert_no_dialogs UserTagNames.new
+	end
+
+	test "SVG animation references" do
+		assert_no_dialogs SvgAnimationReferences.new
+	end
+
+	test "attribute values in raw text elements and comments" do
+		assert_no_dialogs RawTextBreakouts.new
 	end
 
 	ASCII_CHARS.each do |char|

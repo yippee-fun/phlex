@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 class Phlex::SVG < Phlex::SGML
+	# Elements `tag` won't render, since its name may come from a user.
+	UNSAFE_TAGS = Set.new(%w[script style]).freeze
+
 	include StandardElements
 
 	# Returns the string "image/svg+xml"
@@ -13,6 +16,11 @@ class Phlex::SVG < Phlex::SGML
 		nil
 	end
 
+	# Output a CDATA section, whose content isn't escaped.
+	#
+	# @note A CDATA section is only safe inside an `<svg>` element, or in an SVG
+	#   document. In HTML outside one, a browser reads it as a comment that ends
+	#   at the first `>`, so the rest of its content would be parsed as markup.
 	def cdata(content = nil, &block)
 		state = @_state
 		return unless state.should_render?
@@ -53,6 +61,12 @@ class Phlex::SVG < Phlex::SGML
 			void = false
 		else
 			raise Phlex::ArgumentError.new("Invalid SVG tag: #{name}")
+		end
+
+		# The name passed to `tag` may come from a user, so it can't render an
+		# element whose content or attributes run as code or change where code loads from.
+		if UNSAFE_TAGS.include?(tag)
+			raise Phlex::ArgumentError.new("`tag` can't render <#{tag}>. Call `#{tag}` directly instead.")
 		end
 
 		if void

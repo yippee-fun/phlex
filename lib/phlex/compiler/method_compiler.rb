@@ -638,11 +638,15 @@ module Phlex::Compiler
 				return nested
 			end
 
+			# A `data` value that isn't a literal Hash may be a URL, as on `object`.
+			reference ||= Phlex::SGML::Attributes.data_attribute?(name)
+
 			# An interpolation is always a String, so it only needs its quotes
 			# escaped. That can raise, as for a string that isn't ASCII-compatible,
 			# or on TruffleRuby one that isn't valid, so it's done inside the guard.
 			quotable = Refract::InterpolatedStringNode === value
-			safe_prefix = reference && quotable && safe_reference_prefix?(value)
+			# A later entry of a list such as `values` can be a script URL, whatever the first is.
+			safe_prefix = reference && quotable && !Phlex::SGML::Attributes.reference_list_attribute?(name) && safe_reference_prefix?(value)
 			value = hoisted_local(value, hoisted) if hoist || (quotable && !reference) || safe_prefix
 
 			if quotable && !reference
@@ -869,10 +873,17 @@ module Phlex::Compiler
 			end
 		end
 
-		# The runtime only copies the string if it has quotes to escape.
+		# The runtime only copies the string if it has characters to escape, and
+		# checks for them as this does.
 		private def quoted(node)
+			escapable = Refract::OrNode.new(
+				left: Refract::OrNode.new(left: call(node, :include?, string('"')), operator: "||", right: call(node, :include?, string("<"))),
+				operator: "||",
+				right: call(node, :include?, string(">"))
+			)
+
 			parenthesized([
-				if_node(call(node, :include?, string('"')), [call(constant("Phlex::Compiler"), :escape_quotes, node)], else_body: [node]),
+				if_node(escapable, [call(constant("Phlex::Compiler"), :escape_value, node)], else_body: [node]),
 			])
 		end
 

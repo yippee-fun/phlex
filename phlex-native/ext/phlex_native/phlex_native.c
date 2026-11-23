@@ -16,7 +16,7 @@
 #define PREFIX_CAPACITY 1024
 #define NORMALIZED_CAPACITY 16
 
-static ID id_to_s, id_unsafe_reference_p, id_Phlex, id_SGML, id_Attributes, id_SafeObject, id_SafeValue;
+static ID id_to_s, id_unsafe_reference_p, id_unsafe_reference_list_p, id_Phlex, id_SGML, id_Attributes, id_SafeObject, id_SafeValue;
 static VALUE sym_style, sym_id, sym_underscore;
 static VALUE empty_string;
 static int utf8_index, usascii_index;
@@ -84,25 +84,38 @@ static inline void put_char(output_t *o, char c) {
 	o->ptr[o->length++] = c;
 }
 
-// Appends with `"` replaced by `&quot;`, and `_` by `-` when dasherizing.
+static long count_byte(const char *p, long n, char c) {
+	long count = 0;
+	for (const char *q = p, *end = p + n; (q = memchr(q, c, end - q)); q++) count++;
+	return count;
+}
+
+// Appends with `"`, `<` and `>` replaced by `&quot;`, `&lt;` and `&gt;`, and
+// `_` by `-` when dasherizing, as UNSAFE_VALUE_CHARS and VALUE_ESCAPES do.
 // Space is reserved before reading, so nothing can allocate mid-copy.
 static void put_value(output_t *o, const char *p, long n, int dasherize) {
-	long quotes = 0;
-	for (const char *q = p, *end = p + n; (q = memchr(q, '"', end - q)); q++) quotes++;
+	long quotes = count_byte(p, n, '"');
+	long angles = count_byte(p, n, '<') + count_byte(p, n, '>');
 
-	if (!quotes && !(dasherize && memchr(p, '_', n))) {
+	if (!quotes && !angles && !(dasherize && memchr(p, '_', n))) {
 		put(o, p, n);
 		return;
 	}
 
-	if (quotes > (LONG_MAX - n) / 5) RAISE_TOO_BIG();
-	reserve(o, n + quotes * 5);
+	if (quotes > (LONG_MAX - n) / 5 || angles > (LONG_MAX - n - quotes * 5) / 3) RAISE_TOO_BIG();
+	reserve(o, n + quotes * 5 + angles * 3);
 	char *out = o->ptr + o->length;
 	for (long i = 0; i < n; i++) {
 		char c = p[i];
 		if (c == '"') {
 			memcpy(out, "&quot;", 6);
 			out += 6;
+		} else if (c == '<') {
+			memcpy(out, "&lt;", 4);
+			out += 4;
+		} else if (c == '>') {
+			memcpy(out, "&gt;", 4);
+			out += 4;
 		} else {
 			*out++ = (dasherize && c == '_') ? '-' : c;
 		}
@@ -244,6 +257,9 @@ static int unsafe_attribute_p(const char *p, long n);
 // Whether Ruby must check a nested name joined to its base: it normalises to
 // an unsafe name, such as `http-equiv`, or isn't ASCII, which Ruby downcases.
 static int nested_name_needs_ruby_p(const char *name, long n) {
+	// With a namespace prefix, the local name could be a reference, which Ruby refuses.
+	if (memchr(name, ':', n)) return 1;
+
 	char normalized[NORMALIZED_CAPACITY];
 	long normalized_length = 0;
 
@@ -268,6 +284,8 @@ static int nested_each(VALUE k, VALUE v, VALUE arg) {
 	long length;
 	if (k == sym_underscore) {
 		length = nested->prefix_length - 1;
+		// The base on its own is a name too, which Ruby checks as it emits it.
+		if (!safe_value_p(v) && nested_name_needs_ruby_p(o->prefix, length)) goto fallback;
 	} else {
 		const char *p;
 		long n;
@@ -407,14 +425,26 @@ static int put_style_array(output_t *o, VALUE declarations, long start) {
 	return 1;
 }
 
-static int ref_attribute_p(const char *p, long n) {
+// What REF_ATTRIBUTES and REF_LIST_ATTRIBUTES make of a normalised name.
+#define NOT_REFERENCE 0
+#define REFERENCE 1
+#define REFERENCE_LIST 2
+// `data`, a reference unless its value is a Hash, which expands into `data-*` attributes.
+#define DATA_REFERENCE 3
+
+static int reference_kind(const char *p, long n) {
 	switch (n) {
-		case 3: return memcmp(p, "src", 3) == 0;
-		case 4: return memcmp(p, "href", 4) == 0 || memcmp(p, "ping", 4) == 0;
-		case 6: return memcmp(p, "action", 6) == 0 || memcmp(p, "lowsrc", 6) == 0 || memcmp(p, "dynsrc", 6) == 0;
-		case 9: return memcmp(p, "xlinkhref", 9) == 0;
-		case 10: return memcmp(p, "formaction", 10) == 0 || memcmp(p, "background", 10) == 0;
-		default: return 0;
+		case 2: return (memcmp(p, "to", 2) == 0 || memcmp(p, "by", 2) == 0) ? REFERENCE : NOT_REFERENCE;
+		case 3: return memcmp(p, "src", 3) == 0 ? REFERENCE : NOT_REFERENCE;
+		case 4:
+			if (memcmp(p, "data", 4) == 0) return DATA_REFERENCE;
+			return (memcmp(p, "href", 4) == 0 || memcmp(p, "ping", 4) == 0 || memcmp(p, "from", 4) == 0) ? REFERENCE : NOT_REFERENCE;
+		case 6:
+			if (memcmp(p, "values", 6) == 0) return REFERENCE_LIST;
+			return (memcmp(p, "action", 6) == 0 || memcmp(p, "lowsrc", 6) == 0 || memcmp(p, "dynsrc", 6) == 0) ? REFERENCE : NOT_REFERENCE;
+		case 9: return memcmp(p, "xlinkhref", 9) == 0 ? REFERENCE : NOT_REFERENCE;
+		case 10: return (memcmp(p, "formaction", 10) == 0 || memcmp(p, "background", 10) == 0) ? REFERENCE : NOT_REFERENCE;
+		default: return NOT_REFERENCE;
 	}
 }
 
@@ -427,13 +457,15 @@ static int unsafe_attribute_p(const char *p, long n) {
 	}
 }
 
-// unsafe_reference? on the value written from `start`. The cheap check is the
-// same one the Ruby version makes; anything it can't rule out goes to Ruby.
-static int unsafe_reference_p(output_t *o, long start) {
+// unsafe_reference? (or unsafe_reference_list? for a list) on the value written
+// from `start`. The cheap check is the same one the Ruby version makes; anything
+// it can't rule out goes to Ruby.
+static int unsafe_reference_p(output_t *o, long start, int kind) {
 	const char *p = o->ptr + start;
 	long n = o->length - start;
 	if (!memchr(p, '&', n) && !(memchr(p, ':', n) && (memchr(p, 'j', n) || memchr(p, 'J', n)))) return 0;
-	return RTEST(rb_funcall(o->receiver, id_unsafe_reference_p, 1, rb_utf8_str_new(p, n)));
+	ID check = kind == REFERENCE_LIST ? id_unsafe_reference_list_p : id_unsafe_reference_p;
+	return RTEST(rb_funcall(o->receiver, check, 1, rb_utf8_str_new(p, n)));
 }
 
 // One attribute whose name has passed the top-level checks.
@@ -486,9 +518,9 @@ static int put_attribute(output_t *o, VALUE k, const char *name, long name_lengt
 		return 0;
 	}
 
-	if (reference && unsafe_reference_p(o, start)) {
-		// Safe objects are never dropped, and anything can be made one.
-		if (RTEST(rb_obj_is_kind_of(v, safe_object_module))) return 0;
+	if (reference && unsafe_reference_p(o, start, reference)) {
+		// Only safe values are never dropped, and Ruby decides for anything that's one.
+		if (RTEST(rb_obj_is_kind_of(v, safe_value_class))) return 0;
 		o->length = mark;
 		return 1;
 	}
@@ -514,6 +546,9 @@ static int top_level_each(VALUE k, VALUE v, VALUE arg) {
 
 	char normalized[NORMALIZED_CAPACITY];
 	long normalized_length = 0;
+	// The normalised local name, after the last `:`, which decides whether it's a reference.
+	char local[NORMALIZED_CAPACITY];
+	long local_length = 0;
 	int simple = n > 0, unsafe_char = 0, has_dash = 0;
 
 	for (long i = 0; i < n; i++) {
@@ -522,11 +557,14 @@ static int top_level_each(VALUE k, VALUE v, VALUE arg) {
 		name[i] = c;
 		if (!((c >= 'a' && c <= 'z') || c == '-')) simple = 0;
 		if (unsafe_name_char_p(c)) unsafe_char = 1;
+		if (c == ':') local_length = 0;
 		unsigned char lower = (c >= 'A' && c <= 'Z') ? c + 32 : c;
 		if ((lower >= 'a' && lower <= 'z') || lower == '-') {
 			if (lower == '-') has_dash = 1;
 			if (normalized_length < NORMALIZED_CAPACITY) normalized[normalized_length] = lower;
 			normalized_length++;
+			if (local_length < NORMALIZED_CAPACITY) local[local_length] = lower;
+			local_length++;
 		}
 	}
 
@@ -538,7 +576,9 @@ static int top_level_each(VALUE k, VALUE v, VALUE arg) {
 	if (!simple && unsafe_char) goto fallback;
 	if (n == 2 && (name[0] | 32) == 'i' && (name[1] | 32) == 'd' && k != sym_id) goto fallback;
 
-	int reference = normalized_length <= NORMALIZED_CAPACITY && ref_attribute_p(normalized, normalized_length);
+	int reference = local_length <= NORMALIZED_CAPACITY ? reference_kind(local, local_length) : NOT_REFERENCE;
+	// Anything that isn't a plain Hash or a scalar falls back to Ruby anyway.
+	if (reference == DATA_REFERENCE) reference = plain_hash_p(v) ? NOT_REFERENCE : REFERENCE;
 	if (!put_attribute(o, k, name, n, v, reference)) goto fallback;
 	return ST_CONTINUE;
 
@@ -597,6 +637,26 @@ static VALUE serialize_validated(VALUE self, int argc, VALUE *argv, int referenc
 	if (n > (long)sizeof stack_name) return rb_call_super(argc, argv);
 	memcpy(stack_name, RSTRING_PTR(name), n);
 
+	// The compiler only calls reference_attribute for reference names, but
+	// which kind of reference this is depends on the name, which Ruby
+	// normalises with a Unicode-aware downcase.
+	if (reference) {
+		char normalized[NORMALIZED_CAPACITY];
+		long normalized_length = 0;
+		for (long i = 0; i < n; i++) {
+			unsigned char c = (unsigned char)stack_name[i];
+			if (c >= 0x80) return rb_call_super(argc, argv);
+			// As in Ruby, only the local name, after the last `:`, counts.
+			if (c == ':') normalized_length = 0;
+			unsigned char lower = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+			if ((lower >= 'a' && lower <= 'z') || lower == '-') {
+				if (normalized_length < NORMALIZED_CAPACITY) normalized[normalized_length] = lower;
+				normalized_length++;
+			}
+		}
+		if (normalized_length == 6 && memcmp(normalized, "values", 6) == 0) reference = REFERENCE_LIST;
+	}
+
 	if (!put_attribute(&o, k, stack_name, n, v, reference)) return rb_call_super(argc, argv);
 	// A dropped reference returns the literal "" in Ruby.
 	if (reference && o.length == 0) return empty_string;
@@ -618,6 +678,7 @@ void Init_phlex_native(void) {
 
 	id_to_s = rb_intern("to_s");
 	id_unsafe_reference_p = rb_intern("unsafe_reference?");
+	id_unsafe_reference_list_p = rb_intern("unsafe_reference_list?");
 	id_Phlex = rb_intern("Phlex");
 	id_SGML = rb_intern("SGML");
 	id_Attributes = rb_intern("Attributes");

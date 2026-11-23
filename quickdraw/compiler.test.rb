@@ -69,8 +69,8 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<div").<<(begin
 							__phlex_done_4__ = false
 							if ::String.===(__phlex_value_1__)
-								__phlex_escaped_2__ = (if __phlex_value_1__.include?('"')
-									::Phlex::Compiler.escape_quotes(__phlex_value_1__)
+								__phlex_escaped_2__ = (if ((__phlex_value_1__.include?('"') || __phlex_value_1__.include?("<")) || __phlex_value_1__.include?(">"))
+									::Phlex::Compiler.escape_value(__phlex_value_1__)
 								else
 									__phlex_value_1__
 								end)
@@ -124,8 +124,8 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<div").<<(begin
 							__phlex_done_4__ = false
 							if ::String.===(__phlex_value_1__)
-								__phlex_escaped_2__ = (if __phlex_value_1__.include?('"')
-									::Phlex::Compiler.escape_quotes(__phlex_value_1__)
+								__phlex_escaped_2__ = (if ((__phlex_value_1__.include?('"') || __phlex_value_1__.include?("<")) || __phlex_value_1__.include?(">"))
+									::Phlex::Compiler.escape_value(__phlex_value_1__)
 								else
 									__phlex_value_1__
 								end)
@@ -181,8 +181,8 @@ class CompilerTest < Quickdraw::Test
 							__phlex_done_6__ = false
 							__phlex_attribute_3__ = ::Phlex::SGML::Attributes.reference_attribute(:href, "href", __phlex_value_1__)
 							if ::String.===(__phlex_value_2__)
-								__phlex_escaped_4__ = (if __phlex_value_2__.include?('"')
-									::Phlex::Compiler.escape_quotes(__phlex_value_2__)
+								__phlex_escaped_4__ = (if ((__phlex_value_2__.include?('"') || __phlex_value_2__.include?("<")) || __phlex_value_2__.include?(">"))
+									::Phlex::Compiler.escape_value(__phlex_value_2__)
 								else
 									__phlex_value_2__
 								end)
@@ -241,8 +241,8 @@ class CompilerTest < Quickdraw::Test
 						__phlex_state__.buffer.<<("<div").<<(begin
 							__phlex_done_5__ = false
 							if ::String.===(__phlex_value_2__)
-								__phlex_escaped_3__ = (if __phlex_value_2__.include?('"')
-									::Phlex::Compiler.escape_quotes(__phlex_value_2__)
+								__phlex_escaped_3__ = (if ((__phlex_value_2__.include?('"') || __phlex_value_2__.include?("<")) || __phlex_value_2__.include?(">"))
+									::Phlex::Compiler.escape_value(__phlex_value_2__)
 								else
 									__phlex_value_2__
 								end)

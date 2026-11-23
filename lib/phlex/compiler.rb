@@ -113,15 +113,15 @@ module Phlex::Compiler
 	# literal, since before Ruby 3.4 `**nil` is only allowed in a call.
 	def self.keywords(**keywords) = keywords
 
-	# Compiled code escapes quotes with this, so the match data gsub sets stays
-	# out of the component's method, as at runtime.
-	def self.escape_quotes(value) = value.gsub('"', "&quot;")
+	# Compiled code escapes attribute values with this, so the match data gsub
+	# sets stays out of the component's method, as at runtime.
+	def self.escape_value(value) = value.gsub(Phlex::SGML::Attributes::UNSAFE_VALUE_CHARS, Phlex::SGML::Attributes::VALUE_ESCAPES)
 
 	# Compiled code writes a Symbol attribute value with this, as the serialiser does.
 	def self.symbol_value(symbol)
 		name = symbol.name
 		name = name.tr("_", "-") if name.include?("_")
-		name.include?('"') ? name.gsub('"', "&quot;") : name
+		(name.include?('"') || name.include?("<") || name.include?(">")) ? name.gsub(Phlex::SGML::Attributes::UNSAFE_VALUE_CHARS, Phlex::SGML::Attributes::VALUE_ESCAPES) : name
 	end
 
 	# Compiled code yields to an element's block with this when the block can't
