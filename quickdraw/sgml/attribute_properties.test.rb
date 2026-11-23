@@ -42,9 +42,21 @@ class AttributePropertiesTest < Quickdraw::Test
 		assert_equal attributes.length, 2 unless url.include?(":") || url.include?("&")
 	end
 
-	test "a string value renders with only its quotes escaped" do
+	# An enclosing `noscript`, `textarea` or comment ends at the first `</noscript>`,
+	# `</textarea>` or `-->`, even inside an attribute value, so no attribute can
+	# contain an angle bracket. Safe values are escaped too.
+	fuzz "never renders an angle bracket", ATTRIBUTES do |attributes|
+		output = Attributes.generate_attributes(attributes)
+	rescue Phlex::ArgumentError
+		nil
+	else
+		refute output.include?("<")
+		refute output.include?(">")
+	end
+
+	test "a string value renders with only its quotes and angle brackets escaped" do
 		check(TEXT, NAME.filter { |name| name.match?(/\A[a-z]+(-[a-z]+)*\z/) && !name.start_with?("on") && !UNSAFE_ATTRIBUTES.include?(name) && !URL_ATTRIBUTES.include?(name) && name != "id" }) do |value, name|
-			expected = %( #{name}="#{value.gsub('"', '&quot;')}")
+			expected = %( #{name}="#{value.gsub(/["<>]/, '"' => '&quot;', '<' => '&lt;', '>' => '&gt;')}")
 
 			assert_equal Attributes.generate_attributes({ name.to_sym => value }), expected
 			assert_equal Attributes.generate_attributes({ name => value }), expected
@@ -61,7 +73,7 @@ class AttributePropertiesTest < Quickdraw::Test
 
 	private def trusted?(value)
 		case value
-		in Phlex::SGML::SafeObject then true
+		in Phlex::SGML::SafeValue then true
 		in Hash then value.each_value.any? { |v| trusted?(v) }
 		in Array | Set then value.any? { |v| trusted?(v) }
 		else false

@@ -4,13 +4,27 @@ module Phlex::SGML::Attributes
 	extend self
 
 	UNSAFE_ATTRIBUTES = Set.new(%w[srcdoc sandbox http-equiv]).freeze
-	REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping xlinkhref]).freeze
+	# SVG animation elements, such as `set` and `animate`, write `to`, `from`,
+	# `by` and `values` to the attribute their `attributeName` names, which can
+	# be `href`, so those are checked as references too.
+	REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping xlinkhref to from by values]).freeze
+	# References whose value is a `;`-separated list, any entry of which can be used.
+	REF_LIST_ATTRIBUTES = Set.new(%w[values]).freeze
+	# `data` takes a URL on `object`, but a Hash given to it expands into `data-*`
+	# attributes, so it's checked as a reference only when its value doesn't expand.
+	DATA_ATTRIBUTE = "data"
 	NAMED_CHARACTER_REFERENCES = {
 		"colon" => ":",
 		"tab" => "\t",
 		"newline" => "\n",
+		"semi" => ";",
 	}.freeze
 	UNSAFE_ATTRIBUTE_NAME_CHARS = %r([<>&"'/=\s\x00])
+	# Escaped in attribute values. `"` would end the value, and `<` or `>` could
+	# end an element whose content isn't parsed as markup, such as `</noscript>`,
+	# or a comment, with `-->`. Escaping them doesn't change the value the browser reads.
+	UNSAFE_VALUE_CHARS = /["<>]/
+	VALUE_ESCAPES = { '"' => "&quot;", "<" => "&lt;", ">" => "&gt;" }.freeze
 	SIMPLE_ATTRIBUTE_NAME = /\A[a-z-]+\z/
 
 	# Symbol keys whose names have passed every name check, mapped to their names.
@@ -32,14 +46,14 @@ module Phlex::SGML::Attributes
 			if (name = checked_names[k])
 				case v
 				when String
-					buffer << " " << name << '="' << (v.include?('"') ? v.gsub('"', "&quot;") : v) << '"'
+					buffer << " " << name << '="' << ((v.include?('"') || v.include?("<") || v.include?(">")) ? v.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES) : v) << '"'
 				when true
 					buffer << " " << name
 				else
 					generate_attribute(k, name, v, buffer)
 				end
 			elsif String === v && (name = checked_reference_names[k]) && !(Phlex::SGML::SafeObject === v)
-				value = v.include?('"') ? v.gsub('"', "&quot;") : v
+				value = (v.include?('"') || v.include?("<") || v.include?(">")) ? v.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES) : v
 				buffer << " " << name << '="' << value << '"' unless unsafe_reference?(value)
 			else
 				generate_attribute(k, attribute_name(k), v, buffer)
@@ -70,10 +84,14 @@ module Phlex::SGML::Attributes
 			normalized_name = lower_name.delete("^a-z-")
 		end
 
-		if Phlex::SGML::SafeObject === v
+		# Only Phlex's own `safe` can use an unsafe name or a script URL. Other safe
+		# objects, such as Rails' html_safe strings, are safe as HTML, not as script.
+		if Phlex::SGML::SafeValue === v
 			check_attribute_name(k, name, lower_name, simple_name)
 		else
-			if !true.equal?(value) && REF_ATTRIBUTES.include?(normalized_name) && drop_reference?(k, v, value)
+			reference_name = simple_name ? normalized_name : local_name(lower_name)
+
+			if !true.equal?(value) && (REF_ATTRIBUTES.include?(reference_name) || DATA_ATTRIBUTE == reference_name) && drop_reference?(k, v, value, reference_name)
 				# We just ignore these because they were likely not specified by the developer.
 				return buffer
 			end
@@ -87,7 +105,10 @@ module Phlex::SGML::Attributes
 	end
 
 	private def remember_checked_name(k, name)
-		reference = REF_ATTRIBUTES.include?(name)
+		# Lists are checked entry by entry, which the remembered path doesn't do.
+		return if REF_LIST_ATTRIBUTES.include?(name)
+
+		reference = REF_ATTRIBUTES.include?(name) || DATA_ATTRIBUTE == name
 		names = reference ? @checked_reference_names : @checked_names
 		return if names.key?(k) || names.size >= CHECKED_NAMES_LIMIT || !Phlex.__main_ractor__?
 
@@ -115,7 +136,24 @@ module Phlex::SGML::Attributes
 	end
 
 	def reference_attribute?(name)
-		REF_ATTRIBUTES.include?(name.downcase.delete("^a-z-"))
+		REF_ATTRIBUTES.include?(local_name(name.downcase))
+	end
+
+	# Whether the attribute is `data`, a reference unless its value is a Hash
+	# that expands into `data-*` attributes.
+	def data_attribute?(name)
+		DATA_ATTRIBUTE == local_name(name.downcase)
+	end
+
+	# Whether the attribute's value is a `;`-separated list of references.
+	def reference_list_attribute?(name)
+		REF_LIST_ATTRIBUTES.include?(local_name(name.downcase))
+	end
+
+	# The normalised name without any namespace prefix. In an SVG document parsed
+	# as XML, any prefix can be bound to XLink, so `x:href` can be a reference.
+	def local_name(lower_name)
+		(index = lower_name.rindex(":")) ? lower_name[(index + 1)..].delete("^a-z-") : lower_name.delete("^a-z-")
 	end
 
 	# The text to append for an attribute whose name has been validated.
@@ -133,7 +171,7 @@ module Phlex::SGML::Attributes
 		buffer = +""
 		value = attribute_value(k, name, v, buffer)
 
-		if !true.equal?(value) && !(Phlex::SGML::SafeObject === v) && drop_reference?(k, v, value)
+		if !true.equal?(value) && !(Phlex::SGML::SafeValue === v) && drop_reference?(k, v, value, local_name(name.downcase))
 			return ""
 		end
 
@@ -145,11 +183,11 @@ module Phlex::SGML::Attributes
 		when true
 			true
 		when String
-			v.include?('"') ? v.gsub('"', "&quot;") : v
+			(v.include?('"') || v.include?("<") || v.include?(">")) ? v.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES) : v
 		when Symbol
 			n = v.name
 			n = n.tr("_", "-") if n.include?("_")
-			n.include?('"') ? n.gsub('"', "&quot;") : n
+			(n.include?('"') || n.include?("<") || n.include?(">")) ? n.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES) : n
 		when Integer, Float
 			v.to_s
 		when Date, Time
@@ -157,26 +195,26 @@ module Phlex::SGML::Attributes
 		when Hash
 			case k
 			when :style
-				generate_styles(v)&.gsub('"', "&quot;")
+				generate_styles(v)&.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES)
 			else
 				generate_nested_attributes(v, "#{name}-", buffer)
 			end
 		when Array
 			case k
 			when :style
-				generate_styles(v)&.gsub('"', "&quot;")
+				generate_styles(v)&.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES)
 			else
 				generate_nested_tokens(v)
 			end
 		when Set
 			case k
 			when :style
-				generate_styles(v)&.gsub('"', "&quot;")
+				generate_styles(v)&.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES)
 			else
 				generate_nested_tokens(v.to_a)
 			end
 		when Phlex::SGML::SafeObject
-			v.to_s.gsub('"', "&quot;")
+			v.to_s.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES)
 		else
 			if v.respond_to?(:to_h)
 				case k
@@ -203,11 +241,14 @@ module Phlex::SGML::Attributes
 
 	# Whether a reference should be dropped because it could run script. Only a
 	# String can be a reference.
-	private def drop_reference?(k, v, value)
+	private def drop_reference?(k, v, value, normalized_name)
 		case value
 		when String
-			unsafe_reference?(value)
+			REF_LIST_ATTRIBUTES.include?(normalized_name) ? unsafe_reference_list?(value) : unsafe_reference?(value)
 		else
+			# A `data` Hash has already expanded into `data-*` attributes.
+			return false if DATA_ATTRIBUTE == normalized_name
+
 			raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
 		end
 	end
@@ -273,11 +314,11 @@ module Phlex::SGML::Attributes
 			when true
 				buffer << " " << checked_nested_name(base_name, name)
 			when String
-				buffer << " " << checked_nested_name(base_name, name) << '="' << (v.include?('"') ? v.gsub('"', "&quot;") : v) << '"'
+				buffer << " " << checked_nested_name(base_name, name) << '="' << ((v.include?('"') || v.include?("<") || v.include?(">")) ? v.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES) : v) << '"'
 			when Symbol
 				n = v.name
 				n = n.tr("_", "-") if n.include?("_")
-				buffer << " " << checked_nested_name(base_name, name) << '="' << (n.include?('"') ? n.gsub('"', "&quot;") : n) << '"'
+				buffer << " " << checked_nested_name(base_name, name) << '="' << ((n.include?('"') || n.include?("<") || n.include?(">")) ? n.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES) : n) << '"'
 			when Integer, Float
 				buffer << " " << checked_nested_name(base_name, name) << '="' << v.to_s << '"'
 			when Date, Time
@@ -293,7 +334,8 @@ module Phlex::SGML::Attributes
 					buffer << " " << checked_nested_name(base_name, name) << '="' << value << '"'
 				end
 			when Phlex::SGML::SafeObject
-				buffer << " " << base_name << name << '="' << v.to_s.gsub('"', "&quot;") << '"'
+				nested_name = (Phlex::SGML::SafeValue === v) ? "#{base_name}#{name}" : checked_nested_name(base_name, name)
+				buffer << " " << nested_name << '="' << v.to_s.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES) << '"'
 			else
 				# Like a nested Hash, an object that converts to one expands into
 				# further nested attributes, matching the top-level behaviour.
@@ -320,6 +362,12 @@ module Phlex::SGML::Attributes
 			raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{full_name}.")
 		end
 
+		# Nested values aren't checked as references, so a nested name can't be one,
+		# as `x: { "a:href" => }` would be with its prefix bound to XLink.
+		if full_name.include?(":") && REF_ATTRIBUTES.include?(local_name(full_name.downcase))
+			raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{full_name}.")
+		end
+
 		full_name
 	end
 
@@ -340,13 +388,36 @@ module Phlex::SGML::Attributes
 		end
 	end
 
+	# Like `unsafe_reference?`, for a `;`-separated list such as `values`, where
+	# any entry can be used. The decoder removes references it doesn't know,
+	# but a browser keeps them as text, so it could see a `;` the decoder
+	# removed. Removing text can't break up an entry's `javascript:`, so the
+	# list is unsafe if `javascript:` appears anywhere in it.
+	def unsafe_reference_list?(value)
+		if value.include?("&")
+			decode_html_character_references(value).downcase.delete("^a-z:").include?("javascript:")
+		elsif value.include?(":") && (value.include?("j") || value.include?("J"))
+			# A subclass could override `downcase`; decoding returned a plain String.
+			(String.equal?(value.class) ? value : String.new(value)).downcase.delete("^a-z:").include?("javascript:")
+		else
+			false
+		end
+	end
+
 	def decode_html_character_references(value)
 		value
-			.gsub(/&#x([0-9a-f]+);?/i) { character_reference($1.to_i(16)) }
-			.gsub(/&#(\d+);?/) { character_reference($1.to_i) }
+			.gsub(/&#x([0-9a-f]+);?/i) { numeric_character_reference($1, 16, 6) }
+			.gsub(/&#(\d+);?/) { numeric_character_reference($1, 10, 7) }
 			.gsub(/&([a-z][a-z0-9]+);?/i) {
 				NAMED_CHARACTER_REFERENCES[$1.downcase] || ""
 			}
+	end
+
+	# Digits past what U+10FFFF needs, once leading zeros are dropped, can only
+	# be past Unicode, so they're decoded as U+FFFD without parsing them.
+	private def numeric_character_reference(digits, base, max_length)
+		digits = digits.sub(/\A0+(?=.)/, "")
+		(digits.length > max_length) ? "\uFFFD" : character_reference(digits.to_i(base))
 	end
 
 	# Browsers decode surrogates and code points past Unicode as U+FFFD.
@@ -414,7 +485,7 @@ module Phlex::SGML::Attributes
 
 		return if buffer.empty?
 
-		buffer.include?('"') ? buffer.gsub('"', "&quot;") : buffer
+		(buffer.include?('"') || buffer.include?("<") || buffer.include?(">")) ? buffer.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES) : buffer
 	end
 
 	# The result is unsafe so should be escaped.

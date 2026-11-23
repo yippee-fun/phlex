@@ -56,7 +56,7 @@ module Phlex::Compiler::CoreCalls
 	# Phlex's own methods compiled code calls, whose redefinition would change
 	# it but not the runtime, which doesn't call them.
 	HELPERS = {
-		Phlex::Compiler.singleton_class => %i[keywords escape_quotes symbol_value yield_component nested_attributes],
+		Phlex::Compiler.singleton_class => %i[keywords escape_value symbol_value yield_component nested_attributes],
 		Phlex::SGML::Attributes.singleton_class => %i[attribute reference_attribute generate_attributes],
 	}.freeze
 

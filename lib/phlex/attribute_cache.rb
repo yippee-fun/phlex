@@ -9,8 +9,15 @@
 # identity, and a safe object can't, since it can't be frozen before it's
 # extended. Only plain Hashes, Arrays, Strings, SafeValues, Symbols, Integers,
 # true, false and nil are cached; anything else is serialised every time.
+#
+# The snapshot is kept with the output, so it counts against the budget too:
+# each value it holds costs SLOT_BYTESIZE, plus a String's bytes. Attributes
+# whose snapshot and output together cost more than one value may aren't
+# cached, so a large input that renders to little, such as an Array of nils,
+# can't hold memory the budget doesn't see.
 class Phlex::AttributeCache < Phlex::FIFO
 	Pairs = Data.define(:items)
+	SLOT_BYTESIZE = 8
 
 	def fetch(attributes)
 		digest = attributes.hash
@@ -23,8 +30,9 @@ class Phlex::AttributeCache < Phlex::FIFO
 		value = yield
 		return value if value.bytesize.zero? || value.bytesize > @max_value_bytesize
 
-		snapshot = catch(:uncacheable) { snapshot(attributes) }
-		store(digest, snapshot, value) unless :uncacheable == snapshot
+		remaining = [@max_value_bytesize - value.bytesize]
+		snapshot = catch(:uncacheable) { snapshot(attributes, remaining) }
+		store(digest, snapshot, value, @max_value_bytesize - remaining[0]) unless :uncacheable == snapshot
 		value
 	end
 
@@ -34,26 +42,35 @@ class Phlex::AttributeCache < Phlex::FIFO
 	end
 
 	def []=(attributes, value)
-		snapshot = catch(:uncacheable) { snapshot(attributes) }
-		store(attributes.hash, snapshot, value) unless :uncacheable == snapshot
+		return if value.bytesize > @max_value_bytesize
+
+		remaining = [@max_value_bytesize - value.bytesize]
+		snapshot = catch(:uncacheable) { snapshot(attributes, remaining) }
+		store(attributes.hash, snapshot, value, @max_value_bytesize - remaining[0]) unless :uncacheable == snapshot
 	end
 
-	private def snapshot(value)
+	# `remaining` holds what's left of the entry's budget, and running out of it
+	# stops the walk, so a large input is given up on early.
+	private def snapshot(value, remaining)
+		throw :uncacheable, :uncacheable if (remaining[0] -= SLOT_BYTESIZE) < 0
+
 		case value
 		when Symbol, Integer, true, false, nil
 			value
 		when String
 			throw :uncacheable, :uncacheable unless String.equal?(value.class) && !(Phlex::SGML::SafeObject === value)
+			throw :uncacheable, :uncacheable if (remaining[0] -= value.bytesize) < 0
 			-value
 		when Phlex::SGML::SafeValue
 			throw :uncacheable, :uncacheable unless Phlex::SGML::SafeValue.equal?(value.class) && String.equal?(value.to_s.class)
+			throw :uncacheable, :uncacheable if (remaining[0] -= value.to_s.bytesize) < 0
 			Phlex::SGML::SafeValue.new(-value.to_s)
 		when Hash
 			throw :uncacheable, :uncacheable unless Hash.equal?(value.class)
-			Pairs.new(value.flat_map { |k, v| [snapshot_key(k), snapshot(v)] }.freeze)
+			Pairs.new(value.flat_map { |k, v| [snapshot_key(k, remaining), snapshot(v, remaining)] }.freeze)
 		when Array
 			throw :uncacheable, :uncacheable unless Array.equal?(value.class)
-			value.map { |item| snapshot(item) }.freeze
+			value.map { |item| snapshot(item, remaining) }.freeze
 		else
 			throw :uncacheable, :uncacheable
 		end
@@ -61,9 +78,9 @@ class Phlex::AttributeCache < Phlex::FIFO
 
 	# A pair with a nil or false value is skipped when serialising, so its key
 	# can be anything, even a cyclic Array.
-	private def snapshot_key(key)
+	private def snapshot_key(key, remaining)
 		case key
-		when Symbol, String then snapshot(key)
+		when Symbol, String then snapshot(key, remaining)
 		else throw :uncacheable, :uncacheable
 		end
 	end

@@ -44,7 +44,7 @@ class NaughtyBusinessTest < Quickdraw::Test
 			end
 		end
 
-		assert_equal view.call, %(<article id="&quot;><script type=&quot;text/javascript&quot; src=&quot;bad_script.js&quot;></script>"></article>)
+		assert_equal view.call, %(<article id="&quot;&gt;&lt;script type=&quot;text/javascript&quot; src=&quot;bad_script.js&quot;&gt;&lt;/script&gt;"></article>)
 	end
 
 	test "naughty javascript link protocol in symbolic href" do
