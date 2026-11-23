@@ -4,11 +4,20 @@ module Phlex
 	# **Standard Generalized Markup Language** for behaviour common to {HTML} and {SVG}.
 	class SGML
 		include Helpers
-		REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping xlinkhref]).freeze
+		# SVG animation elements, such as `set` and `animate`, write `to`, `from`,
+		# `by` and `values` to the attribute their `attributeName` names, which can
+		# be `href`, so those are checked as references too.
+		REF_ATTRIBUTES = Set.new(%w[href src action formaction lowsrc dynsrc background ping xlinkhref to from by values]).freeze
+		# References whose value is a `;`-separated list, any entry of which can be used.
+		REF_LIST_ATTRIBUTES = Set.new(%w[values]).freeze
+		# `data` takes a URL on `object`. A Hash given to it expands into `data-*`
+		# attributes instead, and isn't checked.
+		DATA_ATTRIBUTE = "data"
 		NAMED_CHARACTER_REFERENCES = {
 			"colon" => ":",
 			"tab" => "\t",
 			"newline" => "\n",
+			"semi" => ";",
 		}.freeze
 		UNSAFE_ATTRIBUTE_NAME_CHARS = %r([<>&"'/=\s\x00])
 
@@ -463,19 +472,45 @@ module Phlex
 				lower_name = name.downcase
 				normalized_name = lower_name.delete("^a-z")
 
-				if REF_ATTRIBUTES.include?(normalized_name)
-					decoded_value = case v
-						when String then decode_html_character_references(v)
-						when Symbol then decode_html_character_references(v.name)
+				if REF_ATTRIBUTES.include?(normalized_name) || DATA_ATTRIBUTE == normalized_name
+					# The text the value will be rendered as, whatever its type, so a
+					# URI or a list of tokens is checked like a String.
+					reference = case v
+						when String then v
+						when Symbol then v.name
+						when Array then v.compact.join(" ")
+						when Set then v.to_a.compact.join(" ")
+						when true, Integer, Float, Hash then nil
+						else
+							if v.respond_to?(:to_phlex_attribute_value)
+								v.to_phlex_attribute_value.to_s
+							elsif v.respond_to?(:to_str)
+								v.to_str
+							else
+								v.to_s
+							end
 					end
 
-					if decoded_value && decoded_value.downcase.tr("^a-z:", "").start_with?("javascript:")
-						next
+					decoded_value = reference && decode_html_character_references(reference)
+
+					if decoded_value
+						decoded_value = decoded_value.downcase
+
+						if REF_LIST_ATTRIBUTES.include?(normalized_name)
+							# The decoder removes references it doesn't know, but a browser keeps
+							# them as text, so it could see a `;` the decoder removed. Removing
+							# text can't break up an entry's `javascript:`, so the list is unsafe
+							# if `javascript:` appears anywhere in it.
+							next if decoded_value.tr("^a-z:", "").include?("javascript:")
+						elsif decoded_value.tr("^a-z:", "").start_with?("javascript:")
+							next
+						end
 					end
 				end
 
-				# Detect unsafe attribute names. Attribute names are considered unsafe if they match an event attribute or include unsafe characters.
-				if HTML::EVENT_ATTRIBUTES.include?(lower_name.tr("^a-z-", "")) || name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
+				# Detect unsafe attribute names. Attribute names are considered unsafe if they look like an event attribute, `on` followed by letters, or include unsafe characters.
+				event_name = lower_name.tr("^a-z-", "")
+				if (event_name.length > 2 && event_name.start_with?("on") && !event_name.include?("-")) || name.match?(UNSAFE_ATTRIBUTE_NAME_CHARS)
 					raise ArgumentError, "Unsafe attribute name detected: #{k}."
 				end
 

@@ -242,6 +242,46 @@ class UnsafeSvgXlinkHref < Phlex::HTML
 	end
 end
 
+# SVG animations write `to`, `from` and `values` to the attribute named by
+# `attributeName`, so a link's href can become a script URL after it's parsed.
+class UnsafeSvgAnimationReferences < Phlex::HTML
+	def view_template
+		render Layout do
+			svg do |s|
+				s.a(href: "#safe") { s.set(attributeName: "href", to: "javascript:alert(1)"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", to: "javascript:alert(2)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", from: "javascript:alert(3)", to: "#safe", dur: "100s"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "javascript:alert(4)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "#safe;javascript:alert(5)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "#safe&#59;javascript:alert(6)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.animate(attributeName: "href", values: "#safe&semi;javascript:alert(7)", dur: "0.01s", fill: "freeze"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.set("attributename" => "href", to: "javascript:alert(8)"); s.text(y: 10) { "x" } }
+				s.a(href: "#safe") { s.set(attributeName: "href", to: "javascript&colon;alert(9)"); s.text(y: 10) { "x" } }
+			end
+		end
+	end
+end
+
+# Event attributes the browser runs without a click, which aren't in a fixed list of names.
+class UnsafeUnlistedEventAttributes < Phlex::HTML
+	def view_template
+		render Layout do
+			style { "@keyframes x { to { opacity: 0.5 } }" }
+			ignore_warnings { div(style: "animation: x 1ms", onanimationstart: "alert(1)") { "x" } }
+			svg do |s|
+				ignore_warnings { s.set(attributeName: "x", to: "1", onbegin: "alert(2)") }
+				ignore_warnings { s.set("attributeName" => "x", "to" => "1", "OnBegin" => "alert(3)") }
+			end
+		end
+	end
+
+	def ignore_warnings
+		yield
+	rescue ArgumentError
+		# ignore
+	end
+end
+
 class Browser
 	MUTEX = { safari: Mutex.new, chrome: Mutex.new, firefox: Mutex.new }
 
@@ -359,5 +399,16 @@ Browser.open_each do |browser|
 	browser.execute_script("document.querySelectorAll('svg a').forEach(function(node) { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); });")
 	browser.each_alert do
 		raise "Failed with unsafe SVG xlink href"
+	end
+
+	browser.load_string(UnsafeSvgAnimationReferences.new.call)
+	browser.execute_script("document.querySelectorAll('svg a').forEach(function(node) { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); });")
+	browser.each_alert do
+		raise "Failed with unsafe SVG animation references"
+	end
+
+	browser.load_string(UnsafeUnlistedEventAttributes.new.call)
+	browser.each_alert do
+		raise "Failed with unlisted event attributes"
 	end
 end
