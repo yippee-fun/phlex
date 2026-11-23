@@ -76,7 +76,7 @@ module Phlex::SGML::Attributes
 				if v.respond_to?(:to_h)
 					case k
 					when :style
-						generate_styles(v.to_h).gsub('"', "&quot;")
+						generate_styles(v.to_h).gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES)
 					else
 						generate_nested_attributes(v.to_h, "#{name}-", buffer)
 					end
