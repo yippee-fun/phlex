@@ -93,6 +93,26 @@ class SelectiveRenderingTest < Quickdraw::Test
 		assert_equal output, %(<h1 id="target">Hello<strong>World</strong><img src="image.jpg"></h1><img id="image" src="after.jpg">)
 	end
 
+	class NestedSameNameExample < Phlex::HTML
+		def view_template
+			fragment("target") do
+				plain "A"
+				fragment("target") { plain "B" }
+				plain "C"
+			end
+
+			plain "D"
+			fragment("other") { plain "E" }
+			plain "F"
+		end
+	end
+
+	test "a fragment nested in a fragment of the same name ends the selection" do
+		assert_equal NestedSameNameExample.new.call(fragments: ["target"]), "AB"
+		assert_equal NestedSameNameExample.new.call(fragments: ["target", "missing"]), "AB"
+		assert_equal NestedSameNameExample.new.call(fragments: ["target", "other"]), "ABE"
+	end
+
 	test "halts early after all fragments are found" do
 		called = false
 		checker = -> { called = true }

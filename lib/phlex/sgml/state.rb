@@ -8,6 +8,7 @@ class Phlex::SGML::State
 		@user_context = user_context
 		@fragments = fragments
 		@fragment_depth = 0
+		@rendering_fragments = nil
 		@should_render = !fragments
 		@cache_stack = []
 		@halt_signal = nil
@@ -34,7 +35,8 @@ class Phlex::SGML::State
 	end
 
 	def begin_fragment(id)
-		if @fragments&.include?(id)
+		# A selected fragment ends at the first end of its name, so count it once however deeply the name is nested.
+		if @fragments&.include?(id) && (@rendering_fragments ||= Set.new).add?(id)
 			@fragment_depth += 1
 			@should_render = true
 		end
