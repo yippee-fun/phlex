@@ -38,14 +38,14 @@ env = { PHLEX_NATIVE = "true" }
 run = "bundle exec qd"
 
 [tasks."native:package"]
-description = "Build the phlex-native source gem and a precompiled gem for every platform (needs Docker)"
+description = "Build the phlex-native gem"
 dir = "phlex-native"
-run = ["bundle exec rake clobber", "bundle exec rake gem gem:native"]
+run = ["bundle exec rake clobber", "bundle exec rake gem"]
 
 [tasks."native:release"]
-description = "Push every phlex-native gem in phlex-native/pkg to RubyGems"
+description = "Push the phlex-native gem in phlex-native/pkg to RubyGems"
 dir = "phlex-native"
-run = "for gem in pkg/*.gem; do gem push \"$gem\"; done"
+run = "gem push pkg/*.gem"
 
 [tools]
 ruby = "latest"
