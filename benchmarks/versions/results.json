@@ -1,0 +1,226 @@
+{
+  "meta": {
+    "2.4.3": {
+      "phlex": "2.4.3",
+      "compile": false,
+      "native": false,
+      "yjit": true,
+      "ruby": "ruby 4.0.10 (2026-11-19 revision a704b7cd95) +YJIT +PRISM [x86_64-linux]"
+    },
+    "3.0 runtime": {
+      "phlex": "3.0.0.beta1",
+      "compile": false,
+      "native": false,
+      "yjit": true,
+      "ruby": "ruby 4.0.10 (2026-11-19 revision a704b7cd95) +YJIT +PRISM [x86_64-linux]"
+    },
+    "3.0 runtime + native": {
+      "phlex": "3.0.0.beta1",
+      "compile": false,
+      "native": true,
+      "yjit": true,
+      "ruby": "ruby 4.0.10 (2026-11-19 revision a704b7cd95) +YJIT +PRISM [x86_64-linux]"
+    },
+    "3.0 compiled": {
+      "phlex": "3.0.0.beta1",
+      "compile": true,
+      "native": false,
+      "yjit": true,
+      "ruby": "ruby 4.0.10 (2026-11-19 revision a704b7cd95) +YJIT +PRISM [x86_64-linux]"
+    },
+    "3.0 compiled + native": {
+      "phlex": "3.0.0.beta1",
+      "compile": true,
+      "native": true,
+      "yjit": true,
+      "ruby": "ruby 4.0.10 (2026-11-19 revision a704b7cd95) +YJIT +PRISM [x86_64-linux]"
+    }
+  },
+  "best": {
+    "2.4.3": {
+      "page": {
+        "ips": 2311.3,
+        "error_percent": 11.42,
+        "bytes": 34036,
+        "gbps": 0.629,
+        "allocations": 1235.1
+      },
+      "dashboard": {
+        "ips": 230.9,
+        "error_percent": 5.63,
+        "bytes": 66516,
+        "gbps": 0.123,
+        "allocations": 16100.5
+      },
+      "article": {
+        "ips": 465.4,
+        "error_percent": 13.11,
+        "bytes": 31312,
+        "gbps": 0.117,
+        "allocations": 7448.8
+      },
+      "catalogue": {
+        "ips": 128.5,
+        "error_percent": 10.9,
+        "bytes": 201429,
+        "gbps": 0.207,
+        "allocations": 25092.5
+      },
+      "settings_form": {
+        "ips": 487.7,
+        "error_percent": 9.64,
+        "bytes": 17588,
+        "gbps": 0.069,
+        "allocations": 7239.4
+      }
+    },
+    "3.0 runtime": {
+      "page": {
+        "ips": 2556.1,
+        "error_percent": 4.77,
+        "bytes": 34036,
+        "gbps": 0.696,
+        "allocations": 628.1
+      },
+      "dashboard": {
+        "ips": 985.2,
+        "error_percent": 10.76,
+        "bytes": 66516,
+        "gbps": 0.524,
+        "allocations": 2903.0
+      },
+      "article": {
+        "ips": 2770.5,
+        "error_percent": 14.94,
+        "bytes": 31312,
+        "gbps": 0.694,
+        "allocations": 877.0
+      },
+      "catalogue": {
+        "ips": 381.3,
+        "error_percent": 9.7,
+        "bytes": 201429,
+        "gbps": 0.614,
+        "allocations": 7313.0
+      },
+      "settings_form": {
+        "ips": 3349.6,
+        "error_percent": 11.61,
+        "bytes": 17588,
+        "gbps": 0.471,
+        "allocations": 515.0
+      }
+    },
+    "3.0 runtime + native": {
+      "page": {
+        "ips": 2610.7,
+        "error_percent": 12.07,
+        "bytes": 34036,
+        "gbps": 0.711,
+        "allocations": 1239.1
+      },
+      "dashboard": {
+        "ips": 1161.2,
+        "error_percent": 11.11,
+        "bytes": 66516,
+        "gbps": 0.618,
+        "allocations": 3690.0
+      },
+      "article": {
+        "ips": 3318.1,
+        "error_percent": 13.17,
+        "bytes": 31312,
+        "gbps": 0.831,
+        "allocations": 1108.0
+      },
+      "catalogue": {
+        "ips": 463.1,
+        "error_percent": 11.01,
+        "bytes": 201429,
+        "gbps": 0.746,
+        "allocations": 8905.0
+      },
+      "settings_form": {
+        "ips": 4496.5,
+        "error_percent": 12.68,
+        "bytes": 17588,
+        "gbps": 0.633,
+        "allocations": 788.0
+      }
+    },
+    "3.0 compiled": {
+      "page": {
+        "ips": 59388.8,
+        "error_percent": 19.35,
+        "bytes": 34036,
+        "gbps": 16.171,
+        "allocations": 21.1
+      },
+      "dashboard": {
+        "ips": 1461.9,
+        "error_percent": 16.69,
+        "bytes": 66516,
+        "gbps": 0.778,
+        "allocations": 2366.0
+      },
+      "article": {
+        "ips": 3300.2,
+        "error_percent": 11.73,
+        "bytes": 31312,
+        "gbps": 0.827,
+        "allocations": 886.0
+      },
+      "catalogue": {
+        "ips": 652.4,
+        "error_percent": 15.48,
+        "bytes": 201429,
+        "gbps": 1.051,
+        "allocations": 4874.0
+      },
+      "settings_form": {
+        "ips": 7025.1,
+        "error_percent": 11.66,
+        "bytes": 17588,
+        "gbps": 0.988,
+        "allocations": 469.0
+      }
+    },
+    "3.0 compiled + native": {
+      "page": {
+        "ips": 58135.1,
+        "error_percent": 16.9,
+        "bytes": 34036,
+        "gbps": 15.829,
+        "allocations": 22.1
+      },
+      "dashboard": {
+        "ips": 2152.5,
+        "error_percent": 8.59,
+        "bytes": 66516,
+        "gbps": 1.145,
+        "allocations": 2420.0
+      },
+      "article": {
+        "ips": 3837.4,
+        "error_percent": 9.15,
+        "bytes": 31312,
+        "gbps": 0.961,
+        "allocations": 916.0
+      },
+      "catalogue": {
+        "ips": 1066.7,
+        "error_percent": 2.91,
+        "bytes": 201429,
+        "gbps": 1.719,
+        "allocations": 4814.0
+      },
+      "settings_form": {
+        "ips": 7118.7,
+        "error_percent": 10.17,
+        "bytes": 17588,
+        "gbps": 1.002,
+        "allocations": 470.0
+      }
+    }
+  }
+}
