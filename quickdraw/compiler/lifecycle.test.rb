@@ -1825,7 +1825,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
-	test "a rollback drops the source maps of what it put back" do
+	test "a rollback keeps only the last failed attempt's source maps" do
 		with_component_files(
 			"retried_first.rb" => <<~RUBY,
 				# frozen_string_literal: true
@@ -1840,14 +1840,18 @@ class CompilerLifecycleTest < Quickdraw::Test
 					private :delegate
 				end
 			RUBY
-		) do
-			maps = Phlex.__compiled_source_maps__.size
+		) do |(first, _second)|
+			maps = -> { Phlex.__compiled_source_maps__.count { |_path, generation| generation.path == first } }
 
-			3.times do
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleRetried) }
+			# Kept for a render still running a method the rollback replaced.
+			assert_equal maps.(), 1
+
+			2.times do
 				assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleRetried) }
 			end
 
-			assert_equal Phlex.__compiled_source_maps__.size, maps
+			assert maps.() <= 1
 			refute Phlex::Compiler::GENERATION_COMPONENTS.any? { |_path, owners| owners.key?(LifecycleRetried) }
 		end
 	end
@@ -1904,6 +1908,38 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert compiled_method?(LifecycleFailedThenCompiled, :view_template)
 			refute Phlex::Compiler::FAILURES.key?(LifecycleFailedThenCompiled)
 			assert_equal Phlex::Compiler.explain(LifecycleFailedThenCompiled), []
+		end
+	end
+
+	test "a rollback keeps a visibility changed while the compilation ran" do
+		with_component_files(
+			"revisibled_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRevisibled < Phlex::HTML
+					def view_template = div { "first" }
+				end
+			RUBY
+			"revisibled_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRevisibled
+					private def footer = p { "footer" }
+				end
+			RUBY
+		) do
+			compiling = 0
+			Pause.gate = -> {
+				next unless (compiling += 1) == 2
+
+				LifecycleRevisibled.__send__(:protected, :view_template)
+				Sabotage.active = true
+			}
+
+			assert_raises(RuntimeError) { Phlex::Compiler.compile(LifecycleRevisibled) }
+			refute compiled_method?(LifecycleRevisibled, :view_template)
+			assert LifecycleRevisibled.protected_method_defined?(:view_template)
+		ensure
+			Pause.gate = nil
+			Sabotage.active = false
 		end
 	end
 

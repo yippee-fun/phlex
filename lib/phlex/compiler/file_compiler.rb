@@ -244,7 +244,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 
 				snippets << compiled
 				@compiled_lines << definition.node.start_line
-				visibilities[definition.node.name] = visibility_of(component, definition.node.name)
+				visibilities[definition.node.name] = Phlex::Compiler.visibility_of(component, definition.node.name)
 			end
 
 			Result.new(namespace:, component:, compiled_snippets: snippets.freeze, visibilities: visibilities.freeze, inlined: environment.inlined, inlined_svg: environment.inlined_svg, inlined_super: environment.inlined_super)
@@ -262,18 +262,5 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		defining.source_location == live.source_location && defining.original_name == live.original_name
 	rescue NameError
 		false
-	end
-
-	PRIVATE_METHOD_DEFINED = Module.instance_method(:private_method_defined?)
-	PROTECTED_METHOD_DEFINED = Module.instance_method(:protected_method_defined?)
-
-	private def visibility_of(component, name)
-		if PRIVATE_METHOD_DEFINED.bind_call(component, name, false)
-			:private
-		elsif PROTECTED_METHOD_DEFINED.bind_call(component, name, false)
-			:protected
-		else
-			:public
-		end
 	end
 end

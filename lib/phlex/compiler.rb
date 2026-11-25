@@ -89,8 +89,9 @@ module Phlex::Compiler
 	Generation = Data.define(:path, :lines)
 
 	# What a compilation replaced, so one that fails partway through can put it
-	# back: component => { name => [method, visibility] }, what each component
-	# had inlined before it started, and the generations it made.
+	# back: component => { name => [method, visibility, whether that visibility
+	# was restored] }, what each component had inlined before it started, and
+	# the generations it made.
 	Rollback = Data.define(:methods, :inlined, :generations)
 
 	# A live method and the line in the file being compiled that defines it.
@@ -110,6 +111,9 @@ module Phlex::Compiler
 
 	# component => true, for each forgotten component a generation still waits on
 	FORGOTTEN = ObjectSpace::WeakMap.new
+
+	# compiled paths of the last failed compilation's discarded generations
+	DISCARDED = []
 
 	DEFAULT_FAILURE_HANDLER = lambda do |component, error|
 		warn "Phlex::Compiler couldn't compile #{component}, so it renders uncompiled: #{error.class}: #{error.message}\n\t#{error.backtrace&.first(5)&.join("\n\t")}"
@@ -447,7 +451,7 @@ module Phlex::Compiler
 			if rollback
 				replaced = (rollback.methods[result.component] ||= {})
 				result.visibilities.each do |name, visibility|
-					replaced[name] ||= [Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(result.component, name), visibility]
+					replaced[name] ||= [Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(result.component, name), visibility, false]
 				end
 			end
 
@@ -473,6 +477,9 @@ module Phlex::Compiler
 		results.each do |result|
 			result.visibilities.each do |name, visibility|
 				result.component.__send__(visibility, name) unless visibility == :public
+
+				# From here the method's visibility is its own, and a rollback keeps it.
+				rollback.methods[result.component][name][2] = true if rollback
 			end
 		end
 
@@ -576,7 +583,7 @@ module Phlex::Compiler
 	# recompiles it, or raises once frozen.
 	def self.restore(component, rollback)
 		restored = without_redefinition_warnings do
-			(rollback.methods[component] || {}).map { |name, (method, visibility)| restore_method(component, name, method, visibility) }.all?
+			(rollback.methods[component] || {}).map { |name, (method, visibility, settled)| restore_method(component, name, method, visibility, settled) }.all?
 		end
 
 		rollback.inlined[component].each do |name, value|
@@ -595,7 +602,9 @@ module Phlex::Compiler
 	end
 
 	# The source maps of a failed compilation's generations are kept only for
-	# the classes still running their methods.
+	# the classes still running their methods. Those none still runs wait
+	# until the next failed compilation, since a render that started before
+	# the rollback may still be in one of their methods.
 	def self.discard_generations(paths, components)
 		discarded = paths.select do |path|
 			next false unless (owners = GENERATION_COMPONENTS[path])
@@ -605,17 +614,23 @@ module Phlex::Compiler
 		end
 
 		discarded.each { |path| GENERATION_COMPONENTS.delete(path) }
-		Phlex.__remove_compiled_source_maps__(discarded) if discarded.any?
+		stale = DISCARDED.dup
+		DISCARDED.replace(discarded)
+		Phlex.__remove_compiled_source_maps__(stale) if stale.any?
 	end
 
 	# Only what compiling installed is put back, not what another thread defined
 	# or removed meanwhile. Whatever goes wrong, such as a `method_added` that
 	# raises or a class frozen meanwhile, leaves the rest to restore and the
 	# compilation's own error the one raised. Ruby defines a method before
-	# calling `method_added`, so its visibility is restored even then.
-	def self.restore_method(component, name, method, visibility)
+	# calling `method_added`, so its visibility is restored even then. Once a
+	# compiled method's visibility was restored, it keeps whatever it has now,
+	# which another thread may have changed since.
+	def self.restore_method(component, name, method, visibility, settled)
 		current = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
 		return true if current == method || !Phlex.__compiled_source_maps__.key?(current.source_location&.first)
+
+		visibility = visibility_of(component, name) if settled
 
 		begin
 			DEFINE_METHOD.bind_call(component, name, method)
@@ -629,6 +644,19 @@ module Phlex::Compiler
 		true
 	rescue StandardError, ScriptError, SystemStackError
 		restored?(component, name, method)
+	end
+
+	PRIVATE_METHOD_DEFINED = Module.instance_method(:private_method_defined?)
+	PROTECTED_METHOD_DEFINED = Module.instance_method(:protected_method_defined?)
+
+	def self.visibility_of(component, name)
+		if PRIVATE_METHOD_DEFINED.bind_call(component, name, false)
+			:private
+		elsif PROTECTED_METHOD_DEFINED.bind_call(component, name, false)
+			:protected
+		else
+			:public
+		end
 	end
 
 	def self.restored?(component, name, method)
