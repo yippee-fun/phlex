@@ -150,6 +150,22 @@ class KitTest < Quickdraw::Test
 		Object.__send__(:remove_const, :KitTestPrivateKit) if Object.const_defined?(:KitTestPrivateKit, false)
 	end
 
+	test "a kit's own const_get and methods don't change how it finds its components" do
+		kit = Object.const_set(:KitTestCustomisedKit, Module.new)
+		kit.define_singleton_method(:const_get) { |name| super(name) }
+		kit.define_singleton_method(:named_reference) { |*| "Other" }
+		kit.extend(Phlex::Kit)
+		kit.const_set(:Card, Class.new(Phlex::HTML) { def view_template = hr })
+		page = Class.new(Phlex::HTML) do
+			include kit
+			def view_template = Card()
+		end
+
+		assert_equal page.call, %(<hr>)
+	ensure
+		Object.__send__(:remove_const, :KitTestCustomisedKit) if Object.const_defined?(:KitTestCustomisedKit, false)
+	end
+
 	if defined?(::Ractor)
 		# No text or attributes, so rendering doesn't depend on ERB::Escape or
 		# the attribute cache being usable from a non-main Ractor.
