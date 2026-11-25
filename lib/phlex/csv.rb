@@ -29,7 +29,6 @@ class Phlex::CSV
 		row_buffer.clear
 		headers = @_headers
 		headers.clear
-		has_yielder = respond_to?(:yielder, true)
 		first_row = true
 		expected_number_of_columns = nil
 		render_headers = render_headers?
@@ -44,14 +43,11 @@ class Phlex::CSV
 			escape_regex = /^\s|\s$|[\r\n"#{Regexp.escape(delimiter)}]/
 		end
 
-		if has_yielder
-			warn <<~MESSAGE
-				Custom yielders are deprecated in Phlex::CSV.
+		if respond_to?(:yielder, true)
+			raise Phlex::ArgumentError.new(<<~MESSAGE)
+				Custom yielders are no longer supported in Phlex::CSV.
 
-				Please replace your yielder with an `around_row` method.
-
-				You should be able to just rename your yielder method
-				and change `yield` to `super`.
+				Rename your `yielder` method to `around_row` and change `yield` to `super`.
 			MESSAGE
 		end
 
@@ -115,18 +111,10 @@ class Phlex::CSV
 			row_buffer.clear
 		}
 
-		if has_yielder
-			each_item do |record|
-				yielder(record) do |*a, **k|
-					row_template(*a, **k)
-					row_appender.call
-				end
-			end
-		else
-			@_row_appender = row_appender
-			each_item do |record|
-				around_row(record)
-			end
+		@_row_appender = row_appender
+
+		each_item do |record|
+			around_row(record)
 		end
 
 		buffer
@@ -231,22 +219,6 @@ class Phlex::CSV
 					buffer << value
 				end
 			end
-		end
-	end
-
-	# Handle legacy `view_template` method
-	private def respond_to_missing?(method_name, include_private)
-		(method_name == :row_template && respond_to?(:view_template)) || super
-	end
-
-	# Handle legacy `view_template` method
-	private def method_missing(method_name, ...)
-		if method_name == :row_template && respond_to?(:view_template)
-			warn "Deprecated: Use `row_template` instead of `view_template` in Phlex CSVs."
-			self.class.alias_method :row_template, :view_template
-			view_template(...)
-		else
-			super
 		end
 	end
 
