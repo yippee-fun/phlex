@@ -422,7 +422,7 @@ static int style_each(VALUE k, VALUE v, VALUE arg) {
 	if (SYMBOL_P(k)) {
 		property = rb_sym2str(k);
 		dasherize = 1;
-	} else if (plain_string_p(k)) {
+	} else if (plain_string_p(k) && !output_p(o, k)) {
 		property = k;
 		dasherize = 0;
 	} else {

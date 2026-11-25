@@ -29,7 +29,7 @@ module Phlex::Compiler::CoreCalls
 		Phlex::SGML::SafeObject => %i[to_s],
 		Phlex.singleton_class => %i[__map_exception__],
 		Phlex::Escape.singleton_class => %i[html_escape],
-		Phlex.__attribute_cache__.singleton_class => %i[fetch],
+		Phlex.__attribute_cache__.singleton_class => %i[fetch append],
 		Phlex::SGML::Attributes.singleton_class => nil,
 		Phlex::SGML::Elements.singleton_class => nil,
 		Phlex::Compiler.singleton_class => nil,

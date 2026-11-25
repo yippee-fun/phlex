@@ -255,13 +255,14 @@ class NativeAttributesTest < Quickdraw::Test
 		assert_equal buffer, %(<a href="/" class="a b" class="c")
 	end
 
-	test "append matches the Ruby implementation when the buffer is one of the values" do
+	test "append matches the Ruby implementation when the buffer is a value or style property" do
 		[
 			-> (buffer) { { class: "x" * 300, title: buffer } },
 			-> (buffer) { { href: "&amp;", title: Phlex::SGML::SafeValue.new(buffer) } },
 			-> (buffer) { { style: ["a: b", buffer], data: { x: buffer } } },
+			-> (buffer) { { style: {}.compare_by_identity.tap { |styles| styles[buffer] = "red" }, id: "x" * 300 } },
 		].each do |attributes|
-			ruby, native = String.new("<a"), String.new("<a")
+			ruby, native = String.new("<" * 100), String.new("<" * 100)
 			ruby << Attributes.instance_method(:generate_attributes).bind_call(Attributes, attributes.(ruby))
 			Phlex.__attribute_cache__.append(native, attributes.(native)) { Attributes.generate_attributes(attributes.(native)) }
 			assert_equal native, ruby
