@@ -8,7 +8,7 @@ class Phlex::SGML::State
 		@user_context = user_context
 		@fragments = fragments
 		@fragment_depth = 0
-		@open_fragments = nil
+		@open_fragments = []
 		@should_render = !fragments
 		@cache_stack = []
 		@halt_signal = nil
@@ -35,7 +35,9 @@ class Phlex::SGML::State
 	end
 
 	def begin_fragment(id)
-		refuse_nested_fragment(id) unless (@open_fragments ||= Set.new).add?(id)
+		open_fragments = @open_fragments
+		refuse_nested_fragment(id) if open_fragments.include?(id)
+		open_fragments << id
 
 		if @fragments&.include?(id)
 			@fragment_depth += 1
@@ -57,7 +59,7 @@ class Phlex::SGML::State
 	end
 
 	def end_fragment(id, halt: true)
-		@open_fragments.delete(id)
+		@open_fragments.pop
 
 		if caching?
 			current_byte_offset = 0
@@ -83,7 +85,8 @@ class Phlex::SGML::State
 
 	# A cached fragment is nested in the fragments open where its cache is rendered.
 	def refuse_fragments_nested_in_their_own_names(fragment_map)
-		return unless (open_fragments = @open_fragments)
+		open_fragments = @open_fragments
+		return if open_fragments.empty?
 
 		fragment_map.each_key { |id| refuse_nested_fragment(id) if open_fragments.include?(id) }
 	end
