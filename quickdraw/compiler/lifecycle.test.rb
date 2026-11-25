@@ -1689,6 +1689,26 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a class overriding visibility and ancestry reflection keeps its methods and recompiles" do
+		with_component_files(
+			"reflective_visibility.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReflectiveVisibility < Phlex::HTML
+					def self.private_method_defined?(*) = true
+					def self.ancestors = []
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleReflectiveVisibility)
+			assert LifecycleReflectiveVisibility.public_method_defined?(:view_template)
+
+			LifecycleReflectiveVisibility.class_eval { def div(**, &) = super(class: "redefined", &) }
+			assert_equal LifecycleReflectiveVisibility.new.call, %(<div class="redefined">x</div>)
+		end
+	end
+
 	test "a class overriding instance variable reflection doesn't change its compile setting" do
 		component = Class.new(Phlex::HTML) do
 			compile false

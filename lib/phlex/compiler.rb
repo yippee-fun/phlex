@@ -414,7 +414,8 @@ module Phlex::Compiler
 		# Another Ractor can't share the main one's reflection, so it takes its own.
 		ivar_get = Phlex.__main_ractor__? ? IVAR_GET : Kernel.instance_method(:instance_variable_get)
 
-		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
+		ancestors = Phlex.__main_ractor__? ? ANCESTORS.bind_call(target) : target.ancestors
+		related = target.singleton_class? ? ancestors : ancestors + descendants_of(target)
 		affected = related.select do |klass|
 			(inlined = ivar_get.bind_call(klass, :@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end
