@@ -388,7 +388,7 @@ module Phlex::Compiler
 		current = Phlex.__source_stamp__(path)
 
 		components.each do |component|
-			stamps = component.instance_variable_get(:@__phlex_source_stamps__) || {}
+			stamps = Phlex::SGML::IVAR_GET.bind_call(component, :@__phlex_source_stamps__) || {}
 
 			unless stamps.key?(path)
 				raise Error, "Can't compile #{path} for #{component} because Phlex didn't see its methods defined there, such as in another Ractor, so it can't tell whether the file has changed since."

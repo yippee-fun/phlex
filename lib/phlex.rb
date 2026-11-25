@@ -112,10 +112,13 @@ module Phlex
 	# code the class isn't running. A compiled class having one defined means
 	# the file is being loaded again, which it may recompile from. Only the
 	# main Ractor compiles, so only it records them.
+	IVAR_SET = Kernel.instance_method(:instance_variable_set)
+
 	def self.__record_source_stamp__(component, path)
-		stamps = component.instance_variable_get(:@__phlex_source_stamps__) || component.instance_variable_set(:@__phlex_source_stamps__, {})
+		get = SGML::IVAR_GET
+		stamps = get.bind_call(component, :@__phlex_source_stamps__) || IVAR_SET.bind_call(component, :@__phlex_source_stamps__, {})
 		return if @compiled_source_maps.key?(path)
-		return if stamps.key?(path) && !component.instance_variable_get(:@__phlex_compiled__)
+		return if stamps.key?(path) && !get.bind_call(component, :@__phlex_compiled__)
 
 		stamps[path] = __source_stamp__(path)
 	end
