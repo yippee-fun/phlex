@@ -188,13 +188,15 @@ module Phlex::Compiler
 	# recompilation takes the lock, and so waits for the new methods. The
 	# handler runs outside it, since it may well render something.
 	def self.compile_on_first_render(component, on_failure: @on_failure)
-		return unless @enabled && Phlex.__main_ractor__?
+		return unless Phlex.__main_ractor__?
+		# A recompilation replaces methods even while disabled, so a render still waits for it.
+		return unless @enabled || @recompiling
 		return if !@recompiling && settled?(component)
 		# Reached from inside a compilation, such as by a class it autoloads.
 		return if MUTEX.owned?
 
 		error = MUTEX.synchronize do
-			return if settled?(component)
+			return if !@enabled || settled?(component)
 
 			failed = []
 
