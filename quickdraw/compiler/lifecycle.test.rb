@@ -13,6 +13,12 @@ class CompilerLifecycleTest < Quickdraw::Test
 		Phlex.__compiled_source_maps__.key?(component.instance_method(name).source_location[0])
 	end
 
+	# Until the thread finishes or waits on a lock, for at most five seconds.
+	def wait_until_blocked(thread)
+		deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+		Thread.pass until !thread.alive? || thread.backtrace&.first(3)&.any? { |line| line.include?("synchronize") } || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+	end
+
 	def with_component_files(files)
 		Dir.mktmpdir do |dir|
 			paths = files.map do |name, source|
@@ -1710,6 +1716,45 @@ class CompilerLifecycleTest < Quickdraw::Test
 				assert_equal LifecycleStatement.new.call, "<div>statement</div>"
 				assert_equal LifecycleBlockDefined.new.call, "<span>block</span>"
 				assert compiled_method?(LifecycleStatement, :view_template)
+			end
+		end
+	end
+
+	test "a render with the compiler disabled still waits for a recompilation" do
+		with_component_files(
+			"disabled_race.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDisabledRaceParent < Phlex::HTML
+				end
+
+				class LifecycleDisabledRace < LifecycleDisabledRaceParent
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleDisabledRace)
+
+			without_lazy_compilation do
+				paused = Queue.new
+				resume = Queue.new
+				redefining = Thread.new do
+					Thread.current[:lifecycle_install_gate] = -> {
+						Thread.current[:lifecycle_install_gate] = nil
+						paused << true
+						resume.pop
+					}
+					LifecycleDisabledRaceParent.class_eval { def div(**, &) = super(class: "redefined", &) }
+				end
+
+				redefining.join unless paused.pop(timeout: 5)
+				rendering = Thread.new { LifecycleDisabledRace.new.call }
+				wait_until_blocked(rendering)
+				waited = rendering.alive?
+				resume << true
+				redefining.join
+
+				assert waited
+				assert_equal rendering.value, %(<div class="redefined">x</div>)
 			end
 		end
 	end
