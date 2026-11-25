@@ -562,30 +562,30 @@ module Phlex::Compiler
 		end
 
 		# A local only ever assigned a literal that's the same object each time
-		# is expected to hold it, and so to render as the literal would. `plain`
-		# raises for true and false, which an element renders as nothing.
-		private def expected(variable, booleans: true)
+		# is expected to hold it, and so to render as the literal would. True
+		# and false aren't, since either can be extended with SafeObject.
+		private def expected(variable)
 			return unless (node = @literal_locals[variable.name])
 
 			value = literal_value(node)
 			return unless String === value || same_as_literal?(value)
 
-			expectation(value, variable, booleans:) { yield }
+			expectation(value, variable) { yield }
 		end
 
 		# A constant is expected to hold what it held when compiling, if that's
 		# a literal Ruby would make the same object of, read into a local before
 		# the output around it.
-		private def expected_constant(constant, booleans: true)
+		private def expected_constant(constant)
 			return unless (names, root = constant_names(constant)) && (found = @environment.constant_value(names, root:))
 			return unless same_as_literal?(found[0])
 
 			local = @locals.fresh(:expected)
-			expectation(found[0], read(local), [write(local, constant)], booleans:) { yield read(local) }
+			expectation(found[0], read(local), [write(local, constant)]) { yield read(local) }
 		end
 
-		private def expectation(value, reader, reads = [], booleans:)
-			return unless (text = rendered_text(value, booleans:)) && (literal = expected_literal(value))
+		private def expectation(value, reader, reads = [])
+			return unless (text = rendered_text(value)) && (literal = expected_literal(value))
 
 			@appends += 1
 			state_local
@@ -642,17 +642,17 @@ module Phlex::Compiler
 			elsif klass.equal?(Float)
 				FINITE.bind_call(value) && !ZERO.bind_call(value) && PARSE_FLOAT.bind_call(self, FLOAT_TEXT.bind_call(value)).equal?(value)
 			else
-				klass.equal?(Symbol) || klass.equal?(NilClass) || klass.equal?(TrueClass) || klass.equal?(FalseClass)
+				klass.equal?(Symbol) || klass.equal?(NilClass)
 			end
 		end
 
-		private def rendered_text(value, booleans:)
+		private def rendered_text(value)
 			case value
 			in String then Phlex::Escape.html_escape(value)
 			in Symbol then Phlex::Escape.html_escape(value.name)
 			in nil then ""
 			in Integer | Float then value.to_s if formats_objects?
-			in true | false then "" if booleans && formats_objects?
+			else nil
 			end
 		end
 
@@ -663,8 +663,6 @@ module Phlex::Compiler
 			in Integer then Refract::IntegerNode.new(value:)
 			in Float then Refract::FloatNode.new(value: value.to_s)
 			in nil then Refract::NilNode.new
-			in true then Refract::TrueNode.new
-			in false then Refract::FalseNode.new
 			end
 		end
 
@@ -1411,8 +1409,8 @@ module Phlex::Compiler
 					statements([write(text, visit(interpolated)), append(expression(escaped(read(text))))])
 				in [Refract::NilNode] then Refract::NilNode.new
 				in [Refract::IntegerNode | Refract::FloatNode => number] if (value = numeric(number)) && formats_objects? then plain(value.to_s)
-				in [Refract::LocalVariableReadNode => variable] if (expected = expected(variable, booleans: false) { [node] }) then expected
-				in [Refract::ConstantReadNode | Refract::ConstantPathNode => constant] if (expected = expected_constant(constant, booleans: false) { |value| [node.copy(arguments: node.arguments.copy(arguments: [value]))] })
+				in [Refract::LocalVariableReadNode => variable] if (expected = expected(variable) { [node] }) then expected
+				in [Refract::ConstantReadNode | Refract::ConstantPathNode => constant] if (expected = expected_constant(constant) { |value| [node.copy(arguments: node.arguments.copy(arguments: [value]))] })
 					expected
 				else return keep_call(node, "its argument isn't a literal or an interpolation")
 			end

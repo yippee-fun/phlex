@@ -132,6 +132,10 @@ class CompilerTest < Quickdraw::Test
 		end
 	end
 
+	test "true and false aren't expected, since either can be extended with SafeObject" do
+		refute compile("def a\n\tyes = true\n\tno = false\n\tdiv { yes }\n\tdiv { no }\nend").include?("equal?")
+	end
+
 	test "a constant holding a literal is read before the output around it, and expected to hold it still" do
 		COMPONENT.const_set(:EXPECTED_LABEL, "Save")
 		compiled = compile(<<~RUBY)
