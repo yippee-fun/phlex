@@ -1679,18 +1679,35 @@ class CompilerLifecycleTest < Quickdraw::Test
 					def view_template = div { helper }
 				end
 			RUBY
-			"revisibilised_failing.rb" => <<~RUBY
+			"revisibilised_failing.rb" => <<~RUBY,
 				# frozen_string_literal: true
 				class LifecycleRevisibilised
 					ruby2_keywords def delegate(*args) = plain(*args)
 					private :delegate
 				end
 			RUBY
+			"revisibilised_uncompiled.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRevisibilisedUncompiledParent < Phlex::HTML
+					def helper = h1 { "parent" }
+				end
+
+				class LifecycleRevisibilisedUncompiled < LifecycleRevisibilisedUncompiledParent
+					private :helper
+
+					def view_template = div { helper }
+				end
+			RUBY
 		) do
 			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleRevisibilised) }
 
+			# Whether the child follows the parent's redefinition is Ruby's to decide, so it's compared with a twin never compiled.
 			LifecycleRevisibilisedParent.class_eval { def helper = h2 { "redefined" } }
-			without_lazy_compilation { assert_equal LifecycleRevisibilised.new.call, "<div><h2>redefined</h2></div>" }
+			LifecycleRevisibilisedUncompiledParent.class_eval { def helper = h2 { "redefined" } }
+
+			without_lazy_compilation do
+				assert_equal LifecycleRevisibilised.new.call, LifecycleRevisibilisedUncompiled.new.call
+			end
 		end
 	end
 
