@@ -334,6 +334,8 @@ module Phlex::Compiler
 	# Compiles the methods that the given components, by default every loaded
 	# one, define in an already-loaded file.
 	def self.compile_file(path, components: loaded_components, recompile: false, inline: true)
+		return MUTEX.synchronize { compile_file(path, components:, recompile:, inline:) } unless MUTEX.owned?
+
 		unless File.exist?(path)
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
