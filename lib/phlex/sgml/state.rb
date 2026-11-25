@@ -65,7 +65,8 @@ class Phlex::SGML::State
 				next if fragment[1]                                         # An earlier fragment with this name has already ended
 				fragment[1] = current_byte_offset - fragment[0]             # The byte length is the difference between the current byte offset and the byte offset of the fragment
 				if (descendants = open_fragments.delete(id))
-					fragment[2] = descendants.to_a
+					# A descendant that's still open ends after this fragment, so it isn't nested in it.
+					fragment[2] = descendants.reject { |name| open_fragments.key?(name) }
 				end
 			end
 		end
@@ -94,7 +95,8 @@ class Phlex::SGML::State
 				unless fragment[1]
 					fragment[1] = offset + length - fragment[0]
 					descendants = open_fragments.delete(id)
-					fragment[2] = descendants ? descendants.merge(nested_fragments).to_a : nested_fragments
+					# A descendant that's still open ends after this fragment, so it isn't nested in it.
+					fragment[2] = descendants ? descendants.reject { |name| open_fragments.key?(name) } | nested_fragments : nested_fragments
 				end
 
 				next

@@ -294,13 +294,22 @@ class Phlex::SGML
 			state.buffer << cached_buffer
 		else
 			found = false
+			# Fragments are recorded in document order, and one that isn't nested can still overlap the
+			# one before it, so only append the bytes past the end of what's already been selected.
+			selected_end = 0
 
 			fragment_map.each do |fragment_name, (offset, length, nested_fragments)|
 				if state.fragments.include?(fragment_name)
 					found = true
 					state.fragments.delete(fragment_name)
 					state.fragments.subtract(nested_fragments)
-					state.buffer << cached_buffer.byteslice(offset, length)
+
+					fragment_end = offset + length
+					next if fragment_end <= selected_end
+
+					start = (offset > selected_end) ? offset : selected_end
+					state.buffer << cached_buffer.byteslice(start, fragment_end - start)
+					selected_end = fragment_end
 				end
 			end
 

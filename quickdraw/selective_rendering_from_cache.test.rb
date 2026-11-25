@@ -386,4 +386,52 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 			assert_equal DuplicateTest.new(cache_store:, cached: true).call(fragments: ["wrapper"]), "<h1>Second</h1>"
 		end
 	end
+
+	class OverlappingTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(key, cache_store:, inner_cache:)
+			@key = key
+			@cache_store = cache_store
+			@inner_cache = inner_cache
+		end
+
+		def view_template
+			if @key
+				cache(@key, @inner_cache) { content }
+			else
+				content
+			end
+		end
+
+		def content
+			fragment("target") do
+				fragment("other") do
+					plain "A"
+					if @key && @inner_cache
+						cache { inner }
+					else
+						inner
+					end
+					plain "C"
+				end
+			end
+		end
+
+		def inner
+			fragment("target") { plain "B" }
+		end
+	end
+
+	test "a fragment that outlives a same-name fragment closing its parent isn't nested in it" do
+		[false, true].each do |inner_cache|
+			cache_store = Phlex::FIFOCacheStore.new
+
+			# Uncached, then cold, then warm (with an inner cache: only the inner cache warm, then both warm).
+			[nil, 1, 2, 2].each do |key|
+				component = OverlappingTest.new(key, cache_store:, inner_cache:)
+				assert_equal component.call(fragments: ["target", "other"]), "ABC"
+			end
+		end
+	end
 end
