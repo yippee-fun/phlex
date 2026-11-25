@@ -47,7 +47,7 @@ class Phlex::FIFOCacheStore
 	end
 
 	# Shared or cyclic containers, identity hashes and core objects carrying
-	# instance variables aren't plain, so the walk is linear and nothing but the
+	# instance variables or singleton methods (which could hook Marshal) aren't plain, so the walk is linear and nothing but the
 	# copy is frozen. It uses its own stack so deep values can't overflow Ruby's.
 	private def plain?(value)
 		seen = {}.compare_by_identity
@@ -58,13 +58,13 @@ class Phlex::FIFOCacheStore
 			when Symbol, Integer, Float, true, false, nil
 				next
 			when String
-				return false unless String.equal?(item.class) && item.instance_variables.empty?
+				return false unless bare?(item, String)
 			when Array
-				return false unless Array.equal?(item.class) && item.instance_variables.empty? && !seen.key?(item)
+				return false unless bare?(item, Array) && !seen.key?(item)
 				seen[item] = true
 				stack.concat(item)
 			when Hash
-				return false unless Hash.equal?(item.class) && item.instance_variables.empty? && item.default.nil? && !item.compare_by_identity? && !seen.key?(item)
+				return false unless bare?(item, Hash) && item.default.nil? && !item.compare_by_identity? && !seen.key?(item)
 				seen[item] = true
 				item.each { |k, v| stack << k << v }
 			else
@@ -73,6 +73,10 @@ class Phlex::FIFOCacheStore
 		end
 
 		true
+	end
+
+	private def bare?(object, klass)
+		klass.equal?(object.class) && object.instance_variables.empty? && object.singleton_methods.empty?
 	end
 
 	private def map_key(value)

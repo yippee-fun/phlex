@@ -161,6 +161,21 @@ class FIFOCacheStoreTest < Quickdraw::Test
 		Object.__send__(:remove_const, :FIFOCacheStoreTestHooked) if Object.const_defined?(:FIFOCacheStoreTestHooked, false)
 	end
 
+	test "core objects with singleton methods are loaded on each hit" do
+		registered = +"registered"
+		String.define_singleton_method(:_load) { |_| registered }
+
+		hooked = +"hooked"
+		hooked.define_singleton_method(:_dump) { |_| "hooked" }
+		store = Phlex::FIFOCacheStore.new
+		store.fetch("singleton") { [hooked] }
+
+		assert store.fetch("singleton") { nil }[0].equal?(registered)
+		refute registered.frozen?
+	ensure
+		String.singleton_class.remove_method(:_load) if String.singleton_class.method_defined?(:_load, false)
+	end
+
 	test "cyclic values and core objects with instance variables are loaded on each hit" do
 		store = Phlex::FIFOCacheStore.new
 
