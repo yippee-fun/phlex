@@ -82,8 +82,10 @@ class Phlex::SGML::State
 	end
 
 	# A cached fragment is nested in the fragments open where its cache is rendered.
-	def refuse_cached_fragment_nested_in_its_own_name(id)
-		refuse_nested_fragment(id) if @open_fragments&.include?(id)
+	def refuse_fragments_nested_in_their_own_names(fragment_map)
+		return unless (open_fragments = @open_fragments)
+
+		fragment_map.each_key { |id| refuse_nested_fragment(id) if open_fragments.include?(id) }
 	end
 
 	private def refuse_nested_fragment(id)

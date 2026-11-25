@@ -425,4 +425,41 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 			assert_equal DuplicateTest.new(cache_store:, cached: true).call(fragments: ["wrapper"]), "<h1>Second</h1>"
 		end
 	end
+
+	class RescuedCacheHitTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(cache_store:, warm_inner: false)
+			@cache_store = cache_store
+			@warm_inner = warm_inner
+		end
+
+		def view_template
+			return inner if @warm_inner
+
+			low_level_cache("outer") do
+				fragment("target") do
+					inner
+				rescue Phlex::ArgumentError
+					plain "rescued"
+				end
+			end
+		end
+
+		def inner
+			low_level_cache("inner") do
+				fragment("before") { plain "A" }
+				fragment("target") { plain "B" }
+			end
+		end
+	end
+
+	test "a cache hit that raises inside an open fragment of the same name records none of its fragments" do
+		cache_store = Phlex::FIFOCacheStore.new
+		assert_equal RescuedCacheHitTest.new(cache_store:, warm_inner: true).call, "AB"
+
+		2.times do
+			assert_equal RescuedCacheHitTest.new(cache_store:).call(fragments: ["before"]), ""
+		end
+	end
 end
