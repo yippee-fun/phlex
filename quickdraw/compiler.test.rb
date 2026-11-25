@@ -282,6 +282,61 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 	end
 
+	test "a literal hash nested in a nested attribute hash is serialised entry by entry" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				div(data: { card: { id: @id, open: true } })
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					__phlex_value_1__ = @id
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("<div").<<(begin
+							__phlex_done_4__ = false
+							if ::String.===(__phlex_value_1__)
+								__phlex_escaped_2__ = (if ((__phlex_value_1__.include?('"') || __phlex_value_1__.include?("<")) || __phlex_value_1__.include?(">"))
+									::Phlex::Compiler.escape_value(__phlex_value_1__)
+								else
+									__phlex_value_1__
+								end)
+							elsif true.===(__phlex_value_1__)
+								__phlex_escaped_2__ = nil
+								__phlex_text_3__ = " data-card-id"
+							elsif __phlex_value_1__
+								if ::Symbol.===(__phlex_value_1__)
+									__phlex_escaped_2__ = ::Phlex::Compiler.symbol_value(__phlex_value_1__)
+								elsif (::Integer.===(__phlex_value_1__) || ::Float.===(__phlex_value_1__))
+									__phlex_escaped_2__ = __phlex_value_1__.to_s
+								else
+									__phlex_escaped_2__ = nil
+									__phlex_text_3__ = ::Phlex::Compiler.nested_attributes(:id, __phlex_value_1__, "data-card-")
+								end
+							else
+								__phlex_escaped_2__ = nil
+								__phlex_text_3__ = ""
+							end
+							__phlex_done_4__ = true
+							""
+						ensure
+							__phlex_state__.buffer.<<("></div>") unless __phlex_done_4__
+						end)
+						if __phlex_escaped_2__
+							__phlex_state__.buffer.<<(' data-card-id="').<<(__phlex_escaped_2__).<<('"')
+						else
+							__phlex_state__.buffer.<<(__phlex_text_3__)
+						end
+						__phlex_state__.buffer.<<(" data-card-open></div>")
+					end
+					nil)
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
 	test "a conditional over literal content fuses into the append" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a
