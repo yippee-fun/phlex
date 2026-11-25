@@ -1517,6 +1517,462 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a component reopened in a file that fails is left uncompiled in the files that compiled" do
+		with_component_files(
+			"split_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleSplitParent < Phlex::HTML
+				end
+			RUBY
+			"split_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleSplit < LifecycleSplitParent
+					def view_template = div { "first" }
+				end
+			RUBY
+			"split_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSplit
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+		) do
+			reports = []
+
+			with_lazy_compilation(on_failure: -> (component, _error) { reports << component }) do
+				assert_equal LifecycleSplit.new.call, "<div>first</div>"
+			end
+
+			assert_equal reports, [LifecycleSplit]
+			refute Phlex::Compiler.compiled?(LifecycleSplit)
+			refute compiled_method?(LifecycleSplit, :view_template)
+			assert_equal LifecycleSplit.instance_variable_get(:@__phlex_inlined__), nil
+			assert LifecycleSplit.private_method_defined?(:delegate)
+
+			LifecycleSplitParent.class_eval { def div(**, &) = plain("parent div") }
+			assert_equal LifecycleSplit.new.call, "parent div"
+		end
+	end
+
+	test "a component that fails to compile partway through is left uncompiled by an explicit compile" do
+		with_component_files(
+			"explicit_split_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleExplicitSplit < Phlex::HTML
+					def view_template = div { heading }
+
+					protected def heading = h1 { "first" }
+				end
+			RUBY
+			"explicit_split_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleExplicitSplit
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+		) do
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleExplicitSplit) }
+			refute Phlex::Compiler.compiled?(LifecycleExplicitSplit)
+			refute compiled_method?(LifecycleExplicitSplit, :view_template)
+			refute compiled_method?(LifecycleExplicitSplit, :heading)
+			assert_equal LifecycleExplicitSplit.instance_variable_get(:@__phlex_inlined__), nil
+			assert LifecycleExplicitSplit.protected_method_defined?(:heading)
+			without_lazy_compilation { assert_equal LifecycleExplicitSplit.new.call, "<div><h1>first</h1></div>" }
+		end
+	end
+
+	test "a parent rolled back with its failing subclass is compiled in full by a sibling" do
+		with_component_files(
+			"rolled_back_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRolledBackParent < Phlex::HTML
+					def heading = h1 { "parent" }
+				end
+
+				class LifecycleRolledBackChild < LifecycleRolledBackParent
+					def view_template = div { heading }
+				end
+			RUBY
+			"rolled_back_child.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRolledBackChild
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+			"rolled_back_parent_footer.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRolledBackParent
+					def footer = footer_element { "footer" }
+
+					private def footer_element(&) = p(&)
+				end
+			RUBY
+			"rolled_back_sibling.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRolledBackSibling < LifecycleRolledBackParent
+					def view_template = heading
+				end
+			RUBY
+		) do
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleRolledBackChild) }
+			refute compiled_method?(LifecycleRolledBackParent, :heading)
+
+			Phlex::Compiler.compile(LifecycleRolledBackSibling)
+			assert Phlex::Compiler.compiled?(LifecycleRolledBackParent)
+			assert LifecycleRolledBackParent.instance_variable_get(:@__phlex_inlined__).include?(:h1)
+		end
+	end
+
+	test "a method_added that raises while rolling back doesn't stop the rollback" do
+		with_component_files(
+			"raising_hook_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRaisingHookParent < Phlex::HTML
+				end
+
+				class LifecycleRaisingHook < LifecycleRaisingHookParent
+					def self.method_added(name)
+						super
+						raise "hook" if @loaded && instance_method(name).source_location[0].end_with?("raising_hook_first.rb")
+					end
+
+					def view_template = div { heading }
+
+					def heading = h1 { "first" }
+				end
+			RUBY
+			"raising_hook_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRaisingHook
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+
+					@loaded = true
+				end
+			RUBY
+		) do
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleRaisingHook) }
+			assert error.message.include?("ruby2_keywords")
+			refute compiled_method?(LifecycleRaisingHook, :view_template)
+			refute compiled_method?(LifecycleRaisingHook, :heading)
+			assert_equal LifecycleRaisingHook.instance_variable_get(:@__phlex_inlined__), nil
+
+			LifecycleRaisingHookParent.class_eval { def h1(**, &) = plain("parent h1") }
+			without_lazy_compilation { assert_equal LifecycleRaisingHook.new.call, "<div>parent h1</div>" }
+		end
+	end
+
+	test "a rollback keeps an inherited method the component only made private following its parent" do
+		with_component_files(
+			"revisibilised.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRevisibilisedParent < Phlex::HTML
+					def helper = h1 { "parent" }
+				end
+
+				class LifecycleRevisibilised < LifecycleRevisibilisedParent
+					private :helper
+
+					def view_template = div { helper }
+				end
+			RUBY
+			"revisibilised_failing.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRevisibilised
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+			"revisibilised_uncompiled.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRevisibilisedUncompiledParent < Phlex::HTML
+					def helper = h1 { "parent" }
+				end
+
+				class LifecycleRevisibilisedUncompiled < LifecycleRevisibilisedUncompiledParent
+					private :helper
+
+					def view_template = div { helper }
+				end
+			RUBY
+		) do
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleRevisibilised) }
+
+			# Whether the child follows the parent's redefinition is Ruby's to decide, so it's compared with a twin never compiled.
+			LifecycleRevisibilisedParent.class_eval { def helper = h2 { "redefined" } }
+			LifecycleRevisibilisedUncompiledParent.class_eval { def helper = h2 { "redefined" } }
+
+			without_lazy_compilation do
+				assert_equal LifecycleRevisibilised.new.call, LifecycleRevisibilisedUncompiled.new.call
+			end
+		end
+	end
+
+	test "a rollback keeps the record of what an earlier compile_file inlined" do
+		with_component_files(
+			"earlier_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleEarlierParent < Phlex::HTML
+				end
+
+				class LifecycleEarlier < LifecycleEarlierParent
+					def view_template = div { "first" }
+				end
+			RUBY
+			"earlier_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleEarlier
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+		) do |(first, _second)|
+			Phlex::Compiler.compile_file(first, components: [LifecycleEarlier])
+			inlined = LifecycleEarlier.instance_variable_get(:@__phlex_inlined__)
+			assert inlined.include?(:div)
+
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleEarlier) }
+			assert compiled_method?(LifecycleEarlier, :view_template)
+			assert_equal LifecycleEarlier.instance_variable_get(:@__phlex_inlined__), inlined
+		end
+	end
+
+	test "a method_added that removes or freezes while rolling back leaves the compilation's error raised" do
+		[:remove, :freeze].each do |meddle|
+			name = "LifecycleMeddlingHook#{meddle.capitalize}"
+
+			with_component_files(
+				"#{meddle}_first.rb" => <<~RUBY,
+					# frozen_string_literal: true
+					class #{name} < Phlex::HTML
+						def self.method_added(name)
+							super
+							return unless @loaded && instance_method(name).source_location[0].end_with?("#{meddle}_first.rb")
+
+							#{(meddle == :remove) ? 'remove_method(name)' : 'freeze'}
+							raise "hook"
+						end
+
+						def view_template = div { heading }
+
+						def heading = h1 { "first" }
+					end
+				RUBY
+				"#{meddle}_second.rb" => <<~RUBY
+					# frozen_string_literal: true
+					class #{name}
+						ruby2_keywords def delegate(*args) = plain(*args)
+						private :delegate
+
+						@loaded = true
+					end
+				RUBY
+			) do
+				component = Object.const_get(name)
+				error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(component) }
+				assert error.message.include?("ruby2_keywords")
+
+				if meddle == :remove
+					assert_equal component.public_instance_methods(false), []
+				else
+					assert component.frozen?
+					assert component.instance_variable_get(:@__phlex_inlined__).include?(:h1)
+				end
+			end
+		end
+	end
+
+	test "a rollback puts back a method reloaded while the compilation ran" do
+		with_component_files(
+			"reloading_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleReloadingParent < Phlex::HTML
+					singleton_class.attr_accessor :reloaded
+
+					def heading = h1 { "parent" }
+				end
+			RUBY
+			"reloading_parent_failing.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleReloadingParent
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+			"reloading_child.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReloadingChild < LifecycleReloadingParent
+					def self.method_added(name)
+						super
+						return if @reloading || !instance_method(name).source_location[0].include?("(compiled")
+
+						@reloading = true
+						load File.join(__dir__, "reloading_parent.rb")
+						LifecycleReloadingParent.reloaded = LifecycleReloadingParent.instance_method(:heading)
+					end
+
+					def view_template = div { heading }
+				end
+			RUBY
+		) do
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleReloadingChild) }
+			assert Phlex::Compiler.compiled?(LifecycleReloadingChild)
+			refute Phlex::Compiler.compiled?(LifecycleReloadingParent)
+			assert_equal LifecycleReloadingParent.instance_method(:heading), LifecycleReloadingParent.reloaded
+		end
+	end
+
+	test "a rollback keeps only the last failed attempt's source maps" do
+		with_component_files(
+			"retried_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRetried < Phlex::HTML
+					def view_template = div { "first" }
+				end
+			RUBY
+			"retried_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRetried
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+		) do |(first, _second)|
+			maps = -> { Phlex.__compiled_source_maps__.count { |_path, generation| generation.path == first } }
+
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleRetried) }
+			# Kept for a render still running a method the rollback replaced.
+			assert_equal maps.(), 1
+
+			2.times do
+				assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleRetried) }
+			end
+
+			assert maps.() <= 1
+			refute Phlex::Compiler::GENERATION_COMPONENTS.any? { |_path, owners| owners.key?(LifecycleRetried) }
+		end
+	end
+
+	test "a class frozen while its file is evaluated keeps the record of what it inlined" do
+		with_component_files(
+			"frozen_midway.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFrozenMidwayParent < Phlex::HTML
+				end
+
+				class LifecycleFrozenMidway < LifecycleFrozenMidwayParent
+					def self.method_added(name)
+						super
+						return unless instance_method(name).source_location[0].include?("(compiled")
+
+						freeze
+						raise "hook"
+					end
+
+					def view_template = div { "first" }
+				end
+			RUBY
+		) do
+			assert_raises(RuntimeError) { Phlex::Compiler.compile(LifecycleFrozenMidway) }
+			assert LifecycleFrozenMidway.frozen?
+			assert compiled_method?(LifecycleFrozenMidway, :view_template)
+			assert LifecycleFrozenMidway.instance_variable_get(:@__phlex_inlined__).include?(:div)
+
+			assert_raises(Phlex::Compiler::Error) do
+				LifecycleFrozenMidwayParent.class_eval { def div(**, &) = plain("parent div") }
+			end
+		end
+	end
+
+	test "compiling a class whose first render failed clears the failure" do
+		with_component_files(
+			"failed_then_compiled.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFailedThenCompiled < Phlex::HTML
+					def view_template = div { "works" }
+				end
+			RUBY
+		) do
+			Sabotage.active = true
+			with_lazy_compilation(on_failure: -> (_component, _error) {}) do
+				assert_equal LifecycleFailedThenCompiled.new.call, "<div>works</div>"
+			ensure
+				Sabotage.active = false
+			end
+			assert Phlex::Compiler::FAILURES.key?(LifecycleFailedThenCompiled)
+
+			Phlex::Compiler.compile(LifecycleFailedThenCompiled)
+			assert compiled_method?(LifecycleFailedThenCompiled, :view_template)
+			refute Phlex::Compiler::FAILURES.key?(LifecycleFailedThenCompiled)
+			assert_equal Phlex::Compiler.explain(LifecycleFailedThenCompiled), []
+		end
+	end
+
+	test "a rollback keeps a visibility changed while the compilation ran" do
+		with_component_files(
+			"revisibled_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRevisibled < Phlex::HTML
+					def view_template = div { "first" }
+				end
+			RUBY
+			"revisibled_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRevisibled
+					private def footer = p { "footer" }
+				end
+			RUBY
+		) do
+			compiling = 0
+			Pause.gate = -> {
+				next unless (compiling += 1) == 2
+
+				LifecycleRevisibled.__send__(:protected, :view_template)
+				Sabotage.active = true
+			}
+
+			assert_raises(RuntimeError) { Phlex::Compiler.compile(LifecycleRevisibled) }
+			refute compiled_method?(LifecycleRevisibled, :view_template)
+			assert LifecycleRevisibled.protected_method_defined?(:view_template)
+		ensure
+			Pause.gate = nil
+			Sabotage.active = false
+		end
+	end
+
+	test "compiling a subclass compiles the ancestors its first render left alone" do
+		with_component_files(
+			"left_alone_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleLeftAloneParent < Phlex::HTML
+					compile false
+
+					def heading = h1 { "parent" }
+				end
+			RUBY
+			"left_alone_child.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleLeftAloneChild < LifecycleLeftAloneParent
+					compile true
+
+					def view_template = div { heading }
+				end
+			RUBY
+		) do
+			with_lazy_compilation { assert_equal LifecycleLeftAloneChild.new.call, "<div><h1>parent</h1></div>" }
+			assert compiled_method?(LifecycleLeftAloneChild, :view_template)
+			refute compiled_method?(LifecycleLeftAloneParent, :heading)
+
+			Phlex::Compiler.compile(LifecycleLeftAloneChild)
+			assert compiled_method?(LifecycleLeftAloneParent, :heading)
+			assert Phlex::Compiler.compiled?(LifecycleLeftAloneParent)
+			assert_equal LifecycleLeftAloneChild.new.call, "<div><h1>parent</h1></div>"
+		end
+	end
+
 	test "the compiler doesn't keep unloaded components alive when nothing forgets them" do
 		skip "Needs a precise garbage collector" unless RUBY_ENGINE == "ruby"
 
