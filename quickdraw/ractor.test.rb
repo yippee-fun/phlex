@@ -229,6 +229,14 @@ class RactorTest < Quickdraw::Test
 			end
 		end
 
+		test "a template defined in another Ractor renders there" do
+			output = in_ractor do
+				Class.new(Phlex::HTML) { def view_template = div { "in a ractor" } }.call
+			end
+
+			assert_equal output, "<div>in a ractor</div>"
+		end
+
 		test "only the main Ractor compiles on first render" do
 			with_component_file(<<~RUBY) do
 				# frozen_string_literal: true

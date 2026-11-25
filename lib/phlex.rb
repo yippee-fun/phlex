@@ -95,8 +95,9 @@ module Phlex
 
 	ATTRIBUTE_CACHE_EXPANSION_MUTEX = Mutex.new
 
+	# Other Ractors size their caches from the main one, which only it can expand.
 	def self.__expand_attribute_cache__(file_path)
-		return unless File.exist?(file_path)
+		return unless __main_ractor__? && File.exist?(file_path)
 
 		ATTRIBUTE_CACHE_EXPANSION_MUTEX.synchronize do
 			unless CACHED_FILES.include?(file_path)
