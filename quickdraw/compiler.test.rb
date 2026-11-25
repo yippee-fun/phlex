@@ -669,6 +669,25 @@ class CompilerTest < Quickdraw::Test
 		assert_equal source.scan('"/components/test.rb"').size, 4
 	end
 
+	test "a kit named after its component was added keeps calling the kit" do
+		kit = Module.new { extend Phlex::Kit }
+		kit.const_set(:Card, Class.new(Phlex::HTML))
+		Object.const_set(:CompilerTestLateKit, kit)
+		component = Class.new(Phlex::HTML) { include kit }
+
+		node = Refract::Converter.new.visit(Prism.parse(<<~RUBY).value).statements.body.first
+			def a
+				Card("Title")
+			end
+		RUBY
+
+		compiled = Phlex::Compiler::MethodCompiler.new(Phlex::Compiler::Environment.new(component), "/components/test.rb").compile(node)
+
+		assert_equal compiled, nil
+	ensure
+		Object.__send__(:remove_const, :CompilerTestLateKit)
+	end
+
 	test "a kit's component is rendered directly" do
 		kit = Object.const_set(:CompilerTestKit, Module.new { extend Phlex::Kit })
 		kit.const_set(:Card, Class.new(Phlex::HTML))

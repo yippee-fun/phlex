@@ -74,8 +74,11 @@ module Phlex::Kit
 				# Defined from a string so they can be called from any Ractor. A named
 				# kit is looked up by its name, as compiled code does, so a reloaded
 				# kit's component is found even from a component that wasn't reloaded.
+				# The path is kept so compiled code can make the same lookup.
 				reference = if (path = Phlex::Kit.named_path(self))
-					["::Object", *[*path, name].map { |constant| "const_get(:#{constant})" }].join(".")
+					path = [*path, name].freeze
+					(@__phlex_component_paths__ ||= {})[name] = path
+					["::Object", *path.map { |constant| "const_get(:#{constant})" }].join(".")
 				elsif name in :BEGIN | :END
 					"::Module.nesting.first.const_get(:#{name})"
 				else

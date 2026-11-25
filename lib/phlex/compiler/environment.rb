@@ -13,6 +13,9 @@ class Phlex::Compiler::Environment
 		Phlex::HTML.instance_method(:doctype).source_location[0],
 	].freeze
 
+	METHOD = Kernel.instance_method(:method)
+	INSTANCE_VARIABLE_GET = Kernel.instance_method(:instance_variable_get)
+	CONST_GET = Module.instance_method(:const_get)
 	KIT_SOURCE_PATH = Phlex::Kit.instance_method(:const_added).source_location[0]
 
 	Element = Data.define(:tag, :void)
@@ -209,8 +212,8 @@ class Phlex::Compiler::Environment
 	# A kit names `BEGIN` and `END` another way, since they can't be written as
 	# constants. The kit's method calls `new` and `render` from its own file,
 	# where no refinement applies, so a file with refinements keeps the call.
-	# It finds the component through the kit's name, which compiled code does
-	# with the same `const_get` calls.
+	# It finds the component through the kit's name if the kit had one when
+	# the method was made, which compiled code does with the same calls.
 	private def resolve_kit_component(name)
 		return if name in :BEGIN | :END
 		return if @refinements.any?
@@ -220,7 +223,23 @@ class Phlex::Compiler::Environment
 		return unless Phlex::Kit === kit && method.source_location&.first == KIT_SOURCE_PATH && method.original_name == name
 		return if overridden_by_descendant?(name, kit)
 
-		(path = Phlex::Kit.named_path(kit)) && [*path, name].freeze
+		return unless (path = INSTANCE_VARIABLE_GET.bind_call(kit, :@__phlex_component_paths__)&.[](name))
+
+		path if own_const_get?(path)
+	end
+
+	# A `const_get` of the module's own could have effects, and arguments are
+	# only evaluated first when they could have effects of their own.
+	private def own_const_get?(path)
+		path.reduce(Object) do |namespace, name|
+			return false unless Module === namespace && METHOD.bind_call(namespace, :const_get).owner.equal?(Module)
+
+			CONST_GET.bind_call(namespace, name, false)
+		end
+
+		true
+	rescue NameError
+		false
 	end
 
 	private def resolve_helper(name)
