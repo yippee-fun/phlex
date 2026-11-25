@@ -264,13 +264,23 @@ module Phlex::Compiler
 		end
 	end
 
-	# Compiles the methods that the given components, by default every loaded
-	# one, define in an already-loaded file.
-	def self.compile_file(path, components: loaded_components, recompile: false, inline: true)
-		unless File.exist?(path)
-			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
-		end
+	# The Ruby the component and its Phlex ancestors compile to, file by file,
+	# as compiling them now would install it. Nothing is compiled, and a
+	# compiled method is generated again from its source.
+	def self.source(component)
+		component!(component)
 
+		ancestors = phlex_ancestors(component)
+
+		ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.filter_map do |path|
+			_parse_result, results, formatting_result = generate(path, components: ancestors, recompile: true, inline: true)
+			"# #{path}\n#{formatting_result.source}" if results
+		end.join("\n")
+	end
+
+	# Parses the file and compiles the components' definitions in it, without
+	# evaluating them. Returns nothing when there's nothing to compile.
+	def self.generate(path, components:, recompile:, inline:)
 		parse_result = Prism.parse(without_byte_order_mark(File.read(path)), filepath: path)
 		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
 		results = file_compiler.compile(Refract::Converter.new.visit(parse_result.value)).reject { |result| result.compiled_snippets.empty? }
@@ -279,7 +289,19 @@ module Phlex::Compiler
 		program = Refract::StatementsNode.new(
 			body: [*file_compiler.usings, *results.map { |result| wrap_in_namespace(result.namespace, result.compiled_snippets) }]
 		)
-		formatting_result = Refract::Formatter.new(starting_line: 2).format_node(program)
+
+		[parse_result, results, Refract::Formatter.new(starting_line: 2).format_node(program)]
+	end
+
+	# Compiles the methods that the given components, by default every loaded
+	# one, define in an already-loaded file.
+	def self.compile_file(path, components: loaded_components, recompile: false, inline: true)
+		unless File.exist?(path)
+			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
+		end
+
+		parse_result, results, formatting_result = generate(path, components:, recompile:, inline:)
+		return unless results
 
 		compiled_path = -"#{path} (compiled #{@generations += 1})"
 

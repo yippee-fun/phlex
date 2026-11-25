@@ -1191,4 +1191,42 @@ class CompilerLifecycleTest < Quickdraw::Test
 			refute compiled_method?(LifecycleDisabled, :view_template)
 		end
 	end
+
+	test "source returns the Ruby a component compiles to, without compiling it" do
+		with_component_files(
+			"source.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSource < Phlex::HTML
+					def view_template = div(class: "card") { "source" }
+
+					def helper = "not compiled"
+				end
+			RUBY
+		) do |(path)|
+			source = Phlex::Compiler.source(LifecycleSource)
+
+			refute compiled_method?(LifecycleSource, :view_template)
+			assert source.start_with?("# #{path}\n")
+			assert source.include?("class LifecycleSource")
+			assert source.include?("def view_template")
+			assert source.include?(%(<div class="card">source</div>))
+			refute source.include?("def helper")
+
+			Phlex::Compiler.compile(LifecycleSource)
+			assert_equal Phlex::Compiler.source(LifecycleSource), source
+		end
+	end
+
+	test "source is empty when nothing would be compiled" do
+		with_component_files(
+			"nothing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleNothingToSource < Phlex::HTML
+					def label = "plain Ruby"
+				end
+			RUBY
+		) do
+			assert_equal Phlex::Compiler.source(LifecycleNothingToSource), ""
+		end
+	end
 end
