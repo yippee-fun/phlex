@@ -37,6 +37,7 @@ module Phlex::Compiler
 			@appends = 0
 			@guarded_blocks = 0
 			@compiling_calls = true
+			@method_locals = Set.new
 		end
 
 		# Returns nil when there's nothing to compile, unless the method is being
@@ -91,7 +92,9 @@ module Phlex::Compiler
 		visit Refract::DefNode do |node|
 			return node unless @stack.size == 1
 
-			if (reserved = (LocalsScanner.names(node) | BareCallScanner.names(node)).find { |name| name.start_with?("__phlex_") })
+			@method_locals = LocalsScanner.names(node)
+
+			if (reserved = (@method_locals | BareCallScanner.names(node)).find { |name| name.start_with?("__phlex_") })
 				@diagnostics.refuse(node, "#{reserved} is a name the compiler reserves for locals; names starting with __phlex_ can't be used")
 				return node
 			end
@@ -468,6 +471,8 @@ module Phlex::Compiler
 				[]
 			in Refract::BlockNode[parameters: nil, body: nil]
 				[]
+			in Refract::BlockNode => block if element && (rewritten = without_self_parameter(block))
+				compile_content(node.copy(block: rewritten), element:)
 			in Refract::BlockNode => block if inlinable?(block)
 				case block.body
 				in Refract::StatementsNode[body:] if returns_nil?(body.last)
@@ -525,6 +530,24 @@ module Phlex::Compiler
 
 		private def yield_content(block)
 			call(nil, :__yield_content__, block:)
+		end
+
+		# An element's block whose only parameter is the element's receiver, with
+		# the elements called on the parameter called bare instead. A bare call
+		# with no arguments would read a local of the same name, so a name the
+		# method uses as a local is left alone.
+		private def without_self_parameter(block)
+			return unless block.body && block.parameters in Refract::BlockParametersNode[
+				locals: [],
+				parameters: Refract::ParametersNode[requireds: [Refract::RequiredParameterNode => parameter], optionals: [], rest: nil, posts: [], keywords: [], keyword_rest: nil, block: nil],
+			]
+
+			body = SelfParameter.rewrite(block.body, parameter.name) do |name|
+				@environment.public_element(name) && !@method_locals.include?(name)
+			end
+
+			rewritten = body && block.copy(parameters: nil, body:)
+			rewritten if rewritten && inlinable?(rewritten)
 		end
 
 		private def inlinable?(block)
