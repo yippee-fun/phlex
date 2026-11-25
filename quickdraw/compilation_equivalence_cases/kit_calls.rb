@@ -28,6 +28,17 @@ module EquivalenceCases
 				end
 			end
 
+			class Secret < Phlex::HTML
+				def view_template = plain("secret")
+			end
+
+			private_constant :Secret
+
+			class Swappable < Phlex::HTML
+				def initialize(*) = nil
+				def view_template = plain("swappable 1")
+			end
+
 			module Nested
 				class Badge < Phlex::HTML
 					def initialize(label) = @label = label
@@ -49,6 +60,23 @@ module EquivalenceCases
 
 			def initialize(raising: false)
 				@raising = raising
+				@log = []
+			end
+
+			# Replaces the component, as a reloader might, while the arguments are evaluated.
+			private def swap
+				version = (Components.const_get(:Swappable).new.call == "swappable 1") ? 2 : 1
+				Components.__send__(:remove_const, :Swappable)
+				Components.const_set(:Swappable, Class.new(Phlex::HTML) {
+					define_method(:initialize) { |*| nil }
+					define_method(:view_template) { plain "swappable #{version}" }
+				})
+				nil
+			end
+
+			private def title_for(name)
+				@log << name
+				name.to_s
 			end
 
 			def view_template(&block)
@@ -63,6 +91,9 @@ module EquivalenceCases
 				plain value.inspect
 				Card("Forwarded", &block)
 				Card("Lambda", &-> (_card) { plain "from lambda" })
+				Secret()
+				Swappable(swap)
+				Card(title_for(:a), tone: title_for(:b)) { plain @log.join(",") }
 				Failing() if @raising
 			rescue ArgumentError => error
 				plain "rescued #{error.message}"

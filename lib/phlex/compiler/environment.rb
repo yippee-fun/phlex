@@ -49,8 +49,9 @@ class Phlex::Compiler::Environment
 
 	# With `inline: false` nothing is recognised, so every method compiles to
 	# its original definition. Used to restore a class before it's frozen.
-	def initialize(component, standard_set: standard_set_on?(component), method_resolver: Phlex::UNBOUND_INSTANCE_METHOD_METHOD.method(:bind_call), inline: true)
+	def initialize(component, standard_set: standard_set_on?(component), method_resolver: Phlex::UNBOUND_INSTANCE_METHOD_METHOD.method(:bind_call), refinements: [], inline: true)
 		@component = component
+		@refinements = refinements
 		@standard_set = standard_set
 		@method_resolver = method_resolver
 		@inline = inline
@@ -175,24 +176,40 @@ class Phlex::Compiler::Environment
 		Element.new(tag:, void: registry.void_elements.key?(name))
 	end
 
-	# A kit names `BEGIN` and `END` another way, since they can't be written as constants.
+	# A kit names `BEGIN` and `END` another way, since they can't be written as
+	# constants. The kit's method calls `new` and `render` from its own file,
+	# where no refinement applies, so a file with refinements keeps the call.
 	private def resolve_kit_component(name)
 		return if name in :BEGIN | :END
+		return if @refinements.any?
 		return unless (method = instance_method(name))
 
 		kit = method.owner
 		return unless Phlex::Kit === kit && method.source_location&.first == KIT_SOURCE_PATH && method.original_name == name
 		return unless (kit_name = kit.name) && named?(kit, kit_name)
-
-		return unless kit.const_defined?(name, false)
 		return if overridden_by_descendant?(name, kit)
 
-		"#{kit_name}::#{name}"
+		path = "#{kit_name}::#{name}"
+		path if public_path?(path)
 	end
 
 	# Whether the constant path finds the module, so compiled code can name it.
 	private def named?(mod, name)
 		Object.const_get(name).equal?(mod)
+	rescue NameError
+		false
+	end
+
+	# Whether every constant on the path is public, since the kit's method
+	# reaches its component lexically, where a private constant is visible.
+	private def public_path?(path)
+		path.split("::").reduce(Object) do |namespace, name|
+			return false unless Module === namespace && namespace.constants.include?(name.to_sym)
+
+			namespace.const_get(name, false)
+		end
+
+		true
 	rescue NameError
 		false
 	end

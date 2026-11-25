@@ -225,15 +225,44 @@ module Phlex::Compiler
 		end
 
 		# A kit's method renders a new component with the arguments it's given
-		# and passes its block on, so it's called that way directly.
+		# and passes its block on, so it's called that way directly. The method
+		# looks the component up after its arguments are evaluated, so unless
+		# they're pure they're evaluated into locals first. A splat converts its
+		# value as the arguments are evaluated, and a block argument as the
+		# method is called, so those are only taken when that can't be seen.
 		private def compile_kit_call(node, component)
 			return unless @environment.helper?(:render)
+			return unless node.block in nil | Refract::BlockNode | Refract::BlockArgumentNode[expression: nil | Refract::SymbolNode]
+
+			arguments = node.arguments&.arguments || []
+			hoisted = []
+
+			unless arguments.all? { |argument| pure?(argument) }
+				return unless arguments.all? { |argument| hoistable_argument?(argument) }
+
+				arguments = arguments.map do |argument|
+					case argument
+					in Refract::KeywordHashNode
+						argument.copy(elements: argument.elements.map { |assoc| assoc.copy(value: hoisted_local(attribute_value(assoc), hoisted)) })
+					else
+						hoisted_local(argument, hoisted)
+					end
+				end
+			end
 
 			# Counted as compiled output, so a block it's in is only used with self unchanged.
 			@appends += 1
 			@environment.inlined.merge([node.name, :render])
-			new_component = Refract::CallNode.new(receiver: constant(component), name: :new, arguments: node.arguments)
-			visit(call(nil, :render, new_component, block: node.block))
+			new_component = Refract::CallNode.new(receiver: constant(component), name: :new, arguments: arguments.empty? ? nil : Refract::ArgumentsNode.new(arguments:))
+			statements([*hoisted, visit(call(nil, :render, new_component, block: node.block))])
+		end
+
+		private def hoistable_argument?(argument)
+			case argument
+			in Refract::SplatNode | Refract::BlockArgumentNode | Refract::ForwardingArgumentsNode then false
+			in Refract::KeywordHashNode then argument.elements.all? { |assoc| assoc in Refract::AssocNode[key: Refract::SymbolNode | Refract::StringNode] }
+			else true
+			end
 		end
 
 		# The runtime closes the element however its content exits, which the
