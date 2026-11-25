@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "compiler_helper"
 
 class RactorTest < Quickdraw::Test
+	include CompilerHelper
+
 	class Example < Phlex::HTML
 		register_element :trix_editor
 
@@ -64,6 +67,18 @@ class RactorTest < Quickdraw::Test
 			File.write(path, source)
 			load path
 			yield
+		end
+	end
+
+	if defined?(::Ractor)
+		test "a component defined in another Ractor once something has compiled leaves the compiler alone" do
+			Phlex::Compiler.compile(Example)
+
+			output = in_ractor do
+				Class.new(Phlex::HTML) { def label = "in a ractor" }.new.label
+			end
+
+			assert_equal output, "in a ractor"
 		end
 	end
 
@@ -223,16 +238,13 @@ class RactorTest < Quickdraw::Test
 					def view_template = div(class: "lazy") { "lazy" }
 				end
 			RUBY
-				Phlex::Compiler.enable!
-				begin
+				with_lazy_compilation do
 					assert_equal in_ractor { RactorLazy.call }, %(<div class="lazy">lazy</div>)
 					refute Phlex::Compiler.compiled?(RactorLazy)
 
 					RactorLazy.call
 					assert Phlex::Compiler.compiled?(RactorLazy)
 					assert_equal in_ractor { RactorLazy.call }, %(<div class="lazy">lazy</div>)
-				ensure
-					Phlex::Compiler.disable!
 				end
 			end
 		end

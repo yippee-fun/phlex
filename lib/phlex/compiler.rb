@@ -4,11 +4,16 @@ require "prism"
 require "refract"
 
 # Rewrites component methods ahead of time so that element calls become direct
-# buffer appends. Compilation is opt-in and safe to skip: an uncompiled
-# component renders exactly the same, just slower.
+# buffer appends. Compilation is safe to skip: an uncompiled component
+# renders exactly the same, just slower.
 #
-# Use `Phlex::Compiler.compile(component)` to compile a class, or
-# `Phlex::Compiler.enable!` to compile each class on its first render.
+# Each class compiles on its first render unless it, or its nearest ancestor
+# that says, says `compile false`; `Phlex::Compiler.disable!` stops all of it.
+# Use `Phlex::Compiler.compile(component)` to compile a class whatever it says.
+# `Phlex::Compiler.precompile(component)` compiles a class the way its first
+# render would, before forking or starting Ractors, and
+# `Phlex::Compiler.forget(component)` drops what that recorded once a code
+# reloader has unloaded it.
 # `Phlex::Compiler.explain(component)` lists what's left to the runtime and why.
 #
 # A component's live methods say which files and lines define them. Each file
@@ -89,8 +94,15 @@ module Phlex::Compiler
 
 	MUTEX = Mutex.new
 
+	# compiled path => the components whose methods that generation compiled,
+	# held weakly so a reloaded class that's never forgotten can be collected
+	GENERATION_COMPONENTS = {}
+
 	# component => the exception that stopped it compiling on first render
 	FAILURES = {}.compare_by_identity
+
+	# component => true, for each forgotten component a generation still waits on
+	FORGOTTEN = ObjectSpace::WeakMap.new
 
 	DEFAULT_FAILURE_HANDLER = lambda do |component, error|
 		warn "Phlex::Compiler couldn't compile #{component}, so it renders uncompiled: #{error.class}: #{error.message}\n\t#{error.backtrace&.first(5)&.join("\n\t")}"
@@ -102,7 +114,7 @@ module Phlex::Compiler
 	# Bindings handed over by compiler/scope.rb as it's loaded.
 	SCOPES = []
 
-	@enabled = false
+	@enabled = true
 	@recompiling = false
 	@generations = 0
 	@on_failure = DEFAULT_FAILURE_HANDLER
@@ -136,51 +148,126 @@ module Phlex::Compiler
 		buffer
 	end
 
-	# Compile each component on its first render. A component that fails to
-	# compile is reported to `on_failure` once and keeps rendering uncompiled,
-	# so a compiler bug costs speed, never a page.
+	# Components compile on their first render unless the class, or the
+	# nearest ancestor that says, says `compile false`. This is on by default.
+	# A component that fails to compile is reported to `on_failure` once and
+	# keeps rendering uncompiled, so a compiler bug costs speed, never a page.
 	#
 	# Only the main Ractor compiles. Other Ractors render a component as they
 	# find it, without waiting for a compilation in progress, so compile with
-	# `Phlex::Compiler.compile` before starting them.
+	# `Phlex::Compiler.precompile` before starting them. Nor do they recompile
+	# what inlined an element or helper they redefine on a class.
 	def self.enable!(on_failure: DEFAULT_FAILURE_HANDLER)
-		# Prepended under the lock, so it isn't taken for a change to what's been
-		# inlined: it only compiles a component before rendering it as before.
-		MUTEX.synchronize { Phlex::SGML.prepend(LazyCompilation) } unless Phlex::SGML < LazyCompilation
 		@on_failure = on_failure
 		@enabled = true
 	end
 
+	# Stops every component compiling on its first render, whatever its class says.
 	def self.disable!
 		@enabled = false
 	end
 
+	# The compiler's own state on a class is read and written directly, so a
+	# class overriding instance variable reflection can't change it.
+	IVAR_GET = Kernel.instance_method(:instance_variable_get)
+	IVAR_SET = Kernel.instance_method(:instance_variable_set)
+	IVAR_DEFINED = Kernel.instance_method(:instance_variable_defined?)
+	REMOVE_IVAR = Kernel.instance_method(:remove_instance_variable)
+	FROZEN = Kernel.instance_method(:frozen?)
+
 	def self.compiled?(component)
-		component.instance_variable_get(:@__phlex_compiled__) == true
+		IVAR_GET.bind_call(component, :@__phlex_compiled__) == true
 	end
 
-	# Runs on every render, so a component that's compiled, or failed to,
-	# returns without the lock, and doesn't wait for another to compile. The
+	# Runs on every render, so a component that's compiled, failed to, can't
+	# be or says not to returns without the lock, and doesn't wait for another
+	# to compile. A render the compiler itself causes, such as by autoloading
+	# a class that's precompiled as it loads, is left to the next one. The
 	# check is repeated under the lock, so two first renders racing each other
 	# still compile and report once. A render that starts during a
 	# recompilation takes the lock, and so waits for the new methods. The
 	# handler runs outside it, since it may well render something.
-	def self.compile_on_first_render(component)
+	def self.compile_on_first_render(component, on_failure: @on_failure)
 		return unless Phlex.__main_ractor__?
-		return if !@recompiling && (compiled?(component) || FAILURES.key?(component))
+		# A recompilation replaces methods even while disabled, so a render still waits for it.
+		return unless @enabled || @recompiling
+		return if !@recompiling && settled?(component)
+		# Reached from inside a compilation, such as by a class it autoloads.
+		return if MUTEX.owned?
 
 		error = MUTEX.synchronize do
-			return if compiled?(component) || FAILURES.key?(component)
+			return if !@enabled || settled?(component)
+
+			failed = []
 
 			begin
-				compile_ancestry(component)
+				compile_ancestry(component, only: COMPILES_ON_FIRST_RENDER, failed:)
 				nil
-			rescue StandardError, ScriptError => e
-				FAILURES[component] = e
+			rescue StandardError, ScriptError, SystemStackError => e
+				failed << component unless compiled?(component)
+				failed.each { |klass| FAILURES[klass] = e }
+				e
 			end
 		end
 
-		@on_failure.call(component, error) if error
+		on_failure.call(component, error) if error
+	end
+
+	# Phlex's own setting, even where a class defines a compile? of its own.
+	COMPILE = Phlex::SGML.singleton_class.instance_method(:compile?)
+
+	# An ancestor whose file failed isn't tried again for each of its subclasses.
+	COMPILES_ON_FIRST_RENDER = -> (ancestor) { COMPILE.bind_call(ancestor) && !FAILURES.key?(ancestor) }
+
+	def self.settled?(component)
+		compiled?(component) || FAILURES.key?(component) || FROZEN.bind_call(component) || !COMPILE.bind_call(component)
+	end
+
+	# Compiles the component as its first render would: unless it says
+	# `compile false`, and reporting a failure to the handler once, which
+	# leaves it rendering uncompiled. Use it before forking or starting Ractors.
+	def self.precompile(component, on_failure: @on_failure)
+		component!(component)
+
+		compile_on_first_render(component, on_failure:)
+	end
+
+	# Drops what compiling the components recorded once a code reloader has
+	# unloaded them: why they failed to compile, and the source maps of the
+	# generations their methods were compiled into. A generation's map is kept
+	# until each class that could run its methods, its owners and their
+	# subclasses, has been forgotten. Pass every unloaded component at once.
+	def self.forget(*components)
+		components.each { |component| component!(component) }
+
+		if (loaded = components.select { |component| live?(component) }).any?
+			raise ArgumentError, "Can't forget #{loaded.join(', ')} because #{loaded.one? ? "it's" : "they're"} still loaded."
+		end
+
+		MUTEX.synchronize do
+			components.each do |component|
+				FAILURES.delete(component)
+				FORGOTTEN[component] = true
+			end
+
+			forgotten = -> (owner) { FORGOTTEN.key?(owner) && descendants_of(owner).all? { |descendant| FORGOTTEN.key?(descendant) } }
+
+			compiled_paths = GENERATION_COMPONENTS.filter_map do |path, owners|
+				done = owners.keys.select(&forgotten)
+				done.each { |owner| owners.delete(owner) }
+				path if owners.keys.empty?
+			end
+
+			compiled_paths.each { |path| GENERATION_COMPONENTS.delete(path) }
+			Phlex.__remove_compiled_source_maps__(compiled_paths) if compiled_paths.any?
+
+			# Only what a remaining generation could still be waiting on is remembered.
+			waiting = {}.compare_by_identity
+			GENERATION_COMPONENTS.each_value do |owners|
+				owners.keys.each { |owner| [owner, *descendants_of(owner)].each { |klass| waiting[klass] = true } }
+			end
+			FORGOTTEN.keys.each { |component| FORGOTTEN.delete(component) unless waiting.key?(component) }
+		end
 	end
 
 	# Compiles the methods of the component and its Phlex ancestors wherever
@@ -191,36 +278,57 @@ module Phlex::Compiler
 		MUTEX.synchronize { compile_ancestry(component) }
 	end
 
-	def self.compile_ancestry(component)
-		return if component.frozen? || compiled?(component)
+	# On first render, an ancestor that says `compile false` is left alone.
+	def self.compile_ancestry(component, only: nil, failed: [])
+		return if FROZEN.bind_call(component) || compiled?(component)
 
-		ancestors = phlex_ancestors(component).reject { |ancestor| ancestor.frozen? || compiled?(ancestor) }
+		ancestors = phlex_ancestors(component).reject { |ancestor| FROZEN.bind_call(ancestor) || compiled?(ancestor) }
+		ancestors.select!(&only) if only
 		components = ancestors.select { |ancestor| live?(ancestor) }
 
-		components.flat_map { |ancestor| defining_files(ancestor) }.uniq.each do |path|
+		files = components.to_h { |ancestor| [ancestor, defining_files(ancestor)] }.compare_by_identity
+		compiled_paths = []
+
+		files.values.flatten.uniq.each do |path|
 			compile_file(path, components:)
+			compiled_paths << path
+		rescue StandardError, ScriptError, SystemStackError
+			failed.concat(components.select { |ancestor| files[ancestor].include?(path) })
+
+			# One whose files all compiled has compiled methods, so it's marked compiled.
+			ancestors.each do |ancestor|
+				next if failed.include?(ancestor) || !(files[ancestor] || []).all? { |file| compiled_paths.include?(file) }
+
+				IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true)
+			end
+
+			raise
 		end
 
-		ancestors.each { |ancestor| ancestor.instance_variable_set(:@__phlex_compiled__, true) }
+		ancestors.each { |ancestor| IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true) }
 	end
 
 	# Why parts of the files defining the component and its Phlex ancestors are
 	# left to the runtime, as Diagnostics::Diagnostic records in file order.
-	# Nothing is compiled; an already compiled method is reported as such.
+	# Nothing is compiled, and a compiled method is explained from its source
+	# as it was before compiling.
 	def self.explain(component)
 		component!(component)
 
 		ancestors = phlex_ancestors(component)
 
-		failures = ancestors.filter_map do |ancestor|
-			next unless (error = FAILURES[ancestor])
+		# A failure is recorded on each class whose file failed, so it's explained
+		# on the ancestor furthest up.
+		failed = ancestors.select { |ancestor| FAILURES.key?(ancestor) }.reverse.uniq { |ancestor| FAILURES[ancestor].object_id }.reverse
 
+		failures = failed.map do |ancestor|
+			error = FAILURES[ancestor]
 			Diagnostics::Diagnostic.new(path: constant_source_path(ancestor), line: nil, message: "compiling #{ancestor} raised #{error.class}: #{error.message}")
 		end
 
 		failures + ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.flat_map do |path|
 			diagnostics = Diagnostics.new(path, strict: false)
-			FileCompiler.new(path, targets: targets(path, ancestors), diagnostics:).compile(parse(File.read(path), path))
+			FileCompiler.new(path, targets: targets(path, ancestors, recompile: true), diagnostics:, recompile: true).compile(parse(File.read(path), path))
 			diagnostics.to_a
 		end
 	end
@@ -228,6 +336,8 @@ module Phlex::Compiler
 	# Compiles the methods that the given components, by default every loaded
 	# one, define in an already-loaded file.
 	def self.compile_file(path, components: loaded_components, recompile: false, inline: true)
+		return MUTEX.synchronize { compile_file(path, components:, recompile:, inline:) } unless MUTEX.owned?
+
 		unless File.exist?(path)
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
@@ -249,6 +359,10 @@ module Phlex::Compiler
 			lines[generated_line] = original_line if original_line
 		end
 
+		owners = ObjectSpace::WeakMap.new
+		results.each { |result| owners[result.component] = true }
+		GENERATION_COMPONENTS[compiled_path] = owners
+
 		# Added before the methods exist, so nothing running them finds a line unmapped.
 		Phlex.__add_compiled_source_map__(compiled_path, Generation.new(path: -path, lines: lines.freeze))
 
@@ -266,14 +380,14 @@ module Phlex::Compiler
 				result.component.__send__(visibility, name) unless visibility == :public
 			end
 
-			inlined = result.component.instance_variable_get(:@__phlex_inlined__) || Set.new
-			result.component.instance_variable_set(:@__phlex_inlined__, (inlined | result.inlined).freeze)
+			inlined = IVAR_GET.bind_call(result.component, :@__phlex_inlined__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined__, (inlined | result.inlined).freeze)
 
-			inlined_svg = result.component.instance_variable_get(:@__phlex_inlined_svg__) || Set.new
-			result.component.instance_variable_set(:@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
+			inlined_svg = IVAR_GET.bind_call(result.component, :@__phlex_inlined_svg__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
 
-			inlined_super = result.component.instance_variable_get(:@__phlex_inlined_super__) || Set.new
-			result.component.instance_variable_set(:@__phlex_inlined_super__, (inlined_super | result.inlined_super).freeze)
+			inlined_super = IVAR_GET.bind_call(result.component, :@__phlex_inlined_super__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined_super__, (inlined_super | result.inlined_super).freeze)
 		end
 
 		nil
@@ -287,23 +401,35 @@ module Phlex::Compiler
 	# on Phlex::SVG is recompiled too. An override on a single instance can't
 	# be compiled for, so it's refused.
 	def self.inlining_changed(target, names)
-		return if Phlex.__main_ractor__? && MUTEX.owned?
+		if Phlex.__main_ractor__?
+			return if MUTEX.owned?
 
-		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
+			# A compilation in progress records what it inlined once it's installed.
+			MUTEX.synchronize { nil } if MUTEX.locked?
+		else
+			# Another Ractor can't recompile a class, only refuse an instance override.
+			return unless target.singleton_class?
+		end
+
+		# Another Ractor can't share the main one's reflection, so it takes its own.
+		ivar_get = Phlex.__main_ractor__? ? IVAR_GET : Kernel.instance_method(:instance_variable_get)
+
+		ancestors = Phlex.__main_ractor__? ? ANCESTORS.bind_call(target) : target.ancestors
+		related = target.singleton_class? ? ancestors : ancestors + descendants_of(target)
 		affected = related.select do |klass|
-			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
+			(inlined = ivar_get.bind_call(klass, :@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end
 
 		# Where `super` goes from a class's own method only changes above it.
 		unless target.singleton_class?
 			affected |= [target, *descendants_of(target)].select do |klass|
-				(inlined = klass.instance_variable_get(:@__phlex_inlined_super__)) && names.any? { |name| inlined.include?(name) }
+				(inlined = ivar_get.bind_call(klass, :@__phlex_inlined_super__)) && names.any? { |name| inlined.include?(name) }
 			end
 		end
 
 		if !target.singleton_class? && Phlex::SVG <= target
 			affected |= loaded_components.select do |klass|
-				(inlined = klass.instance_variable_get(:@__phlex_inlined_svg__)) && names.any? { |name| inlined.include?(name) }
+				(inlined = ivar_get.bind_call(klass, :@__phlex_inlined_svg__)) && names.any? { |name| inlined.include?(name) }
 			end
 		end
 
@@ -313,7 +439,7 @@ module Phlex::Compiler
 			raise Error, "#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling."
 		end
 
-		if (frozen = affected.select(&:frozen?)).any?
+		if (frozen = affected.select { |klass| FROZEN.bind_call(klass) }).any?
 			raise Error, "#{names.join(', ')} can't be redefined: #{frozen.join(', ')} compiled it inline and was frozen without Phlex::SGML.freeze restoring it."
 		end
 
@@ -325,9 +451,9 @@ module Phlex::Compiler
 		MUTEX.synchronize do
 			# Its subclasses render the methods being replaced too.
 			@recompiling = true
-			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
-			component.remove_instance_variable(:@__phlex_inlined_svg__) if component.instance_variable_defined?(:@__phlex_inlined_svg__)
-			component.remove_instance_variable(:@__phlex_inlined_super__) if component.instance_variable_defined?(:@__phlex_inlined_super__)
+			REMOVE_IVAR.bind_call(component, :@__phlex_inlined__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined__)
+			REMOVE_IVAR.bind_call(component, :@__phlex_inlined_svg__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined_svg__)
+			REMOVE_IVAR.bind_call(component, :@__phlex_inlined_super__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined_super__)
 
 			defining_files(component).each do |path|
 				compile_file(path, components: [component], recompile: true, inline:)
@@ -379,14 +505,28 @@ module Phlex::Compiler
 
 	# Whether the class is still the one its name refers to. After a reload the
 	# old class object lingers, and reopening its name would reach the new one.
+	# A constant waiting to be autoloaded isn't loaded, so it's never the class.
 	def self.live?(component)
-		(name = component.name) && Object.const_get(name).equal?(component)
+		return false unless (name = NAME.bind_call(component))
+
+		name.split("::").reduce(Object) do |namespace, constant|
+			return false unless Module === namespace && CONST_DEFINED.bind_call(namespace, constant, false) && !AUTOLOAD.bind_call(namespace, constant, false)
+
+			CONST_GET.bind_call(namespace, constant, false)
+		end.equal?(component)
 	rescue NameError
 		false
 	end
 
+	# Module's reflection is called directly, so a class overriding name can't
+	# pass for another, nor a namespace hide or invent its constants.
+	NAME = Module.instance_method(:name)
+	CONST_DEFINED = Module.instance_method(:const_defined?)
+	AUTOLOAD = Module.instance_method(:autoload?)
+	CONST_GET = Module.instance_method(:const_get)
+
 	def self.phlex_ancestors(component)
-		component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }
+		ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }
 	end
 
 	def self.loaded_components
@@ -409,10 +549,10 @@ module Phlex::Compiler
 	# target.
 	def self.targets(path, components, recompile: false)
 		components.each_with_object({}) do |component, targets|
-			next if component.frozen? || !live?(component)
+			next if FROZEN.bind_call(component) || !live?(component)
 
 			own_methods(component).each do |name|
-				method = component.instance_method(name)
+				method = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
 				next unless method.original_name == name && (location = method.source_location)
 
 				source_path, line = location
@@ -443,6 +583,8 @@ module Phlex::Compiler
 	# Module's own method listings, called directly so a class overriding them
 	# can't change what the compiler sees.
 	METHOD_LISTS = [:instance_methods, :private_instance_methods, :protected_instance_methods].map { |list| Module.instance_method(list) }.freeze
+	METHOD_DEFINED = [:method_defined?, :private_method_defined?, :protected_method_defined?].map { |check| Module.instance_method(check) }.freeze
+	ANCESTORS = Module.instance_method(:ancestors)
 
 	# The aliases, in the component or a descendant, that share a body with
 	# the component's method, as [owner, name] pairs. A descendant isn't being
@@ -467,26 +609,26 @@ module Phlex::Compiler
 	# The methods the component defines itself. `initialize` runs before the
 	# component has any state to render into.
 	def self.own_methods(component)
-		names = component.instance_methods(false) + component.private_instance_methods(false) + component.protected_instance_methods(false) - [:initialize]
+		names = METHOD_LISTS.flat_map { |list| list.bind_call(component, false) } - [:initialize]
 		names.reject { |name| revisibilised?(component, name) }
 	end
 
 	# Changing the visibility of an inherited method lists it on the component,
 	# with the component as its owner, but its source is still the ancestor's.
 	def self.revisibilised?(component, name)
-		location = component.instance_method(name).source_location
+		location = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name).source_location
 
-		component.ancestors.any? do |ancestor|
+		ANCESTORS.bind_call(component).any? do |ancestor|
 			next false if ancestor.equal?(component)
 
-			defined = ancestor.method_defined?(name, false) || ancestor.private_method_defined?(name, false) || ancestor.protected_method_defined?(name, false)
-			defined && ancestor.instance_method(name).source_location == location
+			defined = METHOD_DEFINED.any? { |check| check.bind_call(ancestor, name, false) }
+			defined && Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(ancestor, name).source_location == location
 		end
 	end
 
 	def self.defining_files(component)
 		paths = own_methods(component).filter_map do |name|
-			source_path = component.instance_method(name).source_location&.first
+			source_path = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name).source_location&.first
 			Phlex.__compiled_source_maps__[source_path]&.path || source_path
 		end
 		paths << constant_source_path(component)
@@ -498,7 +640,7 @@ module Phlex::Compiler
 	def self.constant_source_path(component)
 		return unless live?(component)
 
-		Object.const_source_location(component.name)&.first
+		Object.const_source_location(NAME.bind_call(component))&.first
 	end
 
 	def self.component!(component)
@@ -575,14 +717,6 @@ module Phlex::Compiler
 			in Refract::ClassNode then scope.copy(body: wrapped, superclass: nil)
 			in Refract::ModuleNode then scope.copy(body: wrapped)
 			end
-		end
-	end
-
-	module LazyCompilation
-		def internal_call(...)
-			Phlex::Compiler.compile_on_first_render(self.class) if Phlex::Compiler.enabled?
-
-			super
 		end
 	end
 end

@@ -41,6 +41,38 @@ jobs:
         # Without fork, config.browser runs only Chromium, and --browser needs several.
         run: bundle exec qd all ${{ !startsWith(matrix.ruby-version, 'truffleruby') && '--browser chromium' || '' }}
 
+  # The suite compiles components on first render by default, so this runs it
+  # with the compiler off.
+  uncompiled:
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby-version:
+          - "3.3"
+          - "4.0"
+
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby-version }}
+          bundler-cache: false
+
+      - name: Install dependencies
+        run: |
+          bundle install --jobs 4
+
+      - name: Install Chromium for browser tests
+        run: bundle exec qd browser install chromium
+
+      - name: Quickdraw Tests
+        env:
+          PHLEX_COMPILER: "false"
+        run: bundle exec qd all --browser chromium
+
   native:
     strategy:
       fail-fast: false

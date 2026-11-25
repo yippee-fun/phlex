@@ -1,12 +1,22 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "weakref"
+require "compiler_helper"
 
 class CompilerLifecycleTest < Quickdraw::Test
+	include CompilerHelper
+
 	Phlex::Compiler
 
 	def compiled_method?(component, name)
 		Phlex.__compiled_source_maps__.key?(component.instance_method(name).source_location[0])
+	end
+
+	# Until the thread finishes or waits on a lock, for at most five seconds.
+	def wait_until_blocked(thread)
+		deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+		Thread.pass until !thread.alive? || thread.backtrace&.first(3)&.any? { |line| line.include?("synchronize") } || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
 	end
 
 	def with_component_files(files)
@@ -90,8 +100,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 				end
 			RUBY
 		) do
-			Phlex::Compiler.enable!
-			begin
+			with_lazy_compilation do
 				LifecycleWaits.call
 				assert Phlex::Compiler.compiled?(LifecycleWaits)
 
@@ -116,7 +125,6 @@ class CompilerLifecycleTest < Quickdraw::Test
 			ensure
 				Pause.gate = nil
 				release&.<< true
-				Phlex::Compiler.disable!
 			end
 		end
 	end
@@ -130,8 +138,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 				end
 			RUBY
 		) do
-			Phlex::Compiler.enable!
-			begin
+			with_lazy_compilation do
 				LifecyclePrompt.call
 				assert Phlex::Compiler.compiled?(LifecyclePrompt)
 
@@ -155,7 +162,6 @@ class CompilerLifecycleTest < Quickdraw::Test
 				compiling.join
 			ensure
 				release&.<< true
-				Phlex::Compiler.disable!
 			end
 		end
 	end
@@ -193,13 +199,10 @@ class CompilerLifecycleTest < Quickdraw::Test
 		) do
 			refute compiled_method?(LifecycleLazy, :view_template)
 
-			Phlex::Compiler.enable!
-			begin
+			with_lazy_compilation do
 				assert_equal LifecycleLazy.new.call, "<div>lazy</div>"
 				assert compiled_method?(LifecycleLazy, :view_template)
 				assert_equal LifecycleLazy.new.call, "<div>lazy</div>"
-			ensure
-				Phlex::Compiler.disable!
 			end
 		end
 	end
@@ -213,7 +216,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 
 		def compile(node, **)
-			raise "sabotaged" if Sabotage.active
+			raise((Class === Sabotage.active) ? Sabotage.active : RuntimeError, "sabotaged") if Sabotage.active
 
 			super
 		end
@@ -250,13 +253,10 @@ class CompilerLifecycleTest < Quickdraw::Test
 			failures = []
 			Sabotage.active = true
 			# The handler renders the component itself, which must not deadlock on the compiler lock.
-			Phlex::Compiler.enable!(on_failure: -> (component, error) { failures << [component, error.message, component.new.call] })
-
-			begin
+			with_lazy_compilation(on_failure: -> (component, error) { failures << [component, error.message, component.new.call] }) do
 				assert_equal LifecycleFailing.new.call, "<div>still works</div>"
 				assert_equal LifecycleFailing.new.call, "<div>still works</div>"
 			ensure
-				Phlex::Compiler.disable!
 				Sabotage.active = false
 			end
 
@@ -1010,11 +1010,8 @@ class CompilerLifecycleTest < Quickdraw::Test
 			old = LifecycleGone::View
 			Object.__send__(:remove_const, :LifecycleGone)
 
-			Phlex::Compiler.enable!
-			begin
+			with_lazy_compilation do
 				assert_equal old.new.call, "<div>gone</div>"
-			ensure
-				Phlex::Compiler.disable!
 			end
 		end
 	end
@@ -1043,6 +1040,1000 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "precompiling compiles a component as its first render would, reporting a failure rather than raising" do
+		with_component_files(
+			"precompiled.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecyclePrecompiled < Phlex::HTML
+					def view_template = div { "compiled" }
+				end
+			RUBY
+			"precompile_failing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecyclePrecompileFailing < Phlex::HTML
+					def view_template = div { "still works" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation { Phlex::Compiler.precompile(LifecyclePrecompiled) }
+			assert compiled_method?(LifecyclePrecompiled, :view_template)
+
+			failures = []
+			on_failure = -> (component, error) { failures << [component, error.message] }
+			with_lazy_compilation do
+				Sabotage.active = true
+				Phlex::Compiler.precompile(LifecyclePrecompileFailing, on_failure:)
+				Phlex::Compiler.precompile(LifecyclePrecompileFailing, on_failure:)
+			ensure
+				Sabotage.active = false
+			end
+
+			refute compiled_method?(LifecyclePrecompileFailing, :view_template)
+			assert_equal failures, [[LifecyclePrecompileFailing, "sabotaged"]]
+			assert_equal LifecyclePrecompileFailing.new.call, "<div>still works</div>"
+		end
+	end
+
+	test "forgetting an unloaded component drops its compiled source maps and failures" do
+		with_component_files(
+			"forgotten.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleForgotten < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+			"forgotten_failing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleForgottenFailing < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			forgotten = LifecycleForgotten
+			Phlex::Compiler.compile(forgotten)
+			compiled_path = forgotten.instance_method(:view_template).source_location[0]
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+
+			failing = LifecycleForgottenFailing
+			with_lazy_compilation do
+				Sabotage.active = true
+				Phlex::Compiler.precompile(failing, on_failure: -> (*) {})
+			ensure
+				Sabotage.active = false
+			end
+			assert Phlex::Compiler::FAILURES.key?(failing)
+
+			Object.__send__(:remove_const, :LifecycleForgotten)
+			Object.__send__(:remove_const, :LifecycleForgottenFailing)
+			Phlex::Compiler.forget(forgotten)
+			Phlex::Compiler.forget(failing)
+
+			refute Phlex.__compiled_source_maps__.key?(compiled_path)
+			refute Phlex::Compiler::FAILURES.key?(failing)
+		end
+	end
+
+	test "forgetting an unloaded component keeps source maps another live component still uses" do
+		with_component_files(
+			"shared.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSharedGone < Phlex::HTML
+					def view_template = div { "gone" }
+				end
+
+				class LifecycleSharedLive < Phlex::HTML
+					def view_template = div { "live" }
+				end
+			RUBY
+		) do
+			gone = LifecycleSharedGone
+			live = LifecycleSharedLive
+			Phlex::Compiler.compile_file(gone.instance_method(:view_template).source_location[0], components: [gone, live])
+			compiled_path = live.instance_method(:view_template).source_location[0]
+			assert_equal gone.instance_method(:view_template).source_location[0], compiled_path
+
+			Object.__send__(:remove_const, :LifecycleSharedGone)
+			Phlex::Compiler.forget(gone)
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+
+			Object.__send__(:remove_const, :LifecycleSharedLive)
+			Phlex::Compiler.forget(live)
+			refute Phlex.__compiled_source_maps__.key?(compiled_path)
+		end
+	end
+
+	test "forgetting a recompiled component drops every generation it was compiled into" do
+		with_component_files(
+			"recompiled.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRecompiledGone < Phlex::HTML
+					def view_template = div { "gone" }
+				end
+			RUBY
+		) do
+			component = LifecycleRecompiledGone
+			Phlex::Compiler.compile(component)
+			first = component.instance_method(:view_template).source_location[0]
+			Phlex::Compiler.recompile(component)
+			second = component.instance_method(:view_template).source_location[0]
+			refute_equal first, second
+
+			Object.__send__(:remove_const, :LifecycleRecompiledGone)
+			Phlex::Compiler.forget(component)
+
+			refute Phlex.__compiled_source_maps__.key?(first)
+			refute Phlex.__compiled_source_maps__.key?(second)
+		end
+	end
+
+	test "forgetting a component keeps the source maps its live subclasses inherit" do
+		with_component_files(
+			"inherited.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleForgottenParent < Phlex::HTML
+					def view_template = div { "inherited" }
+				end
+
+				class LifecycleLiveChild < LifecycleForgottenParent
+				end
+			RUBY
+		) do
+			parent = LifecycleForgottenParent
+			Phlex::Compiler.compile(parent)
+			compiled_path = parent.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleForgottenParent)
+			Phlex::Compiler.forget(parent)
+
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+		end
+	end
+
+	test "forgetting a component that shares a generation stops the compiler holding on to it" do
+		with_component_files(
+			"released.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReleased < Phlex::HTML
+					def view_template = div { "released" }
+				end
+
+				class LifecycleSharedKept < Phlex::HTML
+					def view_template = div { "kept" }
+				end
+			RUBY
+		) do
+			released = LifecycleReleased
+			kept = LifecycleSharedKept
+			Phlex::Compiler.compile_file(released.instance_method(:view_template).source_location[0], components: [released, kept])
+			compiled_path = kept.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleReleased)
+			Phlex::Compiler.forget(released)
+
+			assert_equal Phlex::Compiler::GENERATION_COMPONENTS[compiled_path].keys, [kept]
+		end
+	end
+
+	test "forgetting the last subclass releases the source maps its forgotten parent kept" do
+		with_component_files(
+			"deferred.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDeferredParent < Phlex::HTML
+					def view_template = div { "deferred" }
+				end
+
+				class LifecycleDeferredChild < LifecycleDeferredParent
+				end
+			RUBY
+		) do
+			parent = LifecycleDeferredParent
+			child = LifecycleDeferredChild
+			Phlex::Compiler.compile(parent)
+			compiled_path = parent.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleDeferredParent)
+			Phlex::Compiler.forget(parent)
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+
+			Object.__send__(:remove_const, :LifecycleDeferredChild)
+			Phlex::Compiler.forget(child)
+			refute Phlex.__compiled_source_maps__.key?(compiled_path)
+			refute Phlex::Compiler::GENERATION_COMPONENTS.key?(compiled_path)
+		end
+	end
+
+	test "forgetting a component keeps a shared generation another owner's live subclass inherits" do
+		with_component_files(
+			"shared_inherited.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSharedForgotten < Phlex::HTML
+					def view_template = div { "forgotten" }
+				end
+
+				class LifecycleSharedParent < Phlex::HTML
+					def view_template = div { "parent" }
+				end
+
+				class LifecycleSharedChild < LifecycleSharedParent
+				end
+			RUBY
+		) do
+			forgotten = LifecycleSharedForgotten
+			parent = LifecycleSharedParent
+			Phlex::Compiler.compile_file(parent.instance_method(:view_template).source_location[0], components: [forgotten, parent])
+			compiled_path = parent.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleSharedParent)
+			Object.__send__(:remove_const, :LifecycleSharedForgotten)
+			Phlex::Compiler.forget(forgotten)
+
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+			assert_equal Phlex::Compiler::GENERATION_COMPONENTS[compiled_path].keys, [parent]
+		end
+	end
+
+	test "forgetting components doesn't autoload what replaced them" do
+		with_component_files(
+			"autoloaded.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleAutoloadedGone < Phlex::HTML
+					def view_template = div { "gone" }
+				end
+
+				class LifecycleAutoloadedOther < Phlex::HTML
+					def view_template = div { "other" }
+				end
+			RUBY
+			"replacement.rb" => <<~RUBY
+				# frozen_string_literal: true
+				$lifecycle_replacement_loaded = true
+			RUBY
+		) do |(path, replacement)|
+			gone = LifecycleAutoloadedGone
+			other = LifecycleAutoloadedOther
+			Phlex::Compiler.compile_file(path, components: [gone, other])
+			$lifecycle_replacement_loaded = false
+
+			Object.__send__(:remove_const, :LifecycleAutoloadedGone)
+			Object.__send__(:remove_const, :LifecycleAutoloadedOther)
+			Object.autoload(:LifecycleAutoloadedGone, replacement)
+			Object.autoload(:LifecycleAutoloadedOther, replacement)
+			Phlex::Compiler.forget(gone, other)
+
+			refute $lifecycle_replacement_loaded
+			refute Phlex::Compiler::GENERATION_COMPONENTS.key?(other.instance_method(:view_template).source_location[0])
+		ensure
+			Object.__send__(:remove_const, :LifecycleAutoloadedGone) if Object.autoload?(:LifecycleAutoloadedGone)
+			Object.__send__(:remove_const, :LifecycleAutoloadedOther) if Object.autoload?(:LifecycleAutoloadedOther)
+		end
+	end
+
+	test "forgetting a component keeps the source maps of another unloaded component that isn't forgotten yet" do
+		with_component_files(
+			"first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleFirstGone < Phlex::HTML
+					def view_template = div { "first" }
+				end
+			RUBY
+			"second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSecondGone < Phlex::HTML
+					def view_template = div { "second" }
+				end
+			RUBY
+		) do
+			first = LifecycleFirstGone
+			second = LifecycleSecondGone
+			Phlex::Compiler.compile(first)
+			Phlex::Compiler.compile(second)
+			compiled_path = second.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleFirstGone)
+			Object.__send__(:remove_const, :LifecycleSecondGone)
+			Phlex::Compiler.forget(first)
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+
+			Phlex::Compiler.forget(second)
+			refute Phlex.__compiled_source_maps__.key?(compiled_path)
+		end
+	end
+
+	test "forgetting a component keeps the source maps an anonymous subclass inherits" do
+		with_component_files(
+			"anonymous_parent.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleAnonymousParent < Phlex::HTML
+					def view_template = div { "inherited" }
+				end
+			RUBY
+		) do
+			parent = LifecycleAnonymousParent
+			child = Class.new(parent)
+			Phlex::Compiler.compile(parent)
+			compiled_path = parent.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleAnonymousParent)
+			Phlex::Compiler.forget(parent)
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+
+			Phlex::Compiler.forget(child)
+			refute Phlex.__compiled_source_maps__.key?(compiled_path)
+		end
+	end
+
+	test "an ancestor that can't be compiled is reported once, not again for each subclass" do
+		with_component_files(
+			"failing_parent.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFailingParent < Phlex::HTML
+					def view_template = delegate("parent")
+
+					ruby2_keywords def delegate(*args) = div { plain(*args) }
+				end
+
+				class LifecycleFailingFirst < LifecycleFailingParent
+					def view_template = span { "first" }
+				end
+
+				class LifecycleFailingSecond < LifecycleFailingParent
+					def view_template = span { "second" }
+				end
+			RUBY
+		) do
+			reports = []
+			on_failure = -> (component, _error) { reports << component }
+
+			with_lazy_compilation do
+				Phlex::Compiler.precompile(LifecycleFailingFirst, on_failure:)
+				Phlex::Compiler.precompile(LifecycleFailingSecond, on_failure:)
+				3.times { Phlex::Compiler.precompile(Class.new(LifecycleFailingParent), on_failure:) }
+			end
+
+			assert_equal reports, [LifecycleFailingFirst]
+			assert compiled_method?(LifecycleFailingSecond, :view_template)
+			assert_equal LifecycleFailingSecond.new.call, "<span>second</span>"
+			assert_equal Phlex::Compiler.explain(LifecycleFailingFirst).map(&:message).grep(/\Acompiling/), ["compiling LifecycleFailingParent raised Phlex::Compiler::Error: #{Phlex::Compiler::FAILURES[LifecycleFailingParent].message}"]
+		end
+	end
+
+	test "running out of stack while compiling is reported, and the component renders uncompiled" do
+		with_component_files(
+			"stack.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleStack < Phlex::HTML
+					def view_template = div { "stack" }
+				end
+			RUBY
+		) do
+			failures = []
+
+			with_lazy_compilation do
+				Sabotage.active = SystemStackError
+				Phlex::Compiler.precompile(LifecycleStack, on_failure: -> (component, error) { failures << [component, error.class] })
+			ensure
+				Sabotage.active = false
+			end
+
+			assert_equal failures, [[LifecycleStack, SystemStackError]]
+			assert_equal LifecycleStack.new.call, "<div>stack</div>"
+		end
+	end
+
+	test "a class overriding name doesn't change which component the compiler compiles" do
+		with_component_files(
+			"named.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleNamedBase < Phlex::HTML
+					def self.name = "LifecycleNamedBase"
+
+					def view_template = div { "base" }
+				end
+
+				class LifecycleNamedSub < LifecycleNamedBase
+					def view_template = span { "sub" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleNamedSub)
+
+			assert compiled_method?(LifecycleNamedSub, :view_template)
+		end
+	end
+
+	test "a component loaded while another compiles, and precompiled as it loads, waits for its first render" do
+		with_component_files(
+			"outer.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleOuter < Phlex::HTML
+					def view_template = div { "outer" }
+				end
+			RUBY
+			"inner.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleInner < Phlex::HTML
+					def view_template = span { "inner" }
+				end
+			RUBY
+		) do
+			failures = []
+			on_failure = -> (component, error) { failures << [component, error.class] }
+
+			with_lazy_compilation do
+				Pause.gate = -> { Phlex::Compiler.precompile(LifecycleInner, on_failure:) }
+				Phlex::Compiler.precompile(LifecycleOuter, on_failure:)
+			ensure
+				Pause.gate = nil
+			end
+
+			assert_equal failures, []
+			assert compiled_method?(LifecycleOuter, :view_template)
+			refute compiled_method?(LifecycleInner, :view_template)
+
+			with_lazy_compilation { assert_equal LifecycleInner.new.call, "<span>inner</span>" }
+			assert compiled_method?(LifecycleInner, :view_template)
+		end
+	end
+
+	test "a subclass whose own file compiled is marked compiled when its parent's file fails" do
+		with_component_files(
+			"partial_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecyclePartialParent < Phlex::HTML
+					def view_template = delegate("parent")
+
+					ruby2_keywords def delegate(*args) = div { plain(*args) }
+				end
+			RUBY
+			"partial_child.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecyclePartialChild < LifecyclePartialParent
+					def view_template = div { "child" }
+				end
+			RUBY
+		) do
+			reports = []
+
+			with_lazy_compilation do
+				Phlex::Compiler.precompile(LifecyclePartialChild, on_failure: -> (component, _error) { reports << component })
+			end
+
+			assert_equal reports, [LifecyclePartialChild]
+			assert compiled_method?(LifecyclePartialChild, :view_template)
+			assert Phlex::Compiler.compiled?(LifecyclePartialChild)
+			refute Phlex::Compiler.compiled?(LifecyclePartialParent)
+			assert Phlex::Compiler::FAILURES.key?(LifecyclePartialParent)
+			refute Phlex::Compiler::FAILURES.key?(LifecyclePartialChild)
+
+			LifecyclePartialChild.freeze
+			LifecyclePartialParent.class_eval { def div(**, &) = super(class: "redefined", &) }
+			assert_equal LifecyclePartialChild.new.call, %(<div class="redefined">child</div>)
+		end
+	end
+
+	test "the compiler doesn't keep unloaded components alive when nothing forgets them" do
+		skip "Needs a precise garbage collector" unless RUBY_ENGINE == "ruby"
+
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "collected.rb")
+			File.write(path, <<~RUBY)
+				# frozen_string_literal: true
+				class LifecycleCollected < Phlex::HTML
+					def view_template = div { "collected" }
+				end
+			RUBY
+
+			references = 10.times.map do
+				load path
+				Phlex::Compiler.compile(LifecycleCollected)
+				reference = WeakRef.new(LifecycleCollected)
+				Object.__send__(:remove_const, :LifecycleCollected)
+				reference
+			end
+
+			GC.start(full_mark: true, immediate_sweep: true)
+
+			assert references.count(&:weakref_alive?) < 10
+		end
+	end
+
+	test "the compiler doesn't keep forgotten components alive while their parent stays loaded" do
+		skip "Needs a precise garbage collector" unless RUBY_ENGINE == "ruby"
+
+		Dir.mktmpdir do |dir|
+			parent_path = File.join(dir, "kept_parent.rb")
+			File.write(parent_path, <<~RUBY)
+				# frozen_string_literal: true
+				class LifecycleKeptParent < Phlex::HTML
+					def view_template = div { "parent" }
+				end
+			RUBY
+
+			child_path = File.join(dir, "forgotten_child.rb")
+			File.write(child_path, <<~RUBY)
+				# frozen_string_literal: true
+				class LifecycleForgottenChild < LifecycleKeptParent
+					def view_template = span { "child" }
+				end
+			RUBY
+
+			load parent_path
+			Phlex::Compiler.compile(LifecycleKeptParent)
+
+			unloaded = -> (compile:) do
+				10.times.map do
+					load child_path
+					child = LifecycleForgottenChild
+					Phlex::Compiler.compile(child) if compile
+					Object.__send__(:remove_const, :LifecycleForgottenChild)
+					Phlex::Compiler.forget(child) if compile
+					WeakRef.new(child)
+				end
+			end
+
+			# Subclasses the compiler never saw show what this process can collect at all.
+			untouched = unloaded.(compile: false)
+			forgotten = unloaded.(compile: true)
+
+			GC.start(full_mark: true, immediate_sweep: true)
+
+			assert forgotten.count(&:weakref_alive?) < 10 || untouched.all?(&:weakref_alive?)
+		end
+	end
+
+	# Pauses a thread that sets :lifecycle_install_gate just before compiled methods are installed.
+	module InstallPause
+		def without_redefinition_warnings(&)
+			Thread.current[:lifecycle_install_gate]&.call
+			super
+		end
+	end
+
+	Phlex::Compiler.singleton_class.prepend(InstallPause)
+
+	test "a subclass defined while its parent compiles sees its override honoured" do
+		Dir.mktmpdir do |dir|
+			parent_path = File.join(dir, "race_parent.rb")
+			child_path = File.join(dir, "race_child.rb")
+			File.write(parent_path, <<~RUBY)
+				# frozen_string_literal: true
+				class LifecycleRaceParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+			File.write(child_path, <<~RUBY)
+				# frozen_string_literal: true
+				class LifecycleRaceChild < LifecycleRaceParent
+					def div(**, &) = super(class: "child", **, &)
+				end
+			RUBY
+			load parent_path
+
+			paused = Queue.new
+			resume = Queue.new
+			compiling = Thread.new do
+				Thread.current[:lifecycle_install_gate] = -> {
+					Thread.current[:lifecycle_install_gate] = nil
+					paused << true
+					resume.pop
+				}
+				Phlex::Compiler.compile(LifecycleRaceParent)
+			end
+
+			compiling.join unless paused.pop(timeout: 5)
+			defining = Thread.new { load child_path }
+			Thread.pass until defining.stop?
+			resume << true
+			compiling.join
+			defining.join
+
+			assert_equal LifecycleRaceChild.new.call, %(<div class="child">x</div>)
+		end
+	end
+
+	test "a component defined in a block renders beside a compiled one in the same file" do
+		with_component_files(
+			"block_defined.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleStatement < Phlex::HTML
+					def view_template = div { "statement" }
+				end
+
+				LifecycleBlockDefined = Class.new(Phlex::HTML) { def view_template = span { "block" } }
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleStatement.new.call, "<div>statement</div>"
+				assert_equal LifecycleBlockDefined.new.call, "<span>block</span>"
+				assert compiled_method?(LifecycleStatement, :view_template)
+			end
+		end
+	end
+
+	test "a render with the compiler disabled still waits for a recompilation" do
+		with_component_files(
+			"disabled_race.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDisabledRaceParent < Phlex::HTML
+				end
+
+				class LifecycleDisabledRace < LifecycleDisabledRaceParent
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleDisabledRace)
+
+			without_lazy_compilation do
+				paused = Queue.new
+				resume = Queue.new
+				redefining = Thread.new do
+					Thread.current[:lifecycle_install_gate] = -> {
+						Thread.current[:lifecycle_install_gate] = nil
+						paused << true
+						resume.pop
+					}
+					LifecycleDisabledRaceParent.class_eval { def div(**, &) = super(class: "redefined", &) }
+				end
+
+				redefining.join unless paused.pop(timeout: 5)
+				rendering = Thread.new { LifecycleDisabledRace.new.call }
+				wait_until_blocked(rendering)
+				waited = rendering.alive?
+				resume << true
+				redefining.join
+
+				assert waited
+				assert_equal rendering.value, %(<div class="redefined">x</div>)
+			end
+		end
+	end
+
+	test "a class overriding visibility and ancestry reflection keeps its methods and recompiles" do
+		with_component_files(
+			"reflective_visibility.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReflectiveVisibility < Phlex::HTML
+					def self.private_method_defined?(*) = true
+					def self.ancestors = []
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleReflectiveVisibility)
+			assert LifecycleReflectiveVisibility.public_method_defined?(:view_template)
+
+			LifecycleReflectiveVisibility.class_eval { def div(**, &) = super(class: "redefined", &) }
+			assert_equal LifecycleReflectiveVisibility.new.call, %(<div class="redefined">x</div>)
+		end
+	end
+
+	test "a class overriding instance variable reflection doesn't change its compile setting" do
+		component = Class.new(Phlex::HTML) do
+			compile false
+
+			def self.instance_variable_defined?(*) = false
+			def self.instance_variable_get(*) = true
+		end
+
+		refute component.compile?
+	end
+
+	test "a class overriding instance variable reflection is still compiled on its first render" do
+		with_component_files(
+			"reflective.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReflective < Phlex::HTML
+					def self.instance_variable_get(*) = true
+					def self.instance_variable_set(*) = nil
+					def self.instance_variable_defined?(*) = false
+
+					def view_template = div { "reflective" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleReflective.new.call, "<div>reflective</div>"
+				assert compiled_method?(LifecycleReflective, :view_template)
+				assert Phlex::Compiler.compiled?(LifecycleReflective)
+			end
+		end
+	end
+
+	test "a component defining its own class method still compiles on its first render" do
+		with_component_files(
+			"classy.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleClassy < Phlex::HTML
+					def view_template = div { "classy" }
+
+					def class = "card"
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleClassy.new.call, "<div>classy</div>"
+				assert compiled_method?(LifecycleClassy, :view_template)
+			end
+		end
+	end
+
+	test "a class overriding frozen? still compiles on its first render" do
+		with_component_files(
+			"chilly.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleChilly < Phlex::HTML
+					def self.frozen? = raise("not Ruby's")
+
+					def view_template = div { "chilly" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleChilly.new.call, "<div>chilly</div>"
+				assert compiled_method?(LifecycleChilly, :view_template)
+			end
+		end
+	end
+
+	test "freezing a class that overrides frozen? still restores its original methods" do
+		with_component_files(
+			"thawed.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleThawedParent < Phlex::HTML
+				end
+
+				class LifecycleThawed < LifecycleThawedParent
+					def self.frozen? = true
+
+					def view_template = div { "thawed" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleThawed)
+			LifecycleThawed.freeze
+
+			LifecycleThawedParent.class_eval { def div(**, &) = super(class: "redefined", &) }
+			assert_equal LifecycleThawed.new.call, %(<div class="redefined">thawed</div>)
+		end
+	end
+
+	test "a class overriding method reflection still compiles as it's defined" do
+		with_component_files(
+			"secretive_methods.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSecretiveMethods < Phlex::HTML
+					def self.ancestors = []
+					def self.instance_methods(*) = []
+					def self.method_defined?(*) = raise("not Ruby's")
+
+					def view_template = div { "secretive" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleSecretiveMethods.new.call, "<div>secretive</div>"
+				assert compiled_method?(LifecycleSecretiveMethods, :view_template)
+			end
+		end
+	end
+
+	test "a namespace overriding constant reflection doesn't hide a loaded component" do
+		with_component_files(
+			"namespaced.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSecretive
+					def self.const_defined?(*) = false
+					def self.autoload?(*) = "elsewhere"
+					def self.const_get(*) = nil
+
+					class Hidden < Phlex::HTML
+						def view_template = div { "hidden" }
+					end
+				end
+			RUBY
+		) do
+			component = LifecycleSecretive::Hidden
+
+			error = assert_raises(ArgumentError) { Phlex::Compiler.forget(component) }
+			assert_equal error.message, "Can't forget LifecycleSecretive::Hidden because it's still loaded."
+		end
+	end
+
+	test "a component defining its own compile? still compiles as its setting says" do
+		with_component_files(
+			"own_compile.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleOwnCompile < Phlex::HTML
+					def self.compile? = raise("not Phlex's")
+
+					def view_template = div { "own" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation { assert_equal LifecycleOwnCompile.new.call, "<div>own</div>" }
+
+			assert compiled_method?(LifecycleOwnCompile, :view_template)
+		end
+	end
+
+	test "a live component can't be forgotten" do
+		with_component_files(
+			"remembered.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRemembered < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleRemembered)
+
+			error = assert_raises(ArgumentError) { Phlex::Compiler.forget(LifecycleRemembered) }
+			assert_equal error.message, "Can't forget LifecycleRemembered because it's still loaded."
+		end
+	end
+
+	test "a component compiles on its first render unless its class or an ancestor says compile false" do
+		with_component_files(
+			"settings.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDefault < Phlex::HTML
+					def view_template = div { "default" }
+				end
+
+				class LifecycleOptedOut < Phlex::HTML
+					compile false
+
+					def view_template = div { "opted out" }
+				end
+
+				class LifecycleInheritsOptOut < LifecycleOptedOut
+					def view_template = div { "inherits" }
+				end
+
+				class LifecycleOptsBackIn < LifecycleOptedOut
+					compile true
+
+					def view_template = div { "back in" }
+				end
+			RUBY
+		) do
+			assert LifecycleDefault.compile?
+			refute LifecycleOptedOut.compile?
+			refute LifecycleInheritsOptOut.compile?
+			assert LifecycleOptsBackIn.compile?
+
+			with_lazy_compilation do
+				assert_equal LifecycleDefault.call, "<div>default</div>"
+				assert_equal LifecycleOptedOut.call, "<div>opted out</div>"
+				assert_equal LifecycleInheritsOptOut.call, "<div>inherits</div>"
+				assert_equal LifecycleOptsBackIn.call, "<div>back in</div>"
+			end
+
+			assert compiled_method?(LifecycleDefault, :view_template)
+			refute compiled_method?(LifecycleOptedOut, :view_template)
+			refute compiled_method?(LifecycleInheritsOptOut, :view_template)
+			assert compiled_method?(LifecycleOptsBackIn, :view_template)
+		end
+	end
+
+	test "compile only takes true or false" do
+		error = assert_raises(Phlex::ArgumentError) { Class.new(Phlex::HTML) { compile :yes } }
+		assert_equal error.message, "Expected compile to be true or false, got :yes."
+	end
+
+	test "disabling the compiler stops components compiling on first render, whatever they say" do
+		with_component_files(
+			"disabled.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDisabled < Phlex::HTML
+					compile true
+
+					def view_template = div { "disabled" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				Phlex::Compiler.disable!
+				assert_equal LifecycleDisabled.call, "<div>disabled</div>"
+				Phlex::Compiler.precompile(LifecycleDisabled)
+			end
+
+			refute compiled_method?(LifecycleDisabled, :view_template)
+		end
+	end
+
+	test "a frozen component renders without waiting for another component compiling" do
+		with_component_files(
+			"frozen.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFrozen < Phlex::HTML
+					def view_template = div { "frozen" }
+				end
+			RUBY
+		) do
+			LifecycleFrozen.freeze
+
+			with_lazy_compilation do
+				locked = Queue.new
+				release = Queue.new
+				compiling = Thread.new do
+					Phlex::Compiler::MUTEX.synchronize do
+						locked << true
+						release.pop
+					end
+				end
+				locked.pop
+
+				render = Thread.new { LifecycleFrozen.call }
+				finished = render.join(2)
+				release << true
+
+				assert finished
+				assert_equal render.value, "<div>frozen</div>"
+				compiling.join
+			ensure
+				release&.<< true
+			end
+		end
+	end
+
+	test "a component that says compile false waits for a recompilation of the methods it inherits" do
+		with_component_files(
+			"inherits.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRecompiledParent < Phlex::HTML
+					def view_template = div { "inherited" }
+				end
+
+				class LifecycleUncompiledChild < LifecycleRecompiledParent
+					compile false
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				Phlex::Compiler.compile(LifecycleRecompiledParent)
+
+				locked = Queue.new
+				release = Queue.new
+				Pause.gate = -> {
+					Pause.gate = nil
+					locked << true
+					release.pop
+				}
+				recompiling = Thread.new { Phlex::Compiler.recompile(LifecycleRecompiledParent) }
+				locked.pop
+
+				render = Thread.new { LifecycleUncompiledChild.call }
+				deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+				Thread.pass until render.status == "sleep" || !render.alive? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+				assert render.alive?
+				release << true
+				assert_equal render.value, "<div>inherited</div>"
+				recompiling.join
+			ensure
+				Pause.gate = nil
+				release&.<< true
+			end
+		end
+	end
+
+	test "a class overriding superclass still reads its inherited compile setting" do
+		component = Class.new(Phlex::HTML) do
+			compile false
+
+			def self.superclass = nil
+		end
+
+		child = Class.new(component) do
+			def self.superclass = self
+		end
+
+		refute child.compile?
+	end
+
 	test "super from an override of an element is compiled as the element" do
 		with_component_files(
 			"super.rb" => <<~RUBY
@@ -1058,7 +2049,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 				end
 			RUBY
 		) do
-			assert_equal LifecycleSuper.new.call, %(<h1 id="title" class="font-bold">element</h1>)
+			without_lazy_compilation { assert_equal LifecycleSuper.new.call, %(<h1 id="title" class="font-bold">element</h1>) }
 
 			Phlex::Compiler.compile(LifecycleSuper)
 			assert compiled_method?(LifecycleSuper, :h1)

@@ -12,6 +12,21 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	# A statement in the file and the class and module statements around it.
 	Scoped = Data.define(:namespace, :node)
 
+	# The lines and names of the definitions inside a block, which aren't compiled.
+	class BlockDefinitions < Refract::Visitor
+		attr_reader :found
+
+		def initialize
+			super
+			@found = []
+		end
+
+		visit Refract::DefNode do |node|
+			@found << [node.start_line, node.name] unless node.receiver
+			super(node)
+		end
+	end
+
 	def initialize(path, targets:, diagnostics: Phlex::Compiler::Diagnostics.new(path), recompile: false, inline: true)
 		super()
 		@path = path
@@ -21,6 +36,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		@inline = inline
 		@current_namespace = []
 		@definitions = []
+		@block_definitions = []
 		@usings = []
 		@keyword_flagged = []
 		@compiled_lines = []
@@ -59,6 +75,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	end
 
 	visit Refract::BlockNode do |node|
+		@block_definitions.concat(BlockDefinitions.new.tap { |finder| finder.visit(node) }.found)
 		nil
 	end
 
@@ -120,8 +137,10 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	# `def`, so its line having no definition of it means the same, and
 	# recompiling would leave the compiled method in place.
 	private def definitions_by_namespace
+		# A live method defined in a block, such as Class.new's, is just left uncompiled.
 		orphaned = @targets.values.reject do |target|
-			@definitions.any? { |definition| definition.node.start_line == target.line && definition.node.name == target.name }
+			@definitions.any? { |definition| definition.node.start_line == target.line && definition.node.name == target.name } ||
+				(!target.replaced && @block_definitions.include?([target.line, target.name]))
 		end
 
 		orphaned.each do |target|
@@ -245,10 +264,13 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 		false
 	end
 
+	PRIVATE_METHOD_DEFINED = Module.instance_method(:private_method_defined?)
+	PROTECTED_METHOD_DEFINED = Module.instance_method(:protected_method_defined?)
+
 	private def visibility_of(component, name)
-		if component.private_method_defined?(name, false)
+		if PRIVATE_METHOD_DEFINED.bind_call(component, name, false)
 			:private
-		elsif component.protected_method_defined?(name, false)
+		elsif PROTECTED_METHOD_DEFINED.bind_call(component, name, false)
 			:protected
 		else
 			:public

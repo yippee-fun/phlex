@@ -18,7 +18,33 @@ class Phlex::SGML
 			object.instance_variable_set(:@_content_block, block) if block
 			object
 		end
+
+		# Whether the class and its subclasses compile on their first render.
+		# Classes compile by default; a subclass can say otherwise again.
+		def compile(value)
+			unless true == value || false == value
+				raise Phlex::ArgumentError, "Expected compile to be true or false, got #{value.inspect}."
+			end
+
+			@__phlex_compile__ = value
+		end
+
+		def compile?
+			klass = self
+			klass = SUPERCLASS.bind_call(klass) until IVAR_DEFINED.bind_call(klass, :@__phlex_compile__)
+			IVAR_GET.bind_call(klass, :@__phlex_compile__)
+		end
 	end
+
+	# Called directly, so a class overriding them can't change which setting it
+	# inherits, nor a component which class is compiled when it renders.
+	SUPERCLASS = Class.instance_method(:superclass)
+	IVAR_DEFINED = Kernel.instance_method(:instance_variable_defined?)
+	IVAR_GET = Kernel.instance_method(:instance_variable_get)
+	CLASS = Kernel.instance_method(:class)
+	FROZEN = Kernel.instance_method(:frozen?)
+
+	@__phlex_compile__ = true
 
 	def view_template
 		if block_given?
@@ -48,6 +74,9 @@ class Phlex::SGML
 	end
 
 	def internal_call(parent: nil, state: nil, &)
+		# Checked first so another Ractor never autoloads the compiler.
+		Phlex::Compiler.compile_on_first_render(CLASS.bind_call(self)) if Phlex.__main_ractor__?
+
 		if @_state
 			raise Phlex::DoubleRenderError.new(
 				"You can't render a #{self.class.name} more than once. To render a component more than once, pass `rerenderable: true` to `call` each time you render it."
@@ -516,7 +545,7 @@ class Phlex::SGML
 	# A frozen class can't be recompiled when an element or helper it inlined
 	# changes, so its original definitions are put back first.
 	def self.freeze
-		Phlex::Compiler.decompile(self) if !Phlex.__compiled_source_maps__.empty? && Phlex::Compiler.compiled?(self) && !frozen?
+		Phlex::Compiler.decompile(self) if Phlex.__main_ractor__? && !Phlex.__compiled_source_maps__.empty? && Phlex::Compiler.compiled?(self) && !FROZEN.bind_call(self)
 
 		super
 	end
