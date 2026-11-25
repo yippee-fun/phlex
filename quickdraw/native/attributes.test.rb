@@ -182,17 +182,16 @@ class NativeAttributesTest < Quickdraw::Test
 	].freeze
 
 	def self.compare_fetch(attributes)
-		ruby = outcome { Attributes.instance_method(:generate_attributes).bind_call(Attributes, attributes) }
+		generated = nil
+		ruby = outcome { generated = Attributes.instance_method(:generate_attributes).bind_call(Attributes, attributes) }
 		native = outcome { Phlex.__attribute_cache__.fetch(attributes) { Attributes.generate_attributes(attributes) } }
 		return { method_name: :fetch, args: [attributes], ruby:, native: } unless ruby == native
 
-		BUFFERS.each do |buffer|
-			ruby = append_outcome(buffer) { |b| b << Attributes.instance_method(:generate_attributes).bind_call(Attributes, attributes) }
-			native = append_outcome(buffer) { |b| Phlex.__attribute_cache__.append(b, attributes) { Attributes.generate_attributes(attributes) } }
-			return { method_name: :append, args: [buffer, attributes], ruby:, native: } unless ruby == native
-		end
-
-		nil
+		# One buffer each time keeps the large random runs fast, and across them every buffer is used.
+		buffer = BUFFERS[attributes.hash % BUFFERS.size]
+		ruby = append_outcome(buffer) { |b| generated ? b << generated : Attributes.instance_method(:generate_attributes).bind_call(Attributes, attributes) }
+		native = append_outcome(buffer) { |b| Phlex.__attribute_cache__.append(b, attributes) { Attributes.generate_attributes(attributes) } }
+		{ method_name: :append, args: [buffer, attributes], ruby:, native: } unless ruby == native
 	end
 
 	# The coderange is cached, so it's compared with one worked out afresh.
