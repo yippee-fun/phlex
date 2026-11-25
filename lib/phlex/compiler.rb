@@ -94,7 +94,8 @@ module Phlex::Compiler
 
 	MUTEX = Mutex.new
 
-	# compiled path => the components whose methods that generation compiled
+	# compiled path => the components whose methods that generation compiled,
+	# held weakly so a reloaded class that's never forgotten can be collected
 	GENERATION_COMPONENTS = {}
 
 	# component => the exception that stopped it compiling on first render
@@ -154,7 +155,8 @@ module Phlex::Compiler
 	#
 	# Only the main Ractor compiles. Other Ractors render a component as they
 	# find it, without waiting for a compilation in progress, so compile with
-	# `Phlex::Compiler.precompile` before starting them.
+	# `Phlex::Compiler.precompile` before starting them. Nor do they recompile
+	# what inlined an element or helper they redefine on a class.
 	def self.enable!(on_failure: DEFAULT_FAILURE_HANDLER)
 		@on_failure = on_failure
 		@enabled = true
@@ -171,7 +173,8 @@ module Phlex::Compiler
 
 	# Runs on every render, so a component that's compiled, failed to, can't
 	# be or says not to returns without the lock, and doesn't wait for another
-	# to compile. The
+	# to compile. A render the compiler itself causes, such as by autoloading
+	# a class that's precompiled as it loads, is left to the next one. The
 	# check is repeated under the lock, so two first renders racing each other
 	# still compile and report once. A render that starts during a
 	# recompilation takes the lock, and so waits for the new methods. The
@@ -179,6 +182,8 @@ module Phlex::Compiler
 	def self.compile_on_first_render(component, on_failure: @on_failure)
 		return unless @enabled && Phlex.__main_ractor__?
 		return if !@recompiling && settled?(component)
+		# Reached from inside a compilation, such as by a class it autoloads.
+		return if MUTEX.owned?
 
 		error = MUTEX.synchronize do
 			return if settled?(component)
@@ -189,7 +194,8 @@ module Phlex::Compiler
 				compile_ancestry(component, only: COMPILES_ON_FIRST_RENDER, failed:)
 				nil
 			rescue StandardError, ScriptError, SystemStackError => e
-				[component, *failed].each { |klass| FAILURES[klass] = e }
+				failed << component unless compiled?(component)
+				failed.each { |klass| FAILURES[klass] = e }
 				e
 			end
 		end
@@ -233,14 +239,10 @@ module Phlex::Compiler
 
 			forgotten = -> (owner) { FORGOTTEN.key?(owner) && descendants_of(owner).all? { |descendant| FORGOTTEN.key?(descendant) } }
 
-			compiled_paths = []
-
-			GENERATION_COMPONENTS.each do |path, owners|
-				if owners.all?(&forgotten)
-					compiled_paths << path
-				elsif owners.any?(&forgotten)
-					GENERATION_COMPONENTS[path] = owners.reject(&forgotten).freeze
-				end
+			compiled_paths = GENERATION_COMPONENTS.filter_map do |path, owners|
+				done = owners.keys.select(&forgotten)
+				done.each { |owner| owners.delete(owner) }
+				path if owners.keys.empty?
 			end
 
 			compiled_paths.each { |path| GENERATION_COMPONENTS.delete(path) }
@@ -249,7 +251,7 @@ module Phlex::Compiler
 			# Only what a remaining generation could still be waiting on is remembered.
 			waiting = {}.compare_by_identity
 			GENERATION_COMPONENTS.each_value do |owners|
-				owners.each { |owner| [owner, *descendants_of(owner)].each { |klass| waiting[klass] = true } }
+				owners.keys.each { |owner| [owner, *descendants_of(owner)].each { |klass| waiting[klass] = true } }
 			end
 			FORGOTTEN.select! { |component, _| waiting.key?(component) }
 		end
@@ -271,10 +273,22 @@ module Phlex::Compiler
 		ancestors.select!(&only) if only
 		components = ancestors.select { |ancestor| live?(ancestor) }
 
-		components.flat_map { |ancestor| defining_files(ancestor) }.uniq.each do |path|
+		files = components.to_h { |ancestor| [ancestor, defining_files(ancestor)] }.compare_by_identity
+		compiled_paths = []
+
+		files.values.flatten.uniq.each do |path|
 			compile_file(path, components:)
+			compiled_paths << path
 		rescue StandardError, ScriptError, SystemStackError
-			failed.concat(components.select { |ancestor| defining_files(ancestor).include?(path) })
+			failed.concat(components.select { |ancestor| files[ancestor].include?(path) })
+
+			# One whose files all compiled has compiled methods, so it's marked compiled.
+			ancestors.each do |ancestor|
+				next if failed.include?(ancestor) || !(files[ancestor] || []).all? { |file| compiled_paths.include?(file) }
+
+				ancestor.instance_variable_set(:@__phlex_compiled__, true)
+			end
+
 			raise
 		end
 
@@ -371,7 +385,9 @@ module Phlex::Compiler
 			lines[generated_line] = original_line if original_line
 		end
 
-		GENERATION_COMPONENTS[compiled_path] = results.map(&:component).uniq.freeze
+		owners = ObjectSpace::WeakMap.new
+		results.each { |result| owners[result.component] = true }
+		GENERATION_COMPONENTS[compiled_path] = owners
 
 		# Added before the methods exist, so nothing running them finds a line unmapped.
 		Phlex.__add_compiled_source_map__(compiled_path, Generation.new(path: -path, lines: lines.freeze))
@@ -408,7 +424,12 @@ module Phlex::Compiler
 	# on Phlex::SVG is recompiled too. An override on a single instance can't
 	# be compiled for, so it's refused.
 	def self.inlining_changed(target, names)
-		return if Phlex.__main_ractor__? && MUTEX.owned?
+		if Phlex.__main_ractor__?
+			return if MUTEX.owned?
+		else
+			# Another Ractor can't recompile a class, only refuse an instance override.
+			return unless target.singleton_class?
+		end
 
 		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
 		affected = related.select do |klass|

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "weakref"
 require "compiler_helper"
 
 class CompilerLifecycleTest < Quickdraw::Test
@@ -1203,7 +1204,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 			Object.__send__(:remove_const, :LifecycleReleased)
 			Phlex::Compiler.forget(released)
 
-			assert_equal Phlex::Compiler::GENERATION_COMPONENTS[compiled_path], [kept]
+			assert_equal Phlex::Compiler::GENERATION_COMPONENTS[compiled_path].keys, [kept]
 		end
 	end
 
@@ -1261,7 +1262,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 			Phlex::Compiler.forget(forgotten)
 
 			assert Phlex.__compiled_source_maps__.key?(compiled_path)
-			assert_equal Phlex::Compiler::GENERATION_COMPONENTS[compiled_path], [parent]
+			assert_equal Phlex::Compiler::GENERATION_COMPONENTS[compiled_path].keys, [parent]
 		end
 	end
 
@@ -1431,6 +1432,102 @@ class CompilerLifecycleTest < Quickdraw::Test
 			Phlex::Compiler.compile(LifecycleNamedSub)
 
 			assert compiled_method?(LifecycleNamedSub, :view_template)
+		end
+	end
+
+	test "a component loaded while another compiles, and precompiled as it loads, waits for its first render" do
+		with_component_files(
+			"outer.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleOuter < Phlex::HTML
+					def view_template = div { "outer" }
+				end
+			RUBY
+			"inner.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleInner < Phlex::HTML
+					def view_template = span { "inner" }
+				end
+			RUBY
+		) do
+			failures = []
+			on_failure = -> (component, error) { failures << [component, error.class] }
+
+			with_lazy_compilation do
+				Pause.gate = -> { Phlex::Compiler.precompile(LifecycleInner, on_failure:) }
+				Phlex::Compiler.precompile(LifecycleOuter, on_failure:)
+			ensure
+				Pause.gate = nil
+			end
+
+			assert_equal failures, []
+			assert compiled_method?(LifecycleOuter, :view_template)
+			refute compiled_method?(LifecycleInner, :view_template)
+
+			with_lazy_compilation { assert_equal LifecycleInner.new.call, "<span>inner</span>" }
+			assert compiled_method?(LifecycleInner, :view_template)
+		end
+	end
+
+	test "a subclass whose own file compiled is marked compiled when its parent's file fails" do
+		with_component_files(
+			"partial_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecyclePartialParent < Phlex::HTML
+					def view_template = delegate("parent")
+
+					ruby2_keywords def delegate(*args) = div { plain(*args) }
+				end
+			RUBY
+			"partial_child.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecyclePartialChild < LifecyclePartialParent
+					def view_template = div { "child" }
+				end
+			RUBY
+		) do
+			reports = []
+
+			with_lazy_compilation do
+				Phlex::Compiler.precompile(LifecyclePartialChild, on_failure: -> (component, _error) { reports << component })
+			end
+
+			assert_equal reports, [LifecyclePartialChild]
+			assert compiled_method?(LifecyclePartialChild, :view_template)
+			assert Phlex::Compiler.compiled?(LifecyclePartialChild)
+			refute Phlex::Compiler.compiled?(LifecyclePartialParent)
+			assert Phlex::Compiler::FAILURES.key?(LifecyclePartialParent)
+			refute Phlex::Compiler::FAILURES.key?(LifecyclePartialChild)
+
+			LifecyclePartialChild.freeze
+			LifecyclePartialParent.class_eval { def div(**, &) = super(class: "redefined", &) }
+			assert_equal LifecyclePartialChild.new.call, %(<div class="redefined">child</div>)
+		end
+	end
+
+	test "the compiler doesn't keep unloaded components alive when nothing forgets them" do
+		skip "Needs a precise garbage collector" unless RUBY_ENGINE == "ruby"
+
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "collected.rb")
+			File.write(path, <<~RUBY)
+				# frozen_string_literal: true
+				class LifecycleCollected < Phlex::HTML
+					def view_template = div { "collected" }
+				end
+			RUBY
+
+			references = 10.times.map do
+				load path
+				Phlex::Compiler.compile(LifecycleCollected)
+				reference = WeakRef.new(LifecycleCollected)
+				Object.__send__(:remove_const, :LifecycleCollected)
+				reference
+			end
+
+			GC.start(full_mark: true, immediate_sweep: true)
+
+			assert references.count(&:weakref_alive?) < 10
 		end
 	end
 
