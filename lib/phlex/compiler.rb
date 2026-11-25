@@ -167,8 +167,15 @@ module Phlex::Compiler
 		@enabled = false
 	end
 
+	# The compiler's own state on a class is read and written directly, so a
+	# class overriding instance variable reflection can't change it.
+	IVAR_GET = Kernel.instance_method(:instance_variable_get)
+	IVAR_SET = Kernel.instance_method(:instance_variable_set)
+	IVAR_DEFINED = Kernel.instance_method(:instance_variable_defined?)
+	REMOVE_IVAR = Kernel.instance_method(:remove_instance_variable)
+
 	def self.compiled?(component)
-		component.instance_variable_get(:@__phlex_compiled__) == true
+		IVAR_GET.bind_call(component, :@__phlex_compiled__) == true
 	end
 
 	# Runs on every render, so a component that's compiled, failed to, can't
@@ -289,13 +296,13 @@ module Phlex::Compiler
 			ancestors.each do |ancestor|
 				next if failed.include?(ancestor) || !(files[ancestor] || []).all? { |file| compiled_paths.include?(file) }
 
-				ancestor.instance_variable_set(:@__phlex_compiled__, true)
+				IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true)
 			end
 
 			raise
 		end
 
-		ancestors.each { |ancestor| ancestor.instance_variable_set(:@__phlex_compiled__, true) }
+		ancestors.each { |ancestor| IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true) }
 	end
 
 	# Why parts of the files defining the component and its Phlex ancestors are
@@ -368,14 +375,14 @@ module Phlex::Compiler
 				result.component.__send__(visibility, name) unless visibility == :public
 			end
 
-			inlined = result.component.instance_variable_get(:@__phlex_inlined__) || Set.new
-			result.component.instance_variable_set(:@__phlex_inlined__, (inlined | result.inlined).freeze)
+			inlined = IVAR_GET.bind_call(result.component, :@__phlex_inlined__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined__, (inlined | result.inlined).freeze)
 
-			inlined_svg = result.component.instance_variable_get(:@__phlex_inlined_svg__) || Set.new
-			result.component.instance_variable_set(:@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
+			inlined_svg = IVAR_GET.bind_call(result.component, :@__phlex_inlined_svg__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
 
-			inlined_super = result.component.instance_variable_get(:@__phlex_inlined_super__) || Set.new
-			result.component.instance_variable_set(:@__phlex_inlined_super__, (inlined_super | result.inlined_super).freeze)
+			inlined_super = IVAR_GET.bind_call(result.component, :@__phlex_inlined_super__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined_super__, (inlined_super | result.inlined_super).freeze)
 		end
 
 		nil
@@ -399,21 +406,24 @@ module Phlex::Compiler
 			return unless target.singleton_class?
 		end
 
+		# Another Ractor can't share the main one's reflection, so it takes its own.
+		ivar_get = Phlex.__main_ractor__? ? IVAR_GET : Kernel.instance_method(:instance_variable_get)
+
 		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
 		affected = related.select do |klass|
-			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
+			(inlined = ivar_get.bind_call(klass, :@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end
 
 		# Where `super` goes from a class's own method only changes above it.
 		unless target.singleton_class?
 			affected |= [target, *descendants_of(target)].select do |klass|
-				(inlined = klass.instance_variable_get(:@__phlex_inlined_super__)) && names.any? { |name| inlined.include?(name) }
+				(inlined = ivar_get.bind_call(klass, :@__phlex_inlined_super__)) && names.any? { |name| inlined.include?(name) }
 			end
 		end
 
 		if !target.singleton_class? && Phlex::SVG <= target
 			affected |= loaded_components.select do |klass|
-				(inlined = klass.instance_variable_get(:@__phlex_inlined_svg__)) && names.any? { |name| inlined.include?(name) }
+				(inlined = ivar_get.bind_call(klass, :@__phlex_inlined_svg__)) && names.any? { |name| inlined.include?(name) }
 			end
 		end
 
@@ -435,9 +445,9 @@ module Phlex::Compiler
 		MUTEX.synchronize do
 			# Its subclasses render the methods being replaced too.
 			@recompiling = true
-			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
-			component.remove_instance_variable(:@__phlex_inlined_svg__) if component.instance_variable_defined?(:@__phlex_inlined_svg__)
-			component.remove_instance_variable(:@__phlex_inlined_super__) if component.instance_variable_defined?(:@__phlex_inlined_super__)
+			REMOVE_IVAR.bind_call(component, :@__phlex_inlined__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined__)
+			REMOVE_IVAR.bind_call(component, :@__phlex_inlined_svg__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined_svg__)
+			REMOVE_IVAR.bind_call(component, :@__phlex_inlined_super__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined_super__)
 
 			defining_files(component).each do |path|
 				compile_file(path, components: [component], recompile: true, inline:)
