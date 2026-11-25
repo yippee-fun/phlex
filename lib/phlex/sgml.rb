@@ -47,7 +47,7 @@ class Phlex::SGML
 		@_state = nil if rerenderable && @_state.equal?(state)
 	end
 
-	def internal_call(parent: nil, state: nil, &block)
+	def internal_call(parent: nil, state: nil, &)
 		if @_state
 			raise Phlex::DoubleRenderError.new(
 				"You can't render a #{self.class.name} more than once. To render a component more than once, pass `rerenderable: true` to `call` each time you render it."
@@ -59,33 +59,44 @@ class Phlex::SGML
 
 		return "" unless render?
 
-		block ||= @_content_block
-
 		begin
 			previous_phlex_component = Thread.current[:__phlex_component__]
 			Thread.current[:__phlex_component__] = self
 
-			state.around_render(self) do
-				before_template(&block)
-
-				around_template do
-					if block
-						view_template do |*args|
-							if args.length > 0
-								__yield_content_with_args__(*args, &block)
-							else
-								__yield_content__(&block)
-							end
-						end
-					else
-						view_template
-					end
+			# YJIT stops compiling reads of a block parameter that's nil, a Proc or
+			# was reassigned, so a missing block is checked with `block_given?` and
+			# the block is read once.
+			if block_given?
+				__render_with_content__(state, &)
+			elsif (content_block = @_content_block)
+				__render_with_content__(state, &content_block)
+			else
+				state.around_render(self) do
+					before_template
+					around_template { view_template }
+					after_template
 				end
-
-				after_template(&block)
 			end
 		ensure
 			Thread.current[:__phlex_component__] = previous_phlex_component
+		end
+	end
+
+	private def __render_with_content__(state, &block)
+		state.around_render(self) do
+			before_template(&block)
+
+			around_template do
+				view_template do |*args|
+					if args.length > 0
+						__yield_content_with_args__(*args, &block)
+					else
+						__yield_content__(&block)
+					end
+				end
+			end
+
+			after_template(&block)
 		end
 	end
 
