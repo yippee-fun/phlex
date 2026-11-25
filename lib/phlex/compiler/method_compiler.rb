@@ -232,7 +232,7 @@ module Phlex::Compiler
 		# method is called, so those are only taken when that can't be seen.
 		private def compile_kit_call(node, component)
 			return unless @environment.helper?(:render)
-			return unless node.block in nil | Refract::BlockNode | Refract::BlockArgumentNode[expression: nil | Refract::SymbolNode]
+			return unless node.block in nil | Refract::BlockNode | Refract::BlockArgumentNode[expression: nil]
 
 			arguments = node.arguments&.arguments || []
 			hoisted = []

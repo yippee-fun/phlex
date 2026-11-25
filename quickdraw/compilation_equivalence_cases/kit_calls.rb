@@ -91,6 +91,7 @@ module EquivalenceCases
 				plain value.inspect
 				Card("Forwarded", &block)
 				Card("Lambda", &-> (_card) { plain "from lambda" })
+				Card("Symbol", &:footer_text)
 				Secret()
 				Swappable(swap)
 				Card(title_for(:a), tone: title_for(:b)) { plain @log.join(",") }
