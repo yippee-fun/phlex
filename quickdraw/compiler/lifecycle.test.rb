@@ -1613,6 +1613,42 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a component defining its own class method still compiles on its first render" do
+		with_component_files(
+			"classy.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleClassy < Phlex::HTML
+					def view_template = div { "classy" }
+
+					def class = "card"
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleClassy.new.call, "<div>classy</div>"
+				assert compiled_method?(LifecycleClassy, :view_template)
+			end
+		end
+	end
+
+	test "a class overriding frozen? still compiles on its first render" do
+		with_component_files(
+			"chilly.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleChilly < Phlex::HTML
+					def self.frozen? = raise("not Ruby's")
+
+					def view_template = div { "chilly" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleChilly.new.call, "<div>chilly</div>"
+				assert compiled_method?(LifecycleChilly, :view_template)
+			end
+		end
+	end
+
 	test "a namespace overriding constant reflection doesn't hide a loaded component" do
 		with_component_files(
 			"namespaced.rb" => <<~RUBY
