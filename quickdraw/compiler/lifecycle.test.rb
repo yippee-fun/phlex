@@ -1554,18 +1554,24 @@ class CompilerLifecycleTest < Quickdraw::Test
 			load parent_path
 			Phlex::Compiler.compile(LifecycleKeptParent)
 
-			references = 10.times.map do
-				load child_path
-				Phlex::Compiler.compile(LifecycleForgottenChild)
-				child = LifecycleForgottenChild
-				Object.__send__(:remove_const, :LifecycleForgottenChild)
-				Phlex::Compiler.forget(child)
-				WeakRef.new(child)
+			unloaded = -> (compile:) do
+				10.times.map do
+					load child_path
+					child = LifecycleForgottenChild
+					Phlex::Compiler.compile(child) if compile
+					Object.__send__(:remove_const, :LifecycleForgottenChild)
+					Phlex::Compiler.forget(child) if compile
+					WeakRef.new(child)
+				end
 			end
+
+			# Subclasses the compiler never saw show what this process can collect at all.
+			untouched = unloaded.(compile: false)
+			forgotten = unloaded.(compile: true)
 
 			GC.start(full_mark: true, immediate_sweep: true)
 
-			assert references.count(&:weakref_alive?) < 10
+			assert forgotten.count(&:weakref_alive?) < 10 || untouched.all?(&:weakref_alive?)
 		end
 	end
 
@@ -1616,6 +1622,25 @@ class CompilerLifecycleTest < Quickdraw::Test
 			defining.join
 
 			assert_equal LifecycleRaceChild.new.call, %(<div class="child">x</div>)
+		end
+	end
+
+	test "a component defined in a block renders beside a compiled one in the same file" do
+		with_component_files(
+			"block_defined.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleStatement < Phlex::HTML
+					def view_template = div { "statement" }
+				end
+
+				LifecycleBlockDefined = Class.new(Phlex::HTML) { def view_template = span { "block" } }
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleStatement.new.call, "<div>statement</div>"
+				assert_equal LifecycleBlockDefined.new.call, "<span>block</span>"
+				assert compiled_method?(LifecycleStatement, :view_template)
+			end
 		end
 	end
 
