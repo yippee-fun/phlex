@@ -341,12 +341,15 @@ module Phlex::Compiler
 
 		ancestors = phlex_ancestors(component)
 
-		ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.filter_map do |path|
-			parse_result, _results, formatting_result = generate(path, components: ancestors, recompile: true, inline: true, visibilities: true)
-			next unless parse_result
+		# A compilation in progress has its methods' visibility restored once it's done.
+		MUTEX.synchronize do
+			ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.filter_map do |path|
+				parse_result, _results, formatting_result = generate(path, components: ancestors, recompile: true, inline: true, visibilities: true)
+				next unless parse_result
 
-			"#{magic_comments(parse_result)}# #{path}\n#{formatting_result.source}"
-		end.join("\n")
+				"#{magic_comments(parse_result)}# #{path}\n#{formatting_result.source}"
+			end.join("\n")
+		end
 	end
 
 	# Parses the file and compiles the components' definitions in it, without

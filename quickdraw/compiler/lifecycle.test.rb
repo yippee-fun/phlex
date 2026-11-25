@@ -1573,7 +1573,9 @@ class CompilerLifecycleTest < Quickdraw::Test
 	module InstallPause
 		def without_redefinition_warnings(&)
 			Thread.current[:lifecycle_install_gate]&.call
-			super
+			result = super
+			Thread.current[:lifecycle_installed_gate]&.call
+			result
 		end
 	end
 
@@ -1616,6 +1618,40 @@ class CompilerLifecycleTest < Quickdraw::Test
 			defining.join
 
 			assert_equal LifecycleRaceChild.new.call, %(<div class="child">x</div>)
+		end
+	end
+
+	test "source waits for a compilation restoring visibility" do
+		with_component_files(
+			"race_source.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRaceSource < Phlex::HTML
+					def view_template = header
+
+					private
+
+					def header = h1 { "x" }
+				end
+			RUBY
+		) do
+			paused = Queue.new
+			resume = Queue.new
+			compiling = Thread.new do
+				Thread.current[:lifecycle_installed_gate] = -> {
+					Thread.current[:lifecycle_installed_gate] = nil
+					paused << true
+					resume.pop
+				}
+				Phlex::Compiler.compile(LifecycleRaceSource)
+			end
+
+			compiling.join unless paused.pop(timeout: 5)
+			reading = Thread.new { Phlex::Compiler.source(LifecycleRaceSource) }
+			Thread.pass until !reading.alive? || reading.backtrace&.any? { |line| line.include?("synchronize") }
+			resume << true
+			compiling.join
+
+			assert reading.value.include?("private(:header)")
 		end
 	end
 
