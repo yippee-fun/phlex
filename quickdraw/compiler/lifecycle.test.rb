@@ -1042,4 +1042,68 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert_equal LifecycleUndefChild.new.call, "fine"
 		end
 	end
+
+	test "super from an override of an element is compiled as the element" do
+		with_component_files(
+			"super.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSuper < Phlex::HTML
+					def view_template = h1(id: "title") { yielded_by_element? ? "element" : "compiled" }
+
+					def h1(**attrs, &)
+						super(**mix(attrs, class: "font-bold"), &)
+					end
+
+					def yielded_by_element? = caller_locations.any? { |location| location.path == Phlex::Compiler::Environment::ELEMENTS_SOURCE_PATH }
+				end
+			RUBY
+		) do
+			assert_equal LifecycleSuper.new.call, %(<h1 id="title" class="font-bold">element</h1>)
+
+			Phlex::Compiler.compile(LifecycleSuper)
+			assert compiled_method?(LifecycleSuper, :h1)
+			assert_equal LifecycleSuper.instance_variable_get(:@__phlex_inlined_super__), Set[:h1]
+			assert_equal LifecycleSuper.new.call, %(<h1 id="title" class="font-bold">compiled</h1>)
+		end
+	end
+
+	test "a module mixed in under an override whose super was compiled takes effect" do
+		with_component_files(
+			"super_included.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSuperIncluded < Phlex::HTML
+					def view_template = h1 { "Hello" }
+					def h1(**, &) = super
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleSuperIncluded)
+			assert_equal LifecycleSuperIncluded.new.call, "<h1>Hello</h1>"
+
+			LifecycleSuperIncluded.include(Module.new { def h1(**, &) = plain("included h1") })
+			assert_equal LifecycleSuperIncluded.new.call, "included h1"
+		end
+	end
+
+	test "overriding an element whose super was compiled, on an instance or a subclass, leaves the compiled override alone" do
+		with_component_files(
+			"super_overridden.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSuperOverridden < Phlex::HTML
+					def view_template = h1 { "Hello" }
+					def h1(**, &) = super(class: "x", &)
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleSuperOverridden)
+			location = LifecycleSuperOverridden.instance_method(:h1).source_location
+
+			instance = LifecycleSuperOverridden.new
+			instance.define_singleton_method(:h1) { |**, &block| span { super(&block) } }
+			assert_equal instance.call, %(<span><h1 class="x">Hello</h1></span>)
+
+			Class.new(LifecycleSuperOverridden) { def h1(**, &) = plain("subclass") }
+			assert_equal LifecycleSuperOverridden.instance_method(:h1).source_location, location
+		end
+	end
 end
