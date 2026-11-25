@@ -64,9 +64,9 @@ class Phlex::SGML
 			Thread.current[:__phlex_component__] = self
 
 			# YJIT stops compiling reads of a block parameter that's nil, a Proc or
-			# was reassigned, so a missing block is checked with `block_given?` and
-			# the block is read once.
-			if block_given?
+			# was reassigned, so a missing block is checked with `defined?(yield)`,
+			# which a component can't override, and the block is read once.
+			if defined?(yield)
 				__render_with_content__(state, &)
 			elsif (content_block = @_content_block)
 				__render_with_content__(state, &content_block)
