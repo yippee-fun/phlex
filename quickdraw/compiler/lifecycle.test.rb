@@ -1265,6 +1265,42 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "forgetting components doesn't autoload what replaced them" do
+		with_component_files(
+			"autoloaded.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleAutoloadedGone < Phlex::HTML
+					def view_template = div { "gone" }
+				end
+
+				class LifecycleAutoloadedOther < Phlex::HTML
+					def view_template = div { "other" }
+				end
+			RUBY
+			"replacement.rb" => <<~RUBY
+				# frozen_string_literal: true
+				$lifecycle_replacement_loaded = true
+			RUBY
+		) do |(path, replacement)|
+			gone = LifecycleAutoloadedGone
+			other = LifecycleAutoloadedOther
+			Phlex::Compiler.compile_file(path, components: [gone, other])
+			$lifecycle_replacement_loaded = false
+
+			Object.__send__(:remove_const, :LifecycleAutoloadedGone)
+			Object.__send__(:remove_const, :LifecycleAutoloadedOther)
+			Object.autoload(:LifecycleAutoloadedGone, replacement)
+			Object.autoload(:LifecycleAutoloadedOther, replacement)
+			Phlex::Compiler.forget(gone, other)
+
+			refute $lifecycle_replacement_loaded
+			refute Phlex::Compiler::GENERATION_COMPONENTS.key?(other.instance_method(:view_template).source_location[0])
+		ensure
+			Object.__send__(:remove_const, :LifecycleAutoloadedGone) if Object.autoload?(:LifecycleAutoloadedGone)
+			Object.__send__(:remove_const, :LifecycleAutoloadedOther) if Object.autoload?(:LifecycleAutoloadedOther)
+		end
+	end
+
 	test "a live component can't be forgotten" do
 		with_component_files(
 			"remembered.rb" => <<~RUBY
