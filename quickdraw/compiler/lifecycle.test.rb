@@ -1554,18 +1554,24 @@ class CompilerLifecycleTest < Quickdraw::Test
 			load parent_path
 			Phlex::Compiler.compile(LifecycleKeptParent)
 
-			references = 10.times.map do
-				load child_path
-				Phlex::Compiler.compile(LifecycleForgottenChild)
-				child = LifecycleForgottenChild
-				Object.__send__(:remove_const, :LifecycleForgottenChild)
-				Phlex::Compiler.forget(child)
-				WeakRef.new(child)
+			unloaded = -> (compile:) do
+				10.times.map do
+					load child_path
+					child = LifecycleForgottenChild
+					Phlex::Compiler.compile(child) if compile
+					Object.__send__(:remove_const, :LifecycleForgottenChild)
+					Phlex::Compiler.forget(child) if compile
+					WeakRef.new(child)
+				end
 			end
+
+			# Subclasses the compiler never saw show what this process can collect at all.
+			untouched = unloaded.(compile: false)
+			forgotten = unloaded.(compile: true)
 
 			GC.start(full_mark: true, immediate_sweep: true)
 
-			assert references.count(&:weakref_alive?) < 10
+			assert forgotten.count(&:weakref_alive?) < 10 unless untouched.all?(&:weakref_alive?)
 		end
 	end
 
