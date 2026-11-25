@@ -291,6 +291,7 @@ module Phlex::Compiler
 		components = ancestors.select { |ancestor| live?(ancestor) }
 
 		files = components.to_h { |ancestor| [ancestor, defining_files(ancestor)] }.compare_by_identity
+		definitions = components.to_h { |ancestor| [ancestor, definitions(ancestor)] }.compare_by_identity
 		compiled_paths = []
 
 		files.values.flatten.uniq.each do |path|
@@ -299,13 +300,13 @@ module Phlex::Compiler
 		rescue StandardError, ScriptError, SystemStackError
 			failed.concat(components.select { |ancestor| files[ancestor].include?(path) })
 
-			# One whose files all compiled is marked compiled. The rest go back to
-			# their original definitions, so none is left compiled in some files.
+			# One whose files all compiled is marked compiled. The rest get back the
+			# methods they had, so none is left compiled in some files.
 			ancestors.each do |ancestor|
 				if !failed.include?(ancestor) && (files[ancestor] || []).all? { |file| compiled_paths.include?(file) }
 					IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true)
-				elsif files.key?(ancestor)
-					uncompile(ancestor)
+				elsif definitions.key?(ancestor)
+					restore(ancestor, definitions[ancestor])
 				end
 			end
 
@@ -534,18 +535,37 @@ module Phlex::Compiler
 		end
 	end
 
-	# Reinstalls the original definitions in each file where the component has
-	# compiled methods, after a compilation that failed partway through.
-	def self.uncompile(component)
+	VISIBILITIES = { public: Module.instance_method(:public_instance_methods), private: Module.instance_method(:private_instance_methods), protected: Module.instance_method(:protected_instance_methods) }.freeze
+	DEFINE_METHOD = Module.instance_method(:define_method)
+
+	# The component's own methods as they are, with their visibility.
+	def self.definitions(component)
+		VISIBILITIES.flat_map do |visibility, list|
+			list.bind_call(component, false).map { |name| [name, Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name), visibility] }
+		end
+	end
+
+	# Puts back the methods a compilation that failed partway through replaced.
+	# Ruby defines each before calling `method_added`, so one that raises
+	# doesn't stop the rest, and the compilation's own error is the one raised.
+	def self.restore(component, definitions)
+		without_redefinition_warnings do
+			definitions.each do |name, method, visibility|
+				current = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
+				# Only what compiling installed, not what another thread defined meanwhile.
+				next if current == method || !Phlex.__compiled_source_maps__.key?(current.source_location&.first)
+
+				begin
+					DEFINE_METHOD.bind_call(component, name, method)
+				rescue StandardError, ScriptError, SystemStackError
+					nil
+				end
+
+				component.__send__(visibility, name)
+			end
+		end
+
 		forget_inlined(component)
-
-		paths = own_methods(component).filter_map do |name|
-			Phlex.__compiled_source_maps__[Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name).source_location&.first]&.path
-		end
-
-		paths.uniq.each do |path|
-			compile_file(path, components: [component], recompile: true, inline: false)
-		end
 	end
 
 	def self.forget_inlined(component)
