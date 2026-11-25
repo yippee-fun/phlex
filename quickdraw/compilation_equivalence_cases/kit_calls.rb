@@ -128,6 +128,24 @@ module EquivalenceCases
 			end
 		end
 
+		module Listing
+			extend Phlex::Kit
+
+			class Hidden < Phlex::HTML
+				def view_template = plain("hidden")
+			end
+
+			private_constant :Hidden
+
+			def self.constants(...) = [*super, :Hidden]
+		end
+
+		class ListingKitCall < Phlex::HTML
+			include Listing
+
+			def view_template = Hidden()
+		end
+
 		class OverridesKitMethod < Phlex::HTML
 			include Components
 

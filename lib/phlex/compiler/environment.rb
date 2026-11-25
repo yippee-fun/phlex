@@ -14,6 +14,8 @@ class Phlex::Compiler::Environment
 	].freeze
 
 	METHOD = Kernel.instance_method(:method)
+	CONSTANTS = Module.instance_method(:constants)
+	CONST_GET = Module.instance_method(:const_get)
 	KIT_SOURCE_PATH = Phlex::Kit.instance_method(:const_added).source_location[0]
 
 	Element = Data.define(:tag, :void)
@@ -235,10 +237,10 @@ class Phlex::Compiler::Environment
 
 	private def public_path?(path)
 		path.split("::").reduce(Object) do |namespace, name|
-			return false unless Module === namespace && namespace.constants.include?(name.to_sym)
+			return false unless Module === namespace && CONSTANTS.bind_call(namespace).include?(name.to_sym)
 			return false unless METHOD.bind_call(namespace, :const_get).owner.equal?(Module)
 
-			namespace.const_get(name, false)
+			CONST_GET.bind_call(namespace, name, false)
 		end
 
 		true
