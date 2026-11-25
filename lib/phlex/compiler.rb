@@ -558,14 +558,20 @@ module Phlex::Compiler
 	def self.restore(component, (methods, inlined))
 		without_redefinition_warnings do
 			methods.each do |name, method, visibility|
-				current = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
-				# Only what compiling installed, not what another thread defined meanwhile.
+				# Only what compiling installed, not what another thread defined or removed meanwhile.
+				current = begin
+					Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
+				rescue NameError
+					next
+				end
+
 				next if current == method || !Phlex.__compiled_source_maps__.key?(current.source_location&.first)
 
 				begin
 					DEFINE_METHOD.bind_call(component, name, method)
 				rescue StandardError, ScriptError, SystemStackError
-					nil
+					# A class frozen meanwhile never defines it.
+					next unless Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name) == method
 				end
 
 				component.__send__(visibility, name)
