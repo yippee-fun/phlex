@@ -83,4 +83,39 @@ class FIFOCacheStoreTest < Quickdraw::Test
 		assert_equal miss, value
 		assert_equal hit, miss
 	end
+
+	test "a hit is a frozen copy that changing the cached value doesn't change" do
+		store = Phlex::FIFOCacheStore.new
+		value = [+"<div>", { "a" => [0, 5, []] }]
+
+		store.fetch("a") { value }
+		value[0] << "changed"
+		value[1]["a"][2] << "b"
+
+		hit = store.fetch("a") { failure! { "This block should not have been called." } }
+
+		assert_equal hit, ["<div>", { "a" => [0, 5, []] }]
+		assert_equal store.fetch("a") { nil }.equal?(hit), defined?(::Ractor) ? true : false
+
+		if defined?(::Ractor)
+			assert ::Ractor.shareable?(hit)
+			assert_raises(FrozenError) { hit[0] << "x" }
+		end
+	end
+
+	test "values that can't be serialised aren't cached" do
+		store = Phlex::FIFOCacheStore.new
+
+		assert_raises(TypeError) { store.fetch("a") { proc {} } }
+		assert_equal store.fetch("a") { "A" }, "A"
+	end
+
+	test "evicts by the size of the serialised value" do
+		store = Phlex::FIFOCacheStore.new(max_bytesize: 40)
+
+		store.fetch("a") { "a" * 20 }
+		store.fetch("b") { "b" * 20 }
+
+		assert_equal store.fetch("a") { "missed" }, "missed"
+	end
 end
