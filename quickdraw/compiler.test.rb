@@ -337,6 +337,35 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 	end
 
+	test "a token chosen with && is serialised per branch, like one chosen with if" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				div(class: ["card", (@active && "active")])
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					__phlex_value_1__ = if @active
+						true
+					else
+						false
+					end
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("<div").<<(if __phlex_value_1__
+							' class="card active"'
+						else
+							' class="card"'
+						end).<<("></div>")
+					end
+					nil)
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
 	test "a conditional over literal content fuses into the append" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a
