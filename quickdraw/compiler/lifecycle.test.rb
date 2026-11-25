@@ -1585,7 +1585,9 @@ class CompilerLifecycleTest < Quickdraw::Test
 	module InstallPause
 		def without_redefinition_warnings(&)
 			Thread.current[:lifecycle_install_gate]&.call
-			super
+			result = super
+			Thread.current[:lifecycle_installed_gate]&.call
+			result
 		end
 	end
 
@@ -1628,6 +1630,74 @@ class CompilerLifecycleTest < Quickdraw::Test
 			defining.join
 
 			assert_equal LifecycleRaceChild.new.call, %(<div class="child">x</div>)
+		end
+	end
+
+	test "source waits for a compilation restoring visibility" do
+		with_component_files(
+			"race_source.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRaceSource < Phlex::HTML
+					def view_template = header
+
+					private
+
+					def header = h1 { "x" }
+				end
+			RUBY
+		) do
+			paused = Queue.new
+			resume = Queue.new
+			compiling = Thread.new do
+				Thread.current[:lifecycle_installed_gate] = -> {
+					Thread.current[:lifecycle_installed_gate] = nil
+					paused << true
+					resume.pop
+				}
+				Phlex::Compiler.compile(LifecycleRaceSource)
+			end
+
+			compiling.join unless paused.pop(timeout: 5)
+			reading = Thread.new { Phlex::Compiler.source(LifecycleRaceSource) }
+			Thread.pass until !reading.alive? || reading.backtrace&.first&.include?("synchronize")
+			resume << true
+			compiling.join
+
+			assert reading.value.include?("private(:header)")
+		end
+	end
+
+	test "source waits for a direct compile_file restoring visibility" do
+		with_component_files(
+			"race_file_source.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRaceFileSource < Phlex::HTML
+					def view_template = header
+
+					private
+
+					def header = h1 { "x" }
+				end
+			RUBY
+		) do |(path)|
+			paused = Queue.new
+			resume = Queue.new
+			compiling = Thread.new do
+				Thread.current[:lifecycle_installed_gate] = -> {
+					Thread.current[:lifecycle_installed_gate] = nil
+					paused << true
+					resume.pop
+				}
+				Phlex::Compiler.compile_file(path, components: [LifecycleRaceFileSource])
+			end
+
+			compiling.join unless paused.pop(timeout: 5)
+			reading = Thread.new { Phlex::Compiler.source(LifecycleRaceFileSource) }
+			Thread.pass until !reading.alive? || reading.backtrace&.first&.include?("synchronize")
+			resume << true
+			compiling.join
+
+			assert reading.value.include?("private(:header)")
 		end
 	end
 
@@ -1941,6 +2011,74 @@ class CompilerLifecycleTest < Quickdraw::Test
 			end
 
 			refute compiled_method?(LifecycleDisabled, :view_template)
+		end
+	end
+
+	test "source returns the Ruby a component compiles to, without compiling it" do
+		with_component_files(
+			"source.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSource < Phlex::HTML
+					def view_template = div(class: "card") { "source" }
+
+					def helper = "not compiled"
+
+					private def item = span { "item" }
+				end
+			RUBY
+		) do |(path)|
+			source = Phlex::Compiler.source(LifecycleSource)
+
+			refute compiled_method?(LifecycleSource, :view_template)
+			assert source.start_with?("# -*- coding: UTF-8; frozen_string_literal: true -*-\n# #{path}\n")
+			assert source.include?("private(:item)\n")
+			assert source.include?("class LifecycleSource")
+			assert source.include?("def view_template")
+			assert source.include?(%(<div class="card">source</div>))
+			refute source.include?("def helper")
+
+			Phlex::Compiler.compile(LifecycleSource)
+			assert_equal Phlex::Compiler.source(LifecycleSource), source
+		end
+	end
+
+	test "source declares visibility inside the class, so it evaluates for a private constant" do
+		with_component_files(
+			"private_constant.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSourceNamespace
+					class Hidden < Phlex::HTML
+						def view_template = item
+
+						private def item = span { "hidden" }
+					end
+
+					private_constant :Hidden
+
+					def self.render = Hidden.new.call
+				end
+			RUBY
+		) do
+			component = LifecycleSourceNamespace.const_get(:Hidden)
+			source = Phlex::Compiler.source(component)
+
+			eval(source, TOPLEVEL_BINDING.dup, "(source)", 1)
+
+			assert component.private_method_defined?(:item)
+			assert_equal LifecycleSourceNamespace.render, "<span>hidden</span>"
+		end
+	end
+
+	test "source is empty when nothing would be compiled" do
+		with_component_files(
+			"nothing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleNothingToSource < Phlex::HTML
+					def label = "plain Ruby"
+				end
+			RUBY
+		) do
+			assert_equal Phlex::Compiler.source(LifecycleNothingToSource), ""
 		end
 	end
 
