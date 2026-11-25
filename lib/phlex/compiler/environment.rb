@@ -45,6 +45,10 @@ class Phlex::Compiler::Environment
 	# The Phlex::SVG methods an inlined svg block relies on.
 	attr_reader :inlined_svg
 
+	# The element names whose `super`, from the class's own override, compiled
+	# methods have baked in.
+	attr_reader :inlined_super
+
 	# With `inline: false` nothing is recognised, so every method compiles to
 	# its original definition. Used to restore a class before it's frozen.
 	def initialize(component, standard_set: standard_set_on?(component), method_resolver: Phlex::UNBOUND_INSTANCE_METHOD_METHOD.method(:bind_call), inline: true)
@@ -54,8 +58,10 @@ class Phlex::Compiler::Environment
 		@inline = inline
 		@elements = {}
 		@helpers = {}
+		@super_elements = {}
 		@inlined = Set.new
 		@inlined_svg = Set.new
+		@inlined_super = Set.new
 	end
 
 	def standard_set? = @standard_set
@@ -67,6 +73,16 @@ class Phlex::Compiler::Environment
 		return @elements[name] if @elements.key?(name)
 
 		@elements[name] = resolve_element(name)
+	end
+
+	# The element `super` renders from the class's own definition of the
+	# method, if that's the registered element. A descendant overriding it
+	# doesn't change where `super` goes.
+	def super_element(name)
+		return unless @inline && kernel_block_given?
+		return @super_elements[name] if @super_elements.key?(name)
+
+		@super_elements[name] = resolve_super_element(name)
 	end
 
 	# Whether a bare call to the method reaches one of the SGML helpers, such
@@ -149,7 +165,22 @@ class Phlex::Compiler::Environment
 	end
 
 	private def resolve_element(name)
-		return unless (method = instance_method(name))
+		return unless (method = instance_method(name)) && (element = registered_element(method, name))
+		return if overridden_by_descendant?(name, method.owner)
+
+		element
+	end
+
+	# A module prepended to the class can sit in front of its own definition.
+	private def resolve_super_element(name)
+		method = instance_method(name)
+		method = method.super_method until method.nil? || method.owner.equal?(@component)
+
+		registered_element(method.super_method, name) if method
+	end
+
+	private def registered_element(method, name)
+		return unless method
 
 		owner = method.owner
 		return unless owner.respond_to?(:__element_registry__)
@@ -157,7 +188,6 @@ class Phlex::Compiler::Environment
 
 		registry = owner.__element_registry__
 		return unless (tag = registry.elements[name])
-		return if overridden_by_descendant?(name, owner)
 
 		Element.new(tag:, void: registry.void_elements.key?(name))
 	end
