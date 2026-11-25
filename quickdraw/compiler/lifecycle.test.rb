@@ -1106,6 +1106,35 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "forgetting an unloaded component keeps source maps another live component still uses" do
+		with_component_files(
+			"shared.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSharedGone < Phlex::HTML
+					def view_template = div { "gone" }
+				end
+
+				class LifecycleSharedLive < Phlex::HTML
+					def view_template = div { "live" }
+				end
+			RUBY
+		) do
+			gone = LifecycleSharedGone
+			live = LifecycleSharedLive
+			Phlex::Compiler.compile_file(gone.instance_method(:view_template).source_location[0], components: [gone, live])
+			compiled_path = live.instance_method(:view_template).source_location[0]
+			assert_equal gone.instance_method(:view_template).source_location[0], compiled_path
+
+			Object.__send__(:remove_const, :LifecycleSharedGone)
+			Phlex::Compiler.forget(gone)
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+
+			Object.__send__(:remove_const, :LifecycleSharedLive)
+			Phlex::Compiler.forget(live)
+			refute Phlex.__compiled_source_maps__.key?(compiled_path)
+		end
+	end
+
 	test "a live component can't be forgotten" do
 		with_component_files(
 			"remembered.rb" => <<~RUBY
