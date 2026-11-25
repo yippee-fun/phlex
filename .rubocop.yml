@@ -5,8 +5,7 @@ AllCops:
   TargetRubyVersion: 3.3
   Exclude:
     - "quickdraw/compilation_equivalence_cases/**/*.rb"
-    - "phlex-native/pkg/**/*"
-    - "phlex-native/tmp/**/*"
+    - "tmp/**/*"
 
 # We need to disable this cop because it’s not compatible with TruffleRuby 23.1, which still needs a `require "set"`
 Lint/RedundantRequireStatement:

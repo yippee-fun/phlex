@@ -43,7 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest", "macos-latest"]
-        # phlex-native supports the latest stable Ruby.
+        # The C extension supports the latest stable Ruby.
         ruby-version:
           - "4.0"
           - "head"
@@ -65,9 +65,8 @@ jobs:
       - name: Install Chromium for browser tests
         run: bundle exec qd browser install chromium
 
-      - name: Compile phlex-native
-        working-directory: phlex-native
-        run: bundle install --jobs 4 && bundle exec rake compile
+      - name: Compile the C extension
+        run: bundle exec rake compile
 
       - name: Quickdraw Tests
         env:
@@ -91,11 +90,10 @@ jobs:
         run: |
           bundle install --jobs 4
 
-      - name: Compile phlex-native with AddressSanitizer and UndefinedBehaviorSanitizer
-        working-directory: phlex-native
+      - name: Compile the C extension with AddressSanitizer and UndefinedBehaviorSanitizer
         env:
           PHLEX_NATIVE_SANITIZE: "true"
-        run: bundle install --jobs 4 && bundle exec rake compile
+        run: bundle exec rake compile
 
       - name: Differential tests while the GC compacts and runs constantly
         env:
@@ -103,7 +101,60 @@ jobs:
           PHLEX_NATIVE_STRESS: "true"
           PHLEX_NATIVE_SANITIZE: "true"
           ASAN_OPTIONS: "detect_leaks=0"
-        run: bundle exec qd ./phlex-native/quickdraw/attributes.test.rb
+        run: bundle exec qd ./quickdraw/native/attributes.test.rb
+
+  # Installs the built gem the way users do, checking the C extension is built only where it can be.
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { ruby-version: "4.0", native: true }
+          - { ruby-version: "4.0", native: false, hide-build-tools: true }
+          - { ruby-version: "3.3", native: false }
+          - { ruby-version: "jruby", native: false }
+          - { ruby-version: "truffleruby", native: false }
+
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby-version }}
+          bundler-cache: false
+
+      - name: Build the gem
+        run: gem build phlex.gemspec --output phlex.gem
+
+      # Phlex's dependencies have C extensions too, so they're installed first.
+      - name: Hide the C compiler and make
+        if: matrix.hide-build-tools
+        run: |
+          gem install ./phlex.gem && gem uninstall phlex --executables
+          mkdir "$RUNNER_TEMP/no-build-tools"
+          for name in gcc cc clang make; do
+            printf '#!/bin/sh\nexit 1\n' > "$RUNNER_TEMP/no-build-tools/$name"
+            chmod +x "$RUNNER_TEMP/no-build-tools/$name"
+          done
+          echo "$RUNNER_TEMP/no-build-tools" >> "$GITHUB_PATH"
+
+      - name: Install the gem
+        run: gem install ./phlex.gem --verbose
+
+      - name: Render
+        env:
+          NATIVE: ${{ matrix.native }}
+        run: |
+          ruby -e '
+            require "phlex"
+            native = !!defined?(Phlex::Native)
+            abort "Expected the C extension to be #{ENV["NATIVE"] == "true" ? "loaded" : "missing"}." unless native == (ENV["NATIVE"] == "true")
+            output = Class.new(Phlex::HTML) { def view_template = a(href: "/", class: ["a", :b]) { "Hi" } }.call
+            abort output unless output == %(<a href="/" class="a b">Hi</a>)
+            puts "Rendered #{native ? "with" : "without"} the C extension."
+          '
 
   rubocop:
     runs-on: "ubuntu-latest"

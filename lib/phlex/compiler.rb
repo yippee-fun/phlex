@@ -271,6 +271,9 @@ module Phlex::Compiler
 
 			inlined_svg = result.component.instance_variable_get(:@__phlex_inlined_svg__) || Set.new
 			result.component.instance_variable_set(:@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
+
+			inlined_super = result.component.instance_variable_get(:@__phlex_inlined_super__) || Set.new
+			result.component.instance_variable_set(:@__phlex_inlined_super__, (inlined_super | result.inlined_super).freeze)
 		end
 
 		nil
@@ -289,6 +292,13 @@ module Phlex::Compiler
 		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
 		affected = related.select do |klass|
 			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
+		end
+
+		# Where `super` goes from a class's own method only changes above it.
+		unless target.singleton_class?
+			affected |= [target, *descendants_of(target)].select do |klass|
+				(inlined = klass.instance_variable_get(:@__phlex_inlined_super__)) && names.any? { |name| inlined.include?(name) }
+			end
 		end
 
 		if !target.singleton_class? && Phlex::SVG <= target
@@ -317,6 +327,7 @@ module Phlex::Compiler
 			@recompiling = true
 			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
 			component.remove_instance_variable(:@__phlex_inlined_svg__) if component.instance_variable_defined?(:@__phlex_inlined_svg__)
+			component.remove_instance_variable(:@__phlex_inlined_super__) if component.instance_variable_defined?(:@__phlex_inlined_super__)
 
 			defining_files(component).each do |path|
 				compile_file(path, components: [component], recompile: true, inline:)

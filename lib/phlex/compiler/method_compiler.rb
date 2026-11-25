@@ -99,6 +99,7 @@ module Phlex::Compiler
 				return node
 			end
 
+			@definition = node
 			parameters = without_compiling_calls(because: "it's in a parameter default") { visit(node.parameters) }
 			body = visit(node.body)
 
@@ -118,6 +119,18 @@ module Phlex::Compiler
 			end
 
 			super(node)
+		end
+
+		# In an override of an element, `super` that reaches the registered element
+		# renders it, as a call to the element would.
+		[Refract::SuperNode, Refract::ForwardingSuperNode].each do |super_node|
+			visit super_node do |node|
+				if @compiling_calls && statement?(node) && (compiled = compile_super(node))
+					return compiled
+				end
+
+				super(node)
+			end
 		end
 
 		# A block passed to a method we don't know about might be evaluated against a
@@ -204,7 +217,7 @@ module Phlex::Compiler
 			appends = @appends
 
 			compiled = if (element = @environment.element(node.name))
-				element.void ? compile_void_element(node, element.tag) : compile_standard_element(node, element.tag)
+				compile_element(node, element)
 			elsif @environment.helper?(node.name)
 				case node.name
 				in :plain then compile_plain(node)
@@ -262,6 +275,49 @@ module Phlex::Compiler
 			in Refract::SplatNode | Refract::BlockArgumentNode | Refract::ForwardingArgumentsNode then false
 			in Refract::KeywordHashNode then argument.elements.all? { |assoc| assoc in Refract::AssocNode[key: Refract::SymbolNode | Refract::StringNode] }
 			else true
+			end
+		end
+
+		private def compile_element(node, element)
+			element.void ? compile_void_element(node, element.tag) : compile_standard_element(node, element.tag)
+		end
+
+		# `super` passes the method's block when it isn't given one, which a void
+		# element ignores, and the method's parameters when it isn't given
+		# arguments, which is only reproduced for keywords gathered into `**`.
+		# Kept as a call, it stays a `super`, with anything compiled inside its
+		# block.
+		private def compile_super(node)
+			return unless (name = @definition.name) && (element = @environment.super_element(name))
+
+			arguments = case node
+				in Refract::SuperNode then node.arguments
+				in Refract::ForwardingSuperNode then super_arguments or return
+			end
+
+			block = node.block || (Refract::BlockArgumentNode.new(expression: nil) unless element.void)
+			appends = @appends
+			compiled = compile_element(Refract::CallNode.new(name:, arguments:, block:), element)
+			@environment.inlined_super << name if @appends > appends || !(Refract::CallNode === compiled)
+
+			case [compiled, node]
+			in [Refract::CallNode, Refract::SuperNode] then node.copy(arguments: compiled.arguments, block: node.block && compiled.block)
+			in [Refract::CallNode, Refract::ForwardingSuperNode] then node.copy(block: node.block && compiled.block)
+			else compiled
+			end
+		end
+
+		# Anonymous keywords can't be forwarded from a block, and compiled
+		# content can end up in one, so they're only forwarded by a `super` in
+		# the method's own statements.
+		private def super_arguments
+			case @definition.parameters
+			in nil | Refract::ParametersNode[requireds: [], optionals: [], rest: nil, posts: [], keywords: [], keyword_rest: nil]
+				Refract::ArgumentsNode.new(arguments: [])
+			in Refract::ParametersNode[requireds: [], optionals: [], rest: nil, posts: [], keywords: [], keyword_rest: Refract::KeywordRestParameterNode[name:]] if name || @stack[-2].equal?(@definition.body)
+				Refract::ArgumentsNode.new(arguments: [Refract::KeywordHashNode.new(elements: [Refract::AssocSplatNode.new(value: name && read(name))])])
+			else
+				nil
 			end
 		end
 

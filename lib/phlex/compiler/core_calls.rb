@@ -109,7 +109,7 @@ module Phlex::Compiler::CoreCalls
 	end
 
 	# The snapshot is taken when the compiler loads, which may be after an
-	# override, so helpers must also still be Phlex's own, or phlex-native's.
+	# override, so helpers must also still be Phlex's own, or its C extension's.
 	private def defined_by_phlex?(method)
 		if (path = method.source_location&.first)
 			path.start_with?(PHLEX_PATH)
