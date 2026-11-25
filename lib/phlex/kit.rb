@@ -47,17 +47,16 @@ module Phlex::Kit
 	NAME = Module.instance_method(:name)
 	CONST_GET = Module.instance_method(:const_get)
 
-	# How a method can reach a kit by name, which a module nested in an
-	# anonymous one doesn't have. A constant can be made private after its
-	# kit's components are defined, so each is looked up with `const_get`.
+	# The constants a method can reach a kit by, one `const_get` at a time,
+	# which a module nested in an anonymous one doesn't have. Each is looked
+	# up with `const_get`, since a constant can be made private after its
+	# kit's components are defined, and compiled code makes the same calls.
 	# Defined here rather than on the kit, whose own methods could replace it.
-	def self.named_reference(kit)
+	def self.named_path(kit)
 		return unless (name = NAME.bind_call(kit))
 
-		path = name.split("::")
-		return unless path.reduce(Object) { |namespace, constant| CONST_GET.bind_call(namespace, constant, false) }.equal?(kit)
-
-		["::Object", *path.map { |constant| "const_get(:#{constant})" }].join(".")
+		path = name.split("::").map(&:to_sym)
+		path if path.reduce(Object) { |namespace, constant| CONST_GET.bind_call(namespace, constant, false) }.equal?(kit)
 	rescue NameError, TypeError
 		nil
 	end
@@ -75,8 +74,8 @@ module Phlex::Kit
 				# Defined from a string so they can be called from any Ractor. A named
 				# kit is looked up by its name, as compiled code does, so a reloaded
 				# kit's component is found even from a component that wasn't reloaded.
-				reference = if (kit = Phlex::Kit.named_reference(self))
-					"#{kit}.const_get(:#{name})"
+				reference = if (path = Phlex::Kit.named_path(self))
+					["::Object", *[*path, name].map { |constant| "const_get(:#{constant})" }].join(".")
 				elsif name in :BEGIN | :END
 					"::Module.nesting.first.const_get(:#{name})"
 				else

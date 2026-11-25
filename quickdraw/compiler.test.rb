@@ -683,7 +683,7 @@ class CompilerTest < Quickdraw::Test
 		compiled = Phlex::Compiler::MethodCompiler.new(Phlex::Compiler::Environment.new(component), "/components/test.rb").compile(node)
 		source = Refract::Formatter.new.format_node(compiled).source
 
-		assert source.include?('render(::CompilerTestKit::Card.new("Title")) {')
+		assert source.include?('render(::Object.const_get(:CompilerTestKit).const_get(:Card).new("Title")) {')
 		refute source.include?("Card(")
 	ensure
 		Object.__send__(:remove_const, :CompilerTestKit)

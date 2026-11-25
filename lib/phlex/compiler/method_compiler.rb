@@ -266,8 +266,15 @@ module Phlex::Compiler
 			# Counted as compiled output, so a block it's in is only used with self unchanged.
 			@appends += 1
 			@environment.inlined.merge([node.name, :render])
-			new_component = Refract::CallNode.new(receiver: constant(component), name: :new, arguments: arguments.empty? ? nil : Refract::ArgumentsNode.new(arguments:))
+			new_component = Refract::CallNode.new(receiver: kit_lookup(component), name: :new, arguments: arguments.empty? ? nil : Refract::ArgumentsNode.new(arguments:))
 			statements([*hoisted, visit(call(nil, :render, new_component, block: node.block))])
+		end
+
+		# The kit's method finds its component with these calls, from the top level.
+		private def kit_lookup(path)
+			path.reduce(constant("Object")) do |receiver, name|
+				call(receiver, :const_get, Refract::SymbolNode.new(unescaped: name.name, quoted: false))
+			end
 		end
 
 		private def hoistable_argument?(argument)

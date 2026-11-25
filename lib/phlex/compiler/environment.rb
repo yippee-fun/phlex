@@ -13,9 +13,6 @@ class Phlex::Compiler::Environment
 		Phlex::HTML.instance_method(:doctype).source_location[0],
 	].freeze
 
-	METHOD = Kernel.instance_method(:method)
-	CONSTANTS = Module.instance_method(:constants)
-	CONST_GET = Module.instance_method(:const_get)
 	KIT_SOURCE_PATH = Phlex::Kit.instance_method(:const_added).source_location[0]
 
 	Element = Data.define(:tag, :void)
@@ -212,8 +209,8 @@ class Phlex::Compiler::Environment
 	# A kit names `BEGIN` and `END` another way, since they can't be written as
 	# constants. The kit's method calls `new` and `render` from its own file,
 	# where no refinement applies, so a file with refinements keeps the call.
-	# It finds the component with `const_get`, so the path must be public and
-	# every module on it must use Ruby's own `const_get`.
+	# It finds the component through the kit's name, which compiled code does
+	# with the same `const_get` calls.
 	private def resolve_kit_component(name)
 		return if name in :BEGIN | :END
 		return if @refinements.any?
@@ -221,31 +218,9 @@ class Phlex::Compiler::Environment
 
 		kit = method.owner
 		return unless Phlex::Kit === kit && method.source_location&.first == KIT_SOURCE_PATH && method.original_name == name
-		return unless (kit_name = kit.name) && named?(kit, kit_name)
 		return if overridden_by_descendant?(name, kit)
 
-		path = "#{kit_name}::#{name}"
-		path if public_path?(path)
-	end
-
-	# Whether the constant path finds the module, so compiled code can name it.
-	private def named?(mod, name)
-		Object.const_get(name).equal?(mod)
-	rescue NameError
-		false
-	end
-
-	private def public_path?(path)
-		path.split("::").reduce(Object) do |namespace, name|
-			return false unless Module === namespace && CONSTANTS.bind_call(namespace).include?(name.to_sym)
-			return false unless METHOD.bind_call(namespace, :const_get).owner.equal?(Module)
-
-			CONST_GET.bind_call(namespace, name, false)
-		end
-
-		true
-	rescue NameError
-		false
+		(path = Phlex::Kit.named_path(kit)) && [*path, name].freeze
 	end
 
 	private def resolve_helper(name)
