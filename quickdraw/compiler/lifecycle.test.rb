@@ -1531,6 +1531,44 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "the compiler doesn't keep forgotten components alive while their parent stays loaded" do
+		skip "Needs a precise garbage collector" unless RUBY_ENGINE == "ruby"
+
+		Dir.mktmpdir do |dir|
+			parent_path = File.join(dir, "kept_parent.rb")
+			File.write(parent_path, <<~RUBY)
+				# frozen_string_literal: true
+				class LifecycleKeptParent < Phlex::HTML
+					def view_template = div { "parent" }
+				end
+			RUBY
+
+			child_path = File.join(dir, "forgotten_child.rb")
+			File.write(child_path, <<~RUBY)
+				# frozen_string_literal: true
+				class LifecycleForgottenChild < LifecycleKeptParent
+					def view_template = span { "child" }
+				end
+			RUBY
+
+			load parent_path
+			Phlex::Compiler.compile(LifecycleKeptParent)
+
+			references = 10.times.map do
+				load child_path
+				Phlex::Compiler.compile(LifecycleForgottenChild)
+				child = LifecycleForgottenChild
+				Object.__send__(:remove_const, :LifecycleForgottenChild)
+				Phlex::Compiler.forget(child)
+				WeakRef.new(child)
+			end
+
+			GC.start(full_mark: true, immediate_sweep: true)
+
+			assert references.count(&:weakref_alive?) < 10
+		end
+	end
+
 	# Pauses a thread that sets :lifecycle_install_gate just before compiled methods are installed.
 	module InstallPause
 		def without_redefinition_warnings(&)
@@ -1592,6 +1630,105 @@ class CompilerLifecycleTest < Quickdraw::Test
 		refute component.compile?
 	end
 
+	test "a class overriding instance variable reflection is still compiled on its first render" do
+		with_component_files(
+			"reflective.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReflective < Phlex::HTML
+					def self.instance_variable_get(*) = true
+					def self.instance_variable_set(*) = nil
+					def self.instance_variable_defined?(*) = false
+
+					def view_template = div { "reflective" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleReflective.new.call, "<div>reflective</div>"
+				assert compiled_method?(LifecycleReflective, :view_template)
+				assert Phlex::Compiler.compiled?(LifecycleReflective)
+			end
+		end
+	end
+
+	test "a component defining its own class method still compiles on its first render" do
+		with_component_files(
+			"classy.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleClassy < Phlex::HTML
+					def view_template = div { "classy" }
+
+					def class = "card"
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleClassy.new.call, "<div>classy</div>"
+				assert compiled_method?(LifecycleClassy, :view_template)
+			end
+		end
+	end
+
+	test "a class overriding frozen? still compiles on its first render" do
+		with_component_files(
+			"chilly.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleChilly < Phlex::HTML
+					def self.frozen? = raise("not Ruby's")
+
+					def view_template = div { "chilly" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleChilly.new.call, "<div>chilly</div>"
+				assert compiled_method?(LifecycleChilly, :view_template)
+			end
+		end
+	end
+
+	test "freezing a class that overrides frozen? still restores its original methods" do
+		with_component_files(
+			"thawed.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleThawedParent < Phlex::HTML
+				end
+
+				class LifecycleThawed < LifecycleThawedParent
+					def self.frozen? = true
+
+					def view_template = div { "thawed" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleThawed)
+			LifecycleThawed.freeze
+
+			LifecycleThawedParent.class_eval { def div(**, &) = super(class: "redefined", &) }
+			assert_equal LifecycleThawed.new.call, %(<div class="redefined">thawed</div>)
+		end
+	end
+
+	test "a class overriding method reflection still compiles as it's defined" do
+		with_component_files(
+			"secretive_methods.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSecretiveMethods < Phlex::HTML
+					def self.ancestors = []
+					def self.instance_methods(*) = []
+					def self.method_defined?(*) = raise("not Ruby's")
+
+					def view_template = div { "secretive" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleSecretiveMethods.new.call, "<div>secretive</div>"
+				assert compiled_method?(LifecycleSecretiveMethods, :view_template)
+			end
+		end
+	end
+
 	test "a namespace overriding constant reflection doesn't hide a loaded component" do
 		with_component_files(
 			"namespaced.rb" => <<~RUBY
@@ -1611,6 +1748,23 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			error = assert_raises(ArgumentError) { Phlex::Compiler.forget(component) }
 			assert_equal error.message, "Can't forget LifecycleSecretive::Hidden because it's still loaded."
+		end
+	end
+
+	test "a component defining its own compile? still compiles as its setting says" do
+		with_component_files(
+			"own_compile.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleOwnCompile < Phlex::HTML
+					def self.compile? = raise("not Phlex's")
+
+					def view_template = div { "own" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation { assert_equal LifecycleOwnCompile.new.call, "<div>own</div>" }
+
+			assert compiled_method?(LifecycleOwnCompile, :view_template)
 		end
 	end
 

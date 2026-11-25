@@ -102,7 +102,7 @@ module Phlex::Compiler
 	FAILURES = {}.compare_by_identity
 
 	# component => true, for each forgotten component a generation still waits on
-	FORGOTTEN = {}.compare_by_identity
+	FORGOTTEN = ObjectSpace::WeakMap.new
 
 	DEFAULT_FAILURE_HANDLER = lambda do |component, error|
 		warn "Phlex::Compiler couldn't compile #{component}, so it renders uncompiled: #{error.class}: #{error.message}\n\t#{error.backtrace&.first(5)&.join("\n\t")}"
@@ -167,8 +167,16 @@ module Phlex::Compiler
 		@enabled = false
 	end
 
+	# The compiler's own state on a class is read and written directly, so a
+	# class overriding instance variable reflection can't change it.
+	IVAR_GET = Kernel.instance_method(:instance_variable_get)
+	IVAR_SET = Kernel.instance_method(:instance_variable_set)
+	IVAR_DEFINED = Kernel.instance_method(:instance_variable_defined?)
+	REMOVE_IVAR = Kernel.instance_method(:remove_instance_variable)
+	FROZEN = Kernel.instance_method(:frozen?)
+
 	def self.compiled?(component)
-		component.instance_variable_get(:@__phlex_compiled__) == true
+		IVAR_GET.bind_call(component, :@__phlex_compiled__) == true
 	end
 
 	# Runs on every render, so a component that's compiled, failed to, can't
@@ -203,11 +211,14 @@ module Phlex::Compiler
 		on_failure.call(component, error) if error
 	end
 
+	# Phlex's own setting, even where a class defines a compile? of its own.
+	COMPILE = Phlex::SGML.singleton_class.instance_method(:compile?)
+
 	# An ancestor whose file failed isn't tried again for each of its subclasses.
-	COMPILES_ON_FIRST_RENDER = -> (ancestor) { ancestor.compile? && !FAILURES.key?(ancestor) }
+	COMPILES_ON_FIRST_RENDER = -> (ancestor) { COMPILE.bind_call(ancestor) && !FAILURES.key?(ancestor) }
 
 	def self.settled?(component)
-		compiled?(component) || FAILURES.key?(component) || component.frozen? || !component.compile?
+		compiled?(component) || FAILURES.key?(component) || FROZEN.bind_call(component) || !COMPILE.bind_call(component)
 	end
 
 	# Compiles the component as its first render would: unless it says
@@ -253,7 +264,7 @@ module Phlex::Compiler
 			GENERATION_COMPONENTS.each_value do |owners|
 				owners.keys.each { |owner| [owner, *descendants_of(owner)].each { |klass| waiting[klass] = true } }
 			end
-			FORGOTTEN.select! { |component, _| waiting.key?(component) }
+			FORGOTTEN.keys.each { |component| FORGOTTEN.delete(component) unless waiting.key?(component) }
 		end
 	end
 
@@ -267,9 +278,9 @@ module Phlex::Compiler
 
 	# On first render, an ancestor that says `compile false` is left alone.
 	def self.compile_ancestry(component, only: nil, failed: [])
-		return if component.frozen? || compiled?(component)
+		return if FROZEN.bind_call(component) || compiled?(component)
 
-		ancestors = phlex_ancestors(component).reject { |ancestor| ancestor.frozen? || compiled?(ancestor) }
+		ancestors = phlex_ancestors(component).reject { |ancestor| FROZEN.bind_call(ancestor) || compiled?(ancestor) }
 		ancestors.select!(&only) if only
 		components = ancestors.select { |ancestor| live?(ancestor) }
 
@@ -286,13 +297,13 @@ module Phlex::Compiler
 			ancestors.each do |ancestor|
 				next if failed.include?(ancestor) || !(files[ancestor] || []).all? { |file| compiled_paths.include?(file) }
 
-				ancestor.instance_variable_set(:@__phlex_compiled__, true)
+				IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true)
 			end
 
 			raise
 		end
 
-		ancestors.each { |ancestor| ancestor.instance_variable_set(:@__phlex_compiled__, true) }
+		ancestors.each { |ancestor| IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true) }
 	end
 
 	# Why parts of the files defining the component and its Phlex ancestors are
@@ -368,14 +379,14 @@ module Phlex::Compiler
 				result.component.__send__(visibility, name) unless visibility == :public
 			end
 
-			inlined = result.component.instance_variable_get(:@__phlex_inlined__) || Set.new
-			result.component.instance_variable_set(:@__phlex_inlined__, (inlined | result.inlined).freeze)
+			inlined = IVAR_GET.bind_call(result.component, :@__phlex_inlined__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined__, (inlined | result.inlined).freeze)
 
-			inlined_svg = result.component.instance_variable_get(:@__phlex_inlined_svg__) || Set.new
-			result.component.instance_variable_set(:@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
+			inlined_svg = IVAR_GET.bind_call(result.component, :@__phlex_inlined_svg__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
 
-			inlined_super = result.component.instance_variable_get(:@__phlex_inlined_super__) || Set.new
-			result.component.instance_variable_set(:@__phlex_inlined_super__, (inlined_super | result.inlined_super).freeze)
+			inlined_super = IVAR_GET.bind_call(result.component, :@__phlex_inlined_super__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined_super__, (inlined_super | result.inlined_super).freeze)
 		end
 
 		nil
@@ -418,21 +429,24 @@ module Phlex::Compiler
 			return unless target.singleton_class?
 		end
 
+		# Another Ractor can't share the main one's reflection, so it takes its own.
+		ivar_get = Phlex.__main_ractor__? ? IVAR_GET : Kernel.instance_method(:instance_variable_get)
+
 		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
 		affected = related.select do |klass|
-			(inlined = klass.instance_variable_get(:@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
+			(inlined = ivar_get.bind_call(klass, :@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end
 
 		# Where `super` goes from a class's own method only changes above it.
 		unless target.singleton_class?
 			affected |= [target, *descendants_of(target)].select do |klass|
-				(inlined = klass.instance_variable_get(:@__phlex_inlined_super__)) && names.any? { |name| inlined.include?(name) }
+				(inlined = ivar_get.bind_call(klass, :@__phlex_inlined_super__)) && names.any? { |name| inlined.include?(name) }
 			end
 		end
 
 		if !target.singleton_class? && Phlex::SVG <= target
 			affected |= loaded_components.select do |klass|
-				(inlined = klass.instance_variable_get(:@__phlex_inlined_svg__)) && names.any? { |name| inlined.include?(name) }
+				(inlined = ivar_get.bind_call(klass, :@__phlex_inlined_svg__)) && names.any? { |name| inlined.include?(name) }
 			end
 		end
 
@@ -442,7 +456,7 @@ module Phlex::Compiler
 			raise Error, "#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling."
 		end
 
-		if (frozen = affected.select(&:frozen?)).any?
+		if (frozen = affected.select { |klass| FROZEN.bind_call(klass) }).any?
 			raise Error, "#{names.join(', ')} can't be redefined: #{frozen.join(', ')} compiled it inline and was frozen without Phlex::SGML.freeze restoring it."
 		end
 
@@ -454,9 +468,9 @@ module Phlex::Compiler
 		MUTEX.synchronize do
 			# Its subclasses render the methods being replaced too.
 			@recompiling = true
-			component.remove_instance_variable(:@__phlex_inlined__) if component.instance_variable_defined?(:@__phlex_inlined__)
-			component.remove_instance_variable(:@__phlex_inlined_svg__) if component.instance_variable_defined?(:@__phlex_inlined_svg__)
-			component.remove_instance_variable(:@__phlex_inlined_super__) if component.instance_variable_defined?(:@__phlex_inlined_super__)
+			REMOVE_IVAR.bind_call(component, :@__phlex_inlined__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined__)
+			REMOVE_IVAR.bind_call(component, :@__phlex_inlined_svg__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined_svg__)
+			REMOVE_IVAR.bind_call(component, :@__phlex_inlined_super__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined_super__)
 
 			defining_files(component).each do |path|
 				compile_file(path, components: [component], recompile: true, inline:)
@@ -529,7 +543,7 @@ module Phlex::Compiler
 	CONST_GET = Module.instance_method(:const_get)
 
 	def self.phlex_ancestors(component)
-		component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }
+		ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }
 	end
 
 	def self.loaded_components
@@ -552,10 +566,10 @@ module Phlex::Compiler
 	# target.
 	def self.targets(path, components, recompile: false)
 		components.each_with_object({}) do |component, targets|
-			next if component.frozen? || !live?(component)
+			next if FROZEN.bind_call(component) || !live?(component)
 
 			own_methods(component).each do |name|
-				method = component.instance_method(name)
+				method = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
 				next unless method.original_name == name && (location = method.source_location)
 
 				source_path, line = location
@@ -586,6 +600,8 @@ module Phlex::Compiler
 	# Module's own method listings, called directly so a class overriding them
 	# can't change what the compiler sees.
 	METHOD_LISTS = [:instance_methods, :private_instance_methods, :protected_instance_methods].map { |list| Module.instance_method(list) }.freeze
+	METHOD_DEFINED = [:method_defined?, :private_method_defined?, :protected_method_defined?].map { |check| Module.instance_method(check) }.freeze
+	ANCESTORS = Module.instance_method(:ancestors)
 
 	# The aliases, in the component or a descendant, that share a body with
 	# the component's method, as [owner, name] pairs. A descendant isn't being
@@ -610,26 +626,26 @@ module Phlex::Compiler
 	# The methods the component defines itself. `initialize` runs before the
 	# component has any state to render into.
 	def self.own_methods(component)
-		names = component.instance_methods(false) + component.private_instance_methods(false) + component.protected_instance_methods(false) - [:initialize]
+		names = METHOD_LISTS.flat_map { |list| list.bind_call(component, false) } - [:initialize]
 		names.reject { |name| revisibilised?(component, name) }
 	end
 
 	# Changing the visibility of an inherited method lists it on the component,
 	# with the component as its owner, but its source is still the ancestor's.
 	def self.revisibilised?(component, name)
-		location = component.instance_method(name).source_location
+		location = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name).source_location
 
-		component.ancestors.any? do |ancestor|
+		ANCESTORS.bind_call(component).any? do |ancestor|
 			next false if ancestor.equal?(component)
 
-			defined = ancestor.method_defined?(name, false) || ancestor.private_method_defined?(name, false) || ancestor.protected_method_defined?(name, false)
-			defined && ancestor.instance_method(name).source_location == location
+			defined = METHOD_DEFINED.any? { |check| check.bind_call(ancestor, name, false) }
+			defined && Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(ancestor, name).source_location == location
 		end
 	end
 
 	def self.defining_files(component)
 		paths = own_methods(component).filter_map do |name|
-			source_path = component.instance_method(name).source_location&.first
+			source_path = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name).source_location&.first
 			Phlex.__compiled_source_maps__[source_path]&.path || source_path
 		end
 		paths << constant_source_path(component)

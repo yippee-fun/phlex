@@ -70,14 +70,16 @@ class RactorTest < Quickdraw::Test
 		end
 	end
 
-	test "a component defined in another Ractor once something has compiled leaves the compiler alone" do
-		Phlex::Compiler.compile(Example)
+	if defined?(::Ractor)
+		test "a component defined in another Ractor once something has compiled leaves the compiler alone" do
+			Phlex::Compiler.compile(Example)
 
-		output = in_ractor do
-			Class.new(Phlex::HTML) { def label = "in a ractor" }.new.label
+			output = in_ractor do
+				Class.new(Phlex::HTML) { def label = "in a ractor" }.new.label
+			end
+
+			assert_equal output, "in a ractor"
 		end
-
-		assert_equal output, "in a ractor"
 	end
 
 	# The C extension serialises attributes without a cache on every Ractor.

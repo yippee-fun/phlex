@@ -36,10 +36,13 @@ class Phlex::SGML
 		end
 	end
 
-	# Called directly, so a class overriding them can't change which setting it inherits.
+	# Called directly, so a class overriding them can't change which setting it
+	# inherits, nor a component which class is compiled when it renders.
 	SUPERCLASS = Class.instance_method(:superclass)
 	IVAR_DEFINED = Kernel.instance_method(:instance_variable_defined?)
 	IVAR_GET = Kernel.instance_method(:instance_variable_get)
+	CLASS = Kernel.instance_method(:class)
+	FROZEN = Kernel.instance_method(:frozen?)
 
 	@__phlex_compile__ = true
 
@@ -72,7 +75,7 @@ class Phlex::SGML
 
 	def internal_call(parent: nil, state: nil, &block)
 		# Checked first so another Ractor never autoloads the compiler.
-		Phlex::Compiler.compile_on_first_render(self.class) if Phlex.__main_ractor__?
+		Phlex::Compiler.compile_on_first_render(CLASS.bind_call(self)) if Phlex.__main_ractor__?
 
 		if @_state
 			raise Phlex::DoubleRenderError.new(
@@ -531,7 +534,7 @@ class Phlex::SGML
 	# A frozen class can't be recompiled when an element or helper it inlined
 	# changes, so its original definitions are put back first.
 	def self.freeze
-		Phlex::Compiler.decompile(self) if Phlex.__main_ractor__? && !Phlex.__compiled_source_maps__.empty? && Phlex::Compiler.compiled?(self) && !frozen?
+		Phlex::Compiler.decompile(self) if Phlex.__main_ractor__? && !Phlex.__compiled_source_maps__.empty? && Phlex::Compiler.compiled?(self) && !FROZEN.bind_call(self)
 
 		super
 	end
