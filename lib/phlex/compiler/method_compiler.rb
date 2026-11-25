@@ -153,7 +153,12 @@ module Phlex::Compiler
 			return without_compiling_calls { super(node) } unless node.body
 
 			if @guarded_blocks == GUARDED_BLOCK_DEPTH_LIMIT
-				return mapping_block_exceptions(without_compiling_calls(because: "it's more than #{GUARDED_BLOCK_DEPTH_LIMIT} blocks deep") { super(node) })
+				return mapping_block_exceptions(
+					node.copy(
+						parameters: without_compiling_calls(because: "it's in a parameter default") { visit(node.parameters) },
+						body: without_compiling_calls(because: "it's more than #{GUARDED_BLOCK_DEPTH_LIMIT} blocks deep") { visit(node.body) }
+					)
+				)
 			end
 
 			if (conflict = ReparseScanner.conflict(node))

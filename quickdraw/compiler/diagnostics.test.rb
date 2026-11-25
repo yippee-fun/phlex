@@ -333,7 +333,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				class DeepCaseDeeper < Phlex::HTML
 					def view_template
 						[1].each { [2].each { [3].each { [4].each { |n|
-							div { [5].each { |m| span { m }; render(DeepCaseActivity.new) { nil }; plain "text"; entries(m) } }
+							div { [5].each { |m, x = (hr; nil)| span { m }; render(DeepCaseActivity.new) { nil }; plain "text"; entries(m) } }
 						} } } }
 					end
 
@@ -355,6 +355,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 
 			assert_equal Phlex::Compiler.explain(DeepCase), []
 			assert_equal Phlex::Compiler.explain(DeepCaseDeeper).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, [
+				"20: hr keeps its call because it's in a parameter default",
 				"20: span keeps its call because it's more than 4 blocks deep",
 				"20: plain keeps its call because it's more than 4 blocks deep",
 			]
@@ -372,7 +373,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 
 			assert_equal [DeepCase.new(periods).call, DeepCaseDeeper.new.call, DeepCaseSuper.new.call], expected
 			assert_equal expected[2], "<b></b><i></i>"
-			assert_equal expected[1], "<div><span>5</span><ul></ul>text</div>"
+			assert_equal expected[1], "<div><hr><span>5</span><ul></ul>text</div>"
 			assert_equal expected[0], "<ul><li><h2>Today</h2><li>a</li><li>b</li></li><li><h2>Later</h2><li>c</li></li></ul>"
 		ensure
 			Object.__send__(:remove_const, :DeepCase)
