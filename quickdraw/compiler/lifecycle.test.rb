@@ -1571,7 +1571,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			GC.start(full_mark: true, immediate_sweep: true)
 
-			assert forgotten.count(&:weakref_alive?) < 10 unless untouched.all?(&:weakref_alive?)
+			assert forgotten.count(&:weakref_alive?) < 10 || untouched.all?(&:weakref_alive?)
 		end
 	end
 
