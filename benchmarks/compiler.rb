@@ -4,9 +4,9 @@
 require "phlex"
 require "benchmark/ips"
 
-require_relative "fixtures/page"
-require_relative "fixtures/layout"
-require_relative "fixtures/dynamic_list"
+require_relative "../fixtures/page"
+require_relative "../fixtures/layout"
+require_relative "../fixtures/dynamic_list"
 
 puts "YJIT #{(defined?(RubyVM::YJIT) && RubyVM::YJIT.enabled?) ? 'on' : 'off'}"
 
