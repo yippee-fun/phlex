@@ -173,6 +173,7 @@ module Phlex::Compiler
 	IVAR_SET = Kernel.instance_method(:instance_variable_set)
 	IVAR_DEFINED = Kernel.instance_method(:instance_variable_defined?)
 	REMOVE_IVAR = Kernel.instance_method(:remove_instance_variable)
+	FROZEN = Kernel.instance_method(:frozen?)
 
 	def self.compiled?(component)
 		IVAR_GET.bind_call(component, :@__phlex_compiled__) == true
@@ -217,7 +218,7 @@ module Phlex::Compiler
 	COMPILES_ON_FIRST_RENDER = -> (ancestor) { COMPILE.bind_call(ancestor) && !FAILURES.key?(ancestor) }
 
 	def self.settled?(component)
-		compiled?(component) || FAILURES.key?(component) || component.frozen? || !COMPILE.bind_call(component)
+		compiled?(component) || FAILURES.key?(component) || FROZEN.bind_call(component) || !COMPILE.bind_call(component)
 	end
 
 	# Compiles the component as its first render would: unless it says
@@ -277,9 +278,9 @@ module Phlex::Compiler
 
 	# On first render, an ancestor that says `compile false` is left alone.
 	def self.compile_ancestry(component, only: nil, failed: [])
-		return if component.frozen? || compiled?(component)
+		return if FROZEN.bind_call(component) || compiled?(component)
 
-		ancestors = phlex_ancestors(component).reject { |ancestor| ancestor.frozen? || compiled?(ancestor) }
+		ancestors = phlex_ancestors(component).reject { |ancestor| FROZEN.bind_call(ancestor) || compiled?(ancestor) }
 		ancestors.select!(&only) if only
 		components = ancestors.select { |ancestor| live?(ancestor) }
 
@@ -474,7 +475,7 @@ module Phlex::Compiler
 			raise Error, "#{names.join(', ')} can't be redefined on a single instance: #{affected.join(', ')} compiled it inline. Redefine it on the class, before compiling."
 		end
 
-		if (frozen = affected.select(&:frozen?)).any?
+		if (frozen = affected.select { |klass| FROZEN.bind_call(klass) }).any?
 			raise Error, "#{names.join(', ')} can't be redefined: #{frozen.join(', ')} compiled it inline and was frozen without Phlex::SGML.freeze restoring it."
 		end
 
@@ -584,7 +585,7 @@ module Phlex::Compiler
 	# target.
 	def self.targets(path, components, recompile: false)
 		components.each_with_object({}) do |component, targets|
-			next if component.frozen? || !live?(component)
+			next if FROZEN.bind_call(component) || !live?(component)
 
 			own_methods(component).each do |name|
 				method = component.instance_method(name)
