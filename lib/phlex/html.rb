@@ -106,6 +106,10 @@ class Phlex::HTML < Phlex::SGML
 					buffer << "<#{tag}></#{tag}>"
 				end
 			end
+
+			flush if "head" == tag
+
+			nil
 		elsif (tag = VoidElements.__registered_elements__[name])
 			if block_given
 				raise Phlex::ArgumentError.new("Void elements cannot have content blocks.")
