@@ -217,11 +217,22 @@ module Phlex::Compiler
 		MUTEX.synchronize do
 			FAILURES.delete(component)
 
-			# A generation another live component's methods came from is still needed.
-			compiled_paths = GENERATION_COMPONENTS.filter_map do |path, components|
+			# A live subclass still runs the methods it inherits.
+			next if descendants_of(component).any? { |descendant| live?(descendant) }
+
+			compiled_paths = []
+
+			GENERATION_COMPONENTS.each do |path, components|
 				next unless components.any? { |owner| owner.equal?(component) }
 
-				path if components.none? { |other| !other.equal?(component) && live?(other) }
+				others = components.reject { |owner| owner.equal?(component) }
+
+				# A generation another live component's methods came from is still needed.
+				if others.any? { |other| live?(other) }
+					GENERATION_COMPONENTS[path] = others.freeze
+				else
+					compiled_paths << path
+				end
 			end
 
 			compiled_paths.each { |path| GENERATION_COMPONENTS.delete(path) }

@@ -1159,6 +1159,54 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "forgetting a component keeps the source maps its live subclasses inherit" do
+		with_component_files(
+			"inherited.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleForgottenParent < Phlex::HTML
+					def view_template = div { "inherited" }
+				end
+
+				class LifecycleLiveChild < LifecycleForgottenParent
+				end
+			RUBY
+		) do
+			parent = LifecycleForgottenParent
+			Phlex::Compiler.compile(parent)
+			compiled_path = parent.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleForgottenParent)
+			Phlex::Compiler.forget(parent)
+
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+		end
+	end
+
+	test "forgetting a component that shares a generation stops the compiler holding on to it" do
+		with_component_files(
+			"released.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReleased < Phlex::HTML
+					def view_template = div { "released" }
+				end
+
+				class LifecycleKept < Phlex::HTML
+					def view_template = div { "kept" }
+				end
+			RUBY
+		) do
+			released = LifecycleReleased
+			kept = LifecycleKept
+			Phlex::Compiler.compile_file(released.instance_method(:view_template).source_location[0], components: [released, kept])
+			compiled_path = kept.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleReleased)
+			Phlex::Compiler.forget(released)
+
+			assert_equal Phlex::Compiler::GENERATION_COMPONENTS[compiled_path], [kept]
+		end
+	end
+
 	test "a live component can't be forgotten" do
 		with_component_files(
 			"remembered.rb" => <<~RUBY
@@ -1319,5 +1367,19 @@ class CompilerLifecycleTest < Quickdraw::Test
 				release&.<< true
 			end
 		end
+	end
+
+	test "a class overriding superclass still reads its inherited compile setting" do
+		component = Class.new(Phlex::HTML) do
+			compile false
+
+			def self.superclass = nil
+		end
+
+		child = Class.new(component) do
+			def self.superclass = self
+		end
+
+		refute child.compile?
 	end
 end
