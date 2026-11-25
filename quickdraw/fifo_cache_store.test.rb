@@ -95,12 +95,55 @@ class FIFOCacheStoreTest < Quickdraw::Test
 		hit = store.fetch("a") { failure! { "This block should not have been called." } }
 
 		assert_equal hit, ["<div>", { "a" => [0, 5, []] }]
-		assert_equal store.fetch("a") { nil }.equal?(hit), defined?(::Ractor) ? true : false
+		assert store.fetch("a") { nil }.equal?(hit)
+		assert_raises(FrozenError) { hit[0] << "x" }
+		assert_raises(FrozenError) { hit[1]["a"][2] << "x" }
+		assert ::Ractor.shareable?(hit) if defined?(::Ractor)
+	end
 
-		if defined?(::Ractor)
-			assert ::Ractor.shareable?(hit)
-			assert_raises(FrozenError) { hit[0] << "x" }
-		end
+	test "other values are loaded anew on each hit, without freezing what their loader returns" do
+		lock = Object.const_set(:FIFOCacheStoreTestLock, Class.new do
+			def initialize = @mutex = Mutex.new
+			def marshal_dump = nil
+			def marshal_load(_) = @mutex = Mutex.new
+			def locked? = @mutex.locked?
+		end)
+
+		registry = {}
+		registered_class = Object.const_set(:FIFOCacheStoreTestRegistered, Class.new do
+			attr_reader :name
+
+			define_method(:initialize) { |name| @name = name }
+			define_method(:_dump) { |_| @name }
+			define_singleton_method(:_load) { |name| registry[name] ||= new(name) }
+		end)
+
+		store = Phlex::FIFOCacheStore.new
+
+		store.fetch("lock") { [lock.new] }
+		first = store.fetch("lock") { nil }
+		second = store.fetch("lock") { nil }
+
+		refute first.frozen?
+		refute first.equal?(second)
+		refute first[0].locked?
+
+		registered = registry["x"] = registered_class.new(+"x")
+		store.fetch("registered") { [registered] }
+
+		assert store.fetch("registered") { nil }[0].equal?(registered)
+		refute registered.frozen?
+		refute registered.name.frozen?
+	ensure
+		Object.__send__(:remove_const, :FIFOCacheStoreTestLock) if Object.const_defined?(:FIFOCacheStoreTestLock, false)
+		Object.__send__(:remove_const, :FIFOCacheStoreTestRegistered) if Object.const_defined?(:FIFOCacheStoreTestRegistered, false)
+	end
+
+	test "values larger than the store aren't cached" do
+		store = Phlex::FIFOCacheStore.new(max_bytesize: 10)
+
+		assert_equal store.fetch("a") { "a" * 20 }, "a" * 20
+		assert_equal store.fetch("a") { "missed" }, "missed"
 	end
 
 	test "values that can't be serialised aren't cached" do
