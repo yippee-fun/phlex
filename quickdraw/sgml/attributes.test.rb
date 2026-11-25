@@ -1081,6 +1081,28 @@ class AttributesTest < Quickdraw::Test
 		2.times { assert_equal Phlex::SGML::Attributes.generate_attributes({ values: "#a;javascript:alert(1)" }), "" }
 	end
 
+	test "reference_attribute serialises plain Strings as the general path does" do
+		subclass = Class.new(String)
+
+		assert_equal Phlex::SGML::Attributes.reference_attribute(:href, "href", "/a?b=\"c\"&d=<e>"), %( href="/a?b=&quot;c&quot;&d=&lt;e&gt;")
+		assert_equal Phlex::SGML::Attributes.reference_attribute(:href, "href", "JavaScript:alert(1)"), ""
+		assert_equal Phlex::SGML::Attributes.reference_attribute(:href, "href", "java&#115;cript:alert(1)"), ""
+		assert_equal Phlex::SGML::Attributes.reference_attribute(:href, "href", subclass.new("javascript:alert(1)")), ""
+		assert_equal Phlex::SGML::Attributes.reference_attribute(:href, "href", subclass.new("/a")), %( href="/a")
+		assert_equal Phlex::SGML::Attributes.reference_attribute(:"xlink:values", "xlink:values", "#a;javascript:alert(1)"), ""
+		assert_equal Phlex::SGML::Attributes.reference_attribute(:HREF, "HREF", "javascript:alert(1)"), ""
+		assert_equal Phlex::SGML::Attributes.reference_attribute(:HREF, "HREF", "/a"), %( HREF="/a")
+		assert_equal Phlex::SGML::Attributes.reference_attribute(:href, "href", ""), %( href="")
+	end
+
+	test "nested names that join into an unsafe name raise however they're spelled" do
+		assert_raises(Phlex::ArgumentError) { phlex { meta(http: { equiv: "refresh" }) } }
+		assert_raises(Phlex::ArgumentError) { phlex { meta(HTTP: { equiv: "refresh" }) } }
+		assert_raises(Phlex::ArgumentError) { phlex { meta(http: { "EQUIV" => "refresh" }) } }
+		assert_raises(Phlex::ArgumentError) { phlex { div(x: { "a:href" => "/a" }) } }
+		assert_equal phlex { div(data: { controller: "x", card_id: 1 }) }, %(<div data-controller="x" data-card-id="1"></div>)
+	end
+
 	test "only safe values skip the checks for unsafe names and script URLs" do
 		# Like Rails' html_safe strings, which phlex-rails makes safe objects.
 		html_safe = Class.new(String) { include Phlex::SGML::SafeObject }
