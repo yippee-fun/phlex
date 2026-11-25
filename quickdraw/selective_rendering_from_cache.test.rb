@@ -462,4 +462,35 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 			assert_equal RescuedCacheHitTest.new(cache_store:).call(fragments: ["before"]), ""
 		end
 	end
+
+	class ConsumedInActiveCacheTest < Phlex::HTML
+		attr_reader :cache_store, :events
+
+		def initialize(cached, cache_store:)
+			@cached = cached
+			@cache_store = cache_store
+			@events = []
+		end
+
+		def view_template
+			fragment("parent") { @cached ? cache { child } : child }
+			@events << :after_parent
+			fragment("child") { plain "D" }
+		end
+
+		def child
+			fragment("child") { plain "B" }
+		end
+	end
+
+	test "a selected fragment in a cache rendered inside another selected fragment is consumed" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		# Uncached, then cold, then warm.
+		[false, true, true].each do |cached|
+			component = ConsumedInActiveCacheTest.new(cached, cache_store:)
+			assert_equal component.call(fragments: ["parent", "child"]), "B"
+			assert_equal component.events, []
+		end
+	end
 end
