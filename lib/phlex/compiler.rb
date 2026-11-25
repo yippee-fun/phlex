@@ -283,8 +283,16 @@ module Phlex::Compiler
 		ancestors = phlex_ancestors(component)
 
 		ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.filter_map do |path|
-			_parse_result, results, formatting_result = generate(path, components: ancestors, recompile: true, inline: true)
-			"# #{path}\n#{formatting_result.source}" if results
+			parse_result, results, formatting_result = generate(path, components: ancestors, recompile: true, inline: true)
+			next unless results
+
+			visibilities = results.flat_map do |result|
+				result.visibilities.filter_map do |name, visibility|
+					"#{result.component.name}.__send__(:#{visibility}, :#{name})\n" unless visibility == :public
+				end
+			end
+
+			"# #{path}\n#{magic_comments(parse_result)}#{formatting_result.source}#{visibilities.join}"
 		end.join("\n")
 	end
 

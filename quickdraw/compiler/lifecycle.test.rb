@@ -1253,13 +1253,16 @@ class CompilerLifecycleTest < Quickdraw::Test
 					def view_template = div(class: "card") { "source" }
 
 					def helper = "not compiled"
+
+					private def item = span { "item" }
 				end
 			RUBY
 		) do |(path)|
 			source = Phlex::Compiler.source(LifecycleSource)
 
 			refute compiled_method?(LifecycleSource, :view_template)
-			assert source.start_with?("# #{path}\n")
+			assert source.start_with?("# #{path}\n# -*- coding: UTF-8; frozen_string_literal: true -*-\n")
+			assert source.end_with?("LifecycleSource.__send__(:private, :item)\n")
 			assert source.include?("class LifecycleSource")
 			assert source.include?("def view_template")
 			assert source.include?(%(<div class="card">source</div>))
