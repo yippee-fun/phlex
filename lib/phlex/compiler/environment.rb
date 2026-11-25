@@ -102,9 +102,6 @@ class Phlex::Compiler::Environment
 
 		SVG_RENDER.all? do |name|
 			method = instance_method(name, Phlex::SVG)
-			# Lazy compilation compiles a component before rendering it as before.
-			method = method.super_method if method&.owner == Phlex::Compiler::LazyCompilation
-
 			method && method.original_name == name && method.owner == Phlex::SGML && method.source_location&.first == SGML_SOURCE_PATH
 		end
 	end

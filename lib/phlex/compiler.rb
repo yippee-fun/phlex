@@ -7,8 +7,9 @@ require "refract"
 # buffer appends. Compilation is opt-in and safe to skip: an uncompiled
 # component renders exactly the same, just slower.
 #
-# Use `Phlex::Compiler.compile(component)` to compile a class, or
-# `Phlex::Compiler.enable!` to compile each class on its first render.
+# Each class compiles on its first render unless it, or its nearest ancestor
+# that says, says `compile false`; `Phlex::Compiler.disable!` stops all of it.
+# Use `Phlex::Compiler.compile(component)` to compile a class whatever it says.
 # `Phlex::Compiler.precompile(component)` compiles a class the way its first
 # render would, before forking or starting Ractors, and
 # `Phlex::Compiler.forget(component)` drops what that recorded once a code
@@ -106,7 +107,7 @@ module Phlex::Compiler
 	# Bindings handed over by compiler/scope.rb as it's loaded.
 	SCOPES = []
 
-	@enabled = false
+	@enabled = true
 	@recompiling = false
 	@generations = 0
 	@on_failure = DEFAULT_FAILURE_HANDLER
@@ -140,21 +141,20 @@ module Phlex::Compiler
 		buffer
 	end
 
-	# Compile each component on its first render. A component that fails to
-	# compile is reported to `on_failure` once and keeps rendering uncompiled,
-	# so a compiler bug costs speed, never a page.
+	# Components compile on their first render unless the class, or the
+	# nearest ancestor that says, says `compile false`. This is on by default.
+	# A component that fails to compile is reported to `on_failure` once and
+	# keeps rendering uncompiled, so a compiler bug costs speed, never a page.
 	#
 	# Only the main Ractor compiles. Other Ractors render a component as they
 	# find it, without waiting for a compilation in progress, so compile with
-	# `Phlex::Compiler.compile` before starting them.
+	# `Phlex::Compiler.precompile` before starting them.
 	def self.enable!(on_failure: DEFAULT_FAILURE_HANDLER)
-		# Prepended under the lock, so it isn't taken for a change to what's been
-		# inlined: it only compiles a component before rendering it as before.
-		MUTEX.synchronize { Phlex::SGML.prepend(LazyCompilation) } unless Phlex::SGML < LazyCompilation
 		@on_failure = on_failure
 		@enabled = true
 	end
 
+	# Stops every component compiling on its first render, whatever its class says.
 	def self.disable!
 		@enabled = false
 	end
@@ -169,31 +169,32 @@ module Phlex::Compiler
 	# still compile and report once. A render that starts during a
 	# recompilation takes the lock, and so waits for the new methods. The
 	# handler runs outside it, since it may well render something.
-	def self.compile_on_first_render(component)
-		return unless Phlex.__main_ractor__?
+	def self.compile_on_first_render(component, on_failure: @on_failure)
+		return unless @enabled && Phlex.__main_ractor__?
 		return if !@recompiling && (compiled?(component) || FAILURES.key?(component))
+		return unless component.compile?
 
 		error = MUTEX.synchronize do
 			return if compiled?(component) || FAILURES.key?(component)
 
 			begin
-				compile_ancestry(component)
+				compile_ancestry(component, only: :compile?.to_proc)
 				nil
 			rescue StandardError, ScriptError => e
 				FAILURES[component] = e
 			end
 		end
 
-		@on_failure.call(component, error) if error
+		on_failure.call(component, error) if error
 	end
 
-	# Compiles the component as its first render would after `enable!`: a
-	# failure is reported to the handler once and leaves it rendering
-	# uncompiled. Use it to compile before forking or starting Ractors.
-	def self.precompile(component)
+	# Compiles the component as its first render would: unless it says
+	# `compile false`, and reporting a failure to the handler once, which
+	# leaves it rendering uncompiled. Use it before forking or starting Ractors.
+	def self.precompile(component, on_failure: @on_failure)
 		component!(component)
 
-		compile_on_first_render(component)
+		compile_on_first_render(component, on_failure:)
 	end
 
 	# Drops what compiling a component recorded once a code reloader has
@@ -226,10 +227,12 @@ module Phlex::Compiler
 		MUTEX.synchronize { compile_ancestry(component) }
 	end
 
-	def self.compile_ancestry(component)
+	# On first render, an ancestor that says `compile false` is left alone.
+	def self.compile_ancestry(component, only: nil)
 		return if component.frozen? || compiled?(component)
 
 		ancestors = phlex_ancestors(component).reject { |ancestor| ancestor.frozen? || compiled?(ancestor) }
+		ancestors.select!(&only) if only
 		components = ancestors.select { |ancestor| live?(ancestor) }
 
 		components.flat_map { |ancestor| defining_files(ancestor) }.uniq.each do |path|
@@ -599,14 +602,6 @@ module Phlex::Compiler
 			in Refract::ClassNode then scope.copy(body: wrapped, superclass: nil)
 			in Refract::ModuleNode then scope.copy(body: wrapped)
 			end
-		end
-	end
-
-	module LazyCompilation
-		def internal_call(...)
-			Phlex::Compiler.compile_on_first_render(self.class) if Phlex::Compiler.enabled?
-
-			super
 		end
 	end
 end

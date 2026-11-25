@@ -31,7 +31,10 @@ Quickdraw.configure do |config|
 	config.timeout = 1800 if ENV["PHLEX_NATIVE_SANITIZE"] == "true"
 end
 
-# Runs the suite compiled, raising where a component would fall back to rendering uncompiled.
-if ENV["PHLEX_COMPILER"] == "true"
+# Components compile on first render, and one that would fall back to rendering
+# uncompiled raises instead. PHLEX_COMPILER=false runs the suite uncompiled.
+if ENV["PHLEX_COMPILER"] == "false"
+	Phlex::Compiler.disable!
+else
 	Phlex::Compiler.enable!(on_failure: -> (component, error) { raise error })
 end

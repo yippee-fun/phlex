@@ -18,7 +18,25 @@ class Phlex::SGML
 			object.instance_variable_set(:@_content_block, block) if block
 			object
 		end
+
+		# Whether the class and its subclasses compile on their first render.
+		# Classes compile by default; a subclass can say otherwise again.
+		def compile(value)
+			unless true == value || false == value
+				raise Phlex::ArgumentError, "Expected compile to be true or false, got #{value.inspect}."
+			end
+
+			@__phlex_compile__ = value
+		end
+
+		def compile?
+			klass = self
+			klass = klass.superclass until klass.instance_variable_defined?(:@__phlex_compile__)
+			klass.instance_variable_get(:@__phlex_compile__)
+		end
 	end
+
+	@__phlex_compile__ = true
 
 	def view_template
 		if block_given?
@@ -48,6 +66,9 @@ class Phlex::SGML
 	end
 
 	def internal_call(parent: nil, state: nil, &block)
+		# Checked first so another Ractor never autoloads the compiler.
+		Phlex::Compiler.compile_on_first_render(self.class) if Phlex.__main_ractor__?
+
 		if @_state
 			raise Phlex::DoubleRenderError.new(
 				"You can't render a #{self.class.name} more than once. To render a component more than once, pass `rerenderable: true` to `call` each time you render it."

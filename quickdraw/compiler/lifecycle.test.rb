@@ -1048,14 +1048,15 @@ class CompilerLifecycleTest < Quickdraw::Test
 				end
 			RUBY
 		) do
-			Phlex::Compiler.precompile(LifecyclePrecompiled)
+			with_lazy_compilation { Phlex::Compiler.precompile(LifecyclePrecompiled) }
 			assert compiled_method?(LifecyclePrecompiled, :view_template)
 
 			failures = []
-			with_lazy_compilation(on_failure: -> (component, error) { failures << [component, error.message] }) do
+			on_failure = -> (component, error) { failures << [component, error.message] }
+			with_lazy_compilation do
 				Sabotage.active = true
-				Phlex::Compiler.precompile(LifecyclePrecompileFailing)
-				Phlex::Compiler.precompile(LifecyclePrecompileFailing)
+				Phlex::Compiler.precompile(LifecyclePrecompileFailing, on_failure:)
+				Phlex::Compiler.precompile(LifecyclePrecompileFailing, on_failure:)
 			ensure
 				Sabotage.active = false
 			end
@@ -1087,9 +1088,9 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert Phlex.__compiled_source_maps__.key?(compiled_path)
 
 			failing = LifecycleForgottenFailing
-			with_lazy_compilation(on_failure: -> (*) {}) do
+			with_lazy_compilation do
 				Sabotage.active = true
-				Phlex::Compiler.precompile(failing)
+				Phlex::Compiler.precompile(failing, on_failure: -> (*) {})
 			ensure
 				Sabotage.active = false
 			end
@@ -1118,6 +1119,76 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			error = assert_raises(ArgumentError) { Phlex::Compiler.forget(LifecycleRemembered) }
 			assert_equal error.message, "Can't forget LifecycleRemembered because it's still loaded."
+		end
+	end
+
+	test "a component compiles on its first render unless its class or an ancestor says compile false" do
+		with_component_files(
+			"settings.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDefault < Phlex::HTML
+					def view_template = div { "default" }
+				end
+
+				class LifecycleOptedOut < Phlex::HTML
+					compile false
+
+					def view_template = div { "opted out" }
+				end
+
+				class LifecycleInheritsOptOut < LifecycleOptedOut
+					def view_template = div { "inherits" }
+				end
+
+				class LifecycleOptsBackIn < LifecycleOptedOut
+					compile true
+
+					def view_template = div { "back in" }
+				end
+			RUBY
+		) do
+			assert LifecycleDefault.compile?
+			refute LifecycleOptedOut.compile?
+			refute LifecycleInheritsOptOut.compile?
+			assert LifecycleOptsBackIn.compile?
+
+			with_lazy_compilation do
+				assert_equal LifecycleDefault.call, "<div>default</div>"
+				assert_equal LifecycleOptedOut.call, "<div>opted out</div>"
+				assert_equal LifecycleInheritsOptOut.call, "<div>inherits</div>"
+				assert_equal LifecycleOptsBackIn.call, "<div>back in</div>"
+			end
+
+			assert compiled_method?(LifecycleDefault, :view_template)
+			refute compiled_method?(LifecycleOptedOut, :view_template)
+			refute compiled_method?(LifecycleInheritsOptOut, :view_template)
+			assert compiled_method?(LifecycleOptsBackIn, :view_template)
+		end
+	end
+
+	test "compile only takes true or false" do
+		error = assert_raises(Phlex::ArgumentError) { Class.new(Phlex::HTML) { compile :yes } }
+		assert_equal error.message, "Expected compile to be true or false, got :yes."
+	end
+
+	test "disabling the compiler stops components compiling on first render, whatever they say" do
+		with_component_files(
+			"disabled.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDisabled < Phlex::HTML
+					compile true
+
+					def view_template = div { "disabled" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				Phlex::Compiler.disable!
+				assert_equal LifecycleDisabled.call, "<div>disabled</div>"
+				Phlex::Compiler.precompile(LifecycleDisabled)
+			end
+
+			refute compiled_method?(LifecycleDisabled, :view_template)
 		end
 	end
 end
