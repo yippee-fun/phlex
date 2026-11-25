@@ -1531,6 +1531,56 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	# Pauses a thread that sets :lifecycle_install_gate just before compiled methods are installed.
+	module InstallPause
+		def without_redefinition_warnings(&)
+			Thread.current[:lifecycle_install_gate]&.call
+			super
+		end
+	end
+
+	Phlex::Compiler.singleton_class.prepend(InstallPause)
+
+	test "a subclass defined while its parent compiles sees its override honoured" do
+		Dir.mktmpdir do |dir|
+			parent_path = File.join(dir, "race_parent.rb")
+			child_path = File.join(dir, "race_child.rb")
+			File.write(parent_path, <<~RUBY)
+				# frozen_string_literal: true
+				class LifecycleRaceParent < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+			File.write(child_path, <<~RUBY)
+				# frozen_string_literal: true
+				class LifecycleRaceChild < LifecycleRaceParent
+					def div(**, &) = super(class: "child", **, &)
+				end
+			RUBY
+			load parent_path
+
+			paused = Queue.new
+			resume = Queue.new
+			compiling = Thread.new do
+				Thread.current[:lifecycle_install_gate] = -> {
+					Thread.current[:lifecycle_install_gate] = nil
+					paused << true
+					resume.pop
+				}
+				Phlex::Compiler.compile(LifecycleRaceParent)
+			end
+
+			compiling.join unless paused.pop(timeout: 5)
+			defining = Thread.new { load child_path }
+			Thread.pass until defining.stop?
+			resume << true
+			compiling.join
+			defining.join
+
+			assert_equal LifecycleRaceChild.new.call, %(<div class="child">x</div>)
+		end
+	end
+
 	test "a live component can't be forgotten" do
 		with_component_files(
 			"remembered.rb" => <<~RUBY

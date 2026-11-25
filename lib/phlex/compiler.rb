@@ -426,6 +426,9 @@ module Phlex::Compiler
 	def self.inlining_changed(target, names)
 		if Phlex.__main_ractor__?
 			return if MUTEX.owned?
+
+			# A compilation in progress records what it inlined once it's installed.
+			MUTEX.synchronize { nil } if MUTEX.locked?
 		else
 			# Another Ractor can't recompile a class, only refuse an instance override.
 			return unless target.singleton_class?
