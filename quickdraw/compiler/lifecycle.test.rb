@@ -1883,6 +1883,30 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "compiling a class whose first render failed clears the failure" do
+		with_component_files(
+			"failed_then_compiled.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFailedThenCompiled < Phlex::HTML
+					def view_template = div { "works" }
+				end
+			RUBY
+		) do
+			Sabotage.active = true
+			with_lazy_compilation(on_failure: -> (_component, _error) {}) do
+				assert_equal LifecycleFailedThenCompiled.new.call, "<div>works</div>"
+			ensure
+				Sabotage.active = false
+			end
+			assert Phlex::Compiler::FAILURES.key?(LifecycleFailedThenCompiled)
+
+			Phlex::Compiler.compile(LifecycleFailedThenCompiled)
+			assert compiled_method?(LifecycleFailedThenCompiled, :view_template)
+			refute Phlex::Compiler::FAILURES.key?(LifecycleFailedThenCompiled)
+			assert_equal Phlex::Compiler.explain(LifecycleFailedThenCompiled), []
+		end
+	end
+
 	test "compiling a subclass compiles the ancestors its first render left alone" do
 		with_component_files(
 			"left_alone_parent.rb" => <<~RUBY,

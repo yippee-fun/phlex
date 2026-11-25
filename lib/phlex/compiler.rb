@@ -313,7 +313,7 @@ module Phlex::Compiler
 			# methods they had, so none is left compiled in some files.
 			restored = ancestors.select do |ancestor|
 				if !failed.include?(ancestor) && (files[ancestor] || []).all? { |file| compiled_paths.include?(file) }
-					IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true)
+					compiled!(ancestor)
 					false
 				elsif rollback.inlined.key?(ancestor)
 					restore(ancestor, rollback)
@@ -325,7 +325,14 @@ module Phlex::Compiler
 			raise
 		end
 
-		ancestors.each { |ancestor| IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true) }
+		ancestors.each { |ancestor| compiled!(ancestor) }
+	end
+
+	# A class compiled at last, such as explicitly after its first render
+	# failed, no longer reports that failure.
+	def self.compiled!(component)
+		IVAR_SET.bind_call(component, :@__phlex_compiled__, true)
+		FAILURES.delete(component)
 	end
 
 	# Why parts of the files defining the component and its Phlex ancestors are
