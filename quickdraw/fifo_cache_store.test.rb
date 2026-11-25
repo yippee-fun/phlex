@@ -83,4 +83,172 @@ class FIFOCacheStoreTest < Quickdraw::Test
 		assert_equal miss, value
 		assert_equal hit, miss
 	end
+
+	test "a hit is a frozen copy that changing the cached value doesn't change" do
+		store = Phlex::FIFOCacheStore.new
+		value = [+"<div>", { "a" => [0, 5, []] }]
+
+		store.fetch("a") { value }
+		value[0] << "changed"
+		value[1]["a"][2] << "b"
+
+		hit = store.fetch("a") { failure! { "This block should not have been called." } }
+
+		assert_equal hit, ["<div>", { "a" => [0, 5, []] }]
+		assert store.fetch("a") { nil }.equal?(hit)
+		assert_raises(FrozenError) { hit[0] << "x" }
+		assert_raises(FrozenError) { hit[1]["a"][2] << "x" }
+		assert ::Ractor.shareable?(hit) if defined?(::Ractor)
+	end
+
+	test "other values are loaded anew on each hit, without freezing what their loader returns" do
+		lock = Object.const_set(:FIFOCacheStoreTestLock, Class.new do
+			def initialize = @mutex = Mutex.new
+			def marshal_dump = nil
+			def marshal_load(_) = @mutex = Mutex.new
+			def locked? = @mutex.locked?
+		end)
+
+		registry = {}
+		registered_class = Object.const_set(:FIFOCacheStoreTestRegistered, Class.new do
+			attr_reader :name
+
+			define_method(:initialize) { |name| @name = name }
+			define_method(:_dump) { |_| @name }
+			define_singleton_method(:_load) { |name| registry[name] ||= new(name) }
+		end)
+
+		store = Phlex::FIFOCacheStore.new
+
+		store.fetch("lock") { [lock.new] }
+		first = store.fetch("lock") { nil }
+		second = store.fetch("lock") { nil }
+
+		refute first.frozen?
+		refute first.equal?(second)
+		refute first[0].locked?
+
+		registered = registry["x"] = registered_class.new(+"x")
+		store.fetch("registered") { [registered] }
+
+		assert store.fetch("registered") { nil }[0].equal?(registered)
+		refute registered.frozen?
+		refute registered.name.frozen?
+	ensure
+		Object.__send__(:remove_const, :FIFOCacheStoreTestLock) if Object.const_defined?(:FIFOCacheStoreTestLock, false)
+		Object.__send__(:remove_const, :FIFOCacheStoreTestRegistered) if Object.const_defined?(:FIFOCacheStoreTestRegistered, false)
+	end
+
+	test "a value is classified before a dump hook can change it" do
+		registry = {}
+		hooked = Object.const_set(:FIFOCacheStoreTestHooked, Class.new do
+			attr_accessor :owner
+
+			define_method(:_dump) { |_| owner.default = nil; "hooked" }
+			define_singleton_method(:_load) { |name| registry[name] ||= new }
+		end)
+
+		value = {}
+		value.default = hooked.new.tap { |it| it.owner = value }
+		store = Phlex::FIFOCacheStore.new
+		store.fetch("hooked") { value }
+		hit = store.fetch("hooked") { nil }
+
+		assert hit.default.equal?(registry["hooked"])
+		refute hit.frozen?
+		refute registry["hooked"].frozen?
+	ensure
+		Object.__send__(:remove_const, :FIFOCacheStoreTestHooked) if Object.const_defined?(:FIFOCacheStoreTestHooked, false)
+	end
+
+	test "core objects with singleton methods are loaded on each hit" do
+		registered = +"registered"
+		String.define_singleton_method(:_load) { |_| registered }
+
+		hooked = +"hooked"
+		hooked.define_singleton_method(:_dump) { |_| "hooked" }
+		store = Phlex::FIFOCacheStore.new
+		store.fetch("singleton") { [hooked] }
+
+		assert store.fetch("singleton") { nil }[0].equal?(registered)
+		refute registered.frozen?
+	ensure
+		String.singleton_class.remove_method(:_load) if String.singleton_class.method_defined?(:_load, false)
+	end
+
+	test "cyclic values and core objects with instance variables are loaded on each hit" do
+		store = Phlex::FIFOCacheStore.new
+
+		cyclic = [1]
+		cyclic << cyclic
+		store.fetch("cyclic") { cyclic }
+		hit = store.fetch("cyclic") { nil }
+
+		assert hit[1].equal?(hit)
+		refute hit.frozen?
+
+		tagged = +"tagged"
+		tagged.instance_variable_set(:@tag, [+"mutable"])
+		store.fetch("tagged") { [tagged] }
+		hit = store.fetch("tagged") { nil }
+
+		assert_equal hit[0].instance_variable_get(:@tag), ["mutable"]
+		refute hit[0].instance_variable_get(:@tag).frozen?
+	end
+
+	test "frozen hits keep shared and distinct strings as they were" do
+		store = Phlex::FIFOCacheStore.new
+
+		shared = +"x"
+		store.fetch("strings") { [shared, shared, +"y", +"y"] }
+		hit = store.fetch("strings") { nil }
+
+		assert hit.frozen?
+		assert hit[0].equal?(hit[1])
+		refute hit[2].equal?(hit[3])
+	end
+
+	test "identity hashes keep their distinct keys on each hit" do
+		store = Phlex::FIFOCacheStore.new
+
+		identity = {}.compare_by_identity
+		identity[+"a"] = 1
+		identity[+"a"] = 2
+		store.fetch("identity") { identity }
+		hit = store.fetch("identity") { nil }
+
+		assert_equal hit.size, 2
+		assert hit.compare_by_identity?
+	end
+
+	test "deeply nested values are classified without overflowing the stack" do
+		# Deep enough to overflow a recursive walk, and checked directly because
+		# Marshal itself recurses on some Rubies.
+		deep = 100_000.times.reduce([]) { |inner, _| [inner] }
+
+		assert Phlex::FIFOCacheStore.new.__send__(:plain?, deep)
+	end
+
+	test "values larger than the store aren't cached" do
+		store = Phlex::FIFOCacheStore.new(max_bytesize: 10)
+
+		assert_equal store.fetch("a") { "a" * 20 }, "a" * 20
+		assert_equal store.fetch("a") { "missed" }, "missed"
+	end
+
+	test "values that can't be serialised aren't cached" do
+		store = Phlex::FIFOCacheStore.new
+
+		assert_raises(TypeError) { store.fetch("a") { proc {} } }
+		assert_equal store.fetch("a") { "A" }, "A"
+	end
+
+	test "evicts by the size of the serialised value" do
+		store = Phlex::FIFOCacheStore.new(max_bytesize: 40)
+
+		store.fetch("a") { "a" * 20 }
+		store.fetch("b") { "b" * 20 }
+
+		assert_equal store.fetch("a") { "missed" }, "missed"
+	end
 end

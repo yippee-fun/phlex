@@ -1,8 +1,17 @@
 # frozen_string_literal: true
 
 # An extremely fast in-memory cache store that evicts keys on a first-in-first-out basis.
+#
+# Values are copied when they're stored, so changing what you cached doesn't
+# change the cache. A value made only of Strings, Symbols, numbers, true,
+# false, nil, Arrays and Hashes is kept as a deeply frozen copy, which every
+# hit returns. Anything else may load itself in its own way, so it's kept
+# serialised and each hit loads a new copy.
 class Phlex::FIFOCacheStore
+	# What the FIFO stores, whether it's still serialised, and the size of its serialised form.
+	Entry = Data.define(:value, :serialized, :bytesize)
 	def initialize(max_bytesize: 2 ** 20)
+		@max_bytesize = max_bytesize
 		@fifo = Phlex::FIFO.new(
 			max_bytesize:,
 			max_value_bytesize: max_bytesize
@@ -14,12 +23,20 @@ class Phlex::FIFOCacheStore
 		fifo = @fifo
 		key = map_key(key)
 
-		if (result = fifo[key])
-			Marshal.load(result)
+		if (entry = fifo[key])
+			entry.serialized ? Marshal.load(entry.value) : entry.value
 		else
 			result = yield
+			# Classified before dumping, since a custom dump hook could change the value.
+			plain = plain?(result)
+			dump = Marshal.dump(result)
 
-			fifo[key] = Marshal.dump(result)
+			# The FIFO won't keep a value larger than the store. A plain value is
+			# frozen as it loads, not with `freeze: true`, which would deduplicate
+			# equal Strings. The proc is made here because other Ractors can't share one.
+			if dump.bytesize <= @max_bytesize
+				fifo[key] = plain ? Entry.new(Marshal.load(dump, proc(&:freeze)), false, dump.bytesize) : Entry.new(dump, true, dump.bytesize)
+			end
 
 			result
 		end
@@ -27,6 +44,39 @@ class Phlex::FIFOCacheStore
 
 	def clear
 		@fifo.clear
+	end
+
+	# Shared or cyclic containers, identity hashes and core objects carrying
+	# instance variables or singleton methods (which could hook Marshal) aren't plain, so the walk is linear and nothing but the
+	# copy is frozen. It uses its own stack so deep values can't overflow Ruby's.
+	private def plain?(value)
+		seen = {}.compare_by_identity
+		stack = [value]
+
+		while (stack.length > 0)
+			case (item = stack.pop)
+			when Symbol, Integer, Float, true, false, nil
+				next
+			when String
+				return false unless bare?(item, String)
+			when Array
+				return false unless bare?(item, Array) && !seen.key?(item)
+				seen[item] = true
+				stack.concat(item)
+			when Hash
+				return false unless bare?(item, Hash) && item.default.nil? && !item.compare_by_identity? && !seen.key?(item)
+				seen[item] = true
+				item.each { |k, v| stack << k << v }
+			else
+				return false
+			end
+		end
+
+		true
+	end
+
+	private def bare?(object, klass)
+		klass.equal?(object.class) && object.instance_variables.empty? && object.singleton_methods.empty?
 	end
 
 	private def map_key(value)
