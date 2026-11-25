@@ -100,6 +100,9 @@ module Phlex::Compiler
 	# component => the exception that stopped it compiling on first render
 	FAILURES = {}.compare_by_identity
 
+	# component => true, for each forgotten component a generation still waits on
+	FORGOTTEN = {}.compare_by_identity
+
 	DEFAULT_FAILURE_HANDLER = lambda do |component, error|
 		warn "Phlex::Compiler couldn't compile #{component}, so it renders uncompiled: #{error.class}: #{error.message}\n\t#{error.backtrace&.first(5)&.join("\n\t")}"
 	end
@@ -180,16 +183,22 @@ module Phlex::Compiler
 		error = MUTEX.synchronize do
 			return if settled?(component)
 
+			failed = []
+
 			begin
-				compile_ancestry(component, only: :compile?.to_proc)
+				compile_ancestry(component, only: COMPILES_ON_FIRST_RENDER, failed:)
 				nil
-			rescue StandardError, ScriptError => e
-				FAILURES[component] = e
+			rescue StandardError, ScriptError, SystemStackError => e
+				[component, *failed].each { |klass| FAILURES[klass] = e }
+				e
 			end
 		end
 
 		on_failure.call(component, error) if error
 	end
+
+	# An ancestor whose file failed isn't tried again for each of its subclasses.
+	COMPILES_ON_FIRST_RENDER = -> (ancestor) { ancestor.compile? && !FAILURES.key?(ancestor) }
 
 	def self.settled?(component)
 		compiled?(component) || FAILURES.key?(component) || component.frozen? || !component.compile?
@@ -206,8 +215,9 @@ module Phlex::Compiler
 
 	# Drops what compiling the components recorded once a code reloader has
 	# unloaded them: why they failed to compile, and the source maps of the
-	# generations their methods were compiled into, once nothing loaded still
-	# runs those methods. Pass every unloaded component at once.
+	# generations their methods were compiled into. A generation's map is kept
+	# until each class that could run its methods, its owners and their
+	# subclasses, has been forgotten. Pass every unloaded component at once.
 	def self.forget(*components)
 		components.each { |component| component!(component) }
 
@@ -216,34 +226,33 @@ module Phlex::Compiler
 		end
 
 		MUTEX.synchronize do
-			in_use = Hash.new { |cache, component| cache[component] = in_use?(component) }.compare_by_identity
-
 			components.each do |component|
 				FAILURES.delete(component)
-
-				# A live subclass still runs the methods it inherits, so its ancestor keeps
-				# owning them until the subclass is forgotten too.
-				next if in_use[component]
-
-				GENERATION_COMPONENTS.each do |path, owners|
-					next unless owners.any? { |owner| owner.equal?(component) }
-
-					others = owners.reject { |owner| owner.equal?(component) }
-					GENERATION_COMPONENTS[path] = others.freeze if others.any?
-				end
+				FORGOTTEN[component] = true
 			end
 
-			compiled_paths = GENERATION_COMPONENTS.filter_map do |path, owners|
-				path if owners.none? { |owner| in_use[owner] }
+			forgotten = -> (owner) { FORGOTTEN.key?(owner) && descendants_of(owner).all? { |descendant| FORGOTTEN.key?(descendant) } }
+
+			compiled_paths = []
+
+			GENERATION_COMPONENTS.each do |path, owners|
+				if owners.all?(&forgotten)
+					compiled_paths << path
+				elsif owners.any?(&forgotten)
+					GENERATION_COMPONENTS[path] = owners.reject(&forgotten).freeze
+				end
 			end
 
 			compiled_paths.each { |path| GENERATION_COMPONENTS.delete(path) }
 			Phlex.__remove_compiled_source_maps__(compiled_paths) if compiled_paths.any?
-		end
-	end
 
-	def self.in_use?(component)
-		live?(component) || descendants_of(component).any? { |descendant| live?(descendant) }
+			# Only what a remaining generation could still be waiting on is remembered.
+			waiting = {}.compare_by_identity
+			GENERATION_COMPONENTS.each_value do |owners|
+				owners.each { |owner| [owner, *descendants_of(owner)].each { |klass| waiting[klass] = true } }
+			end
+			FORGOTTEN.select! { |component, _| waiting.key?(component) }
+		end
 	end
 
 	# Compiles the methods of the component and its Phlex ancestors wherever
@@ -255,7 +264,7 @@ module Phlex::Compiler
 	end
 
 	# On first render, an ancestor that says `compile false` is left alone.
-	def self.compile_ancestry(component, only: nil)
+	def self.compile_ancestry(component, only: nil, failed: [])
 		return if component.frozen? || compiled?(component)
 
 		ancestors = phlex_ancestors(component).reject { |ancestor| ancestor.frozen? || compiled?(ancestor) }
@@ -264,6 +273,9 @@ module Phlex::Compiler
 
 		components.flat_map { |ancestor| defining_files(ancestor) }.uniq.each do |path|
 			compile_file(path, components:)
+		rescue StandardError, ScriptError, SystemStackError
+			failed.concat(components.select { |ancestor| defining_files(ancestor).include?(path) })
+			raise
 		end
 
 		ancestors.each { |ancestor| ancestor.instance_variable_set(:@__phlex_compiled__, true) }
@@ -278,9 +290,12 @@ module Phlex::Compiler
 
 		ancestors = phlex_ancestors(component)
 
-		failures = ancestors.filter_map do |ancestor|
-			next unless (error = FAILURES[ancestor])
+		# A failure is recorded on each class whose file failed, so it's explained
+		# on the ancestor furthest up.
+		failed = ancestors.select { |ancestor| FAILURES.key?(ancestor) }.reverse.uniq { |ancestor| FAILURES[ancestor].object_id }.reverse
 
+		failures = failed.map do |ancestor|
+			error = FAILURES[ancestor]
 			Diagnostics::Diagnostic.new(path: constant_source_path(ancestor), line: nil, message: "compiling #{ancestor} raised #{error.class}: #{error.message}")
 		end
 
@@ -468,7 +483,7 @@ module Phlex::Compiler
 	# old class object lingers, and reopening its name would reach the new one.
 	# A constant waiting to be autoloaded isn't loaded, so it's never the class.
 	def self.live?(component)
-		return false unless (name = component.name)
+		return false unless (name = NAME.bind_call(component))
 
 		name.split("::").reduce(Object) do |namespace, constant|
 			return false unless Module === namespace && namespace.const_defined?(constant, false) && !namespace.autoload?(constant, false)
@@ -478,6 +493,9 @@ module Phlex::Compiler
 	rescue NameError
 		false
 	end
+
+	# Module#name is called directly, so a class overriding name can't pass for another.
+	NAME = Module.instance_method(:name)
 
 	def self.phlex_ancestors(component)
 		component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }
@@ -592,7 +610,7 @@ module Phlex::Compiler
 	def self.constant_source_path(component)
 		return unless live?(component)
 
-		Object.const_source_location(component.name)&.first
+		Object.const_source_location(NAME.bind_call(component))&.first
 	end
 
 	def self.component!(component)
