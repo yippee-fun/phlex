@@ -2,9 +2,12 @@
 
 require_relative "../lib/phlex/version"
 
+# Counts the releases made since Phlex's last one: 1 makes this 3.0.0.1.
+revision = nil
+
 Gem::Specification.new do |spec|
 	spec.name = "phlex-native"
-	spec.version = "0.1.0"
+	spec.version = [Phlex::VERSION, revision].compact.join(".")
 	spec.authors = ["Joel Drapper"]
 	spec.email = ["joel@drapper.me"]
 
