@@ -132,6 +132,58 @@ class CompilerTest < Quickdraw::Test
 		end
 	end
 
+	test "a constant holding a literal is read before the output around it, and expected to hold it still" do
+		COMPONENT.const_set(:EXPECTED_LABEL, "Save")
+		compiled = compile(<<~RUBY)
+			def a
+				span { "s" }
+				div { EXPECTED_LABEL }
+			end
+		RUBY
+
+		assert compiled.include?(<<~RUBY.gsub(/^/, "\t\t"))
+			__phlex_expected_1__ = EXPECTED_LABEL
+			if "Save".-@.equal?(__phlex_expected_1__)
+				(if __phlex_state__.should_render?
+					__phlex_state__.buffer.<<("<span>s</span><div>Save</div>")
+				end
+				nil)
+			else
+		RUBY
+	ensure
+		COMPONENT.__send__(:remove_const, :EXPECTED_LABEL)
+	end
+
+	test "a constant isn't read when compiling unless it's loaded, nor through a module's own reflection" do
+		COMPONENT.autoload(:EXPECTED_AUTOLOAD, "/nonexistent/expected_autoload.rb")
+		namespace = Module.new do
+			const_set(:VALUE, "value")
+			def self.const_get(...) = raise("const_get called")
+			def self.const_defined?(...) = raise("const_defined? called")
+			def self.ancestors = raise("ancestors called")
+		end
+		COMPONENT.const_set(:ExpectedNamespace, namespace)
+
+		refute compile("def a = div { EXPECTED_AUTOLOAD }").include?("equal?")
+		refute compile("def a = div { EXPECTED_MISSING }").include?("equal?")
+		assert compile("def a = div { ExpectedNamespace::VALUE }").include?(%("value".-@.equal?))
+	ensure
+		COMPONENT.__send__(:remove_const, :EXPECTED_AUTOLOAD)
+		COMPONENT.__send__(:remove_const, :ExpectedNamespace)
+	end
+
+	test "a constant isn't read when compiling while deprecation warnings are on" do
+		COMPONENT.const_set(:EXPECTED_DEPRECATED, "old")
+		COMPONENT.deprecate_constant(:EXPECTED_DEPRECATED)
+		deprecated = Warning[:deprecated]
+		Warning[:deprecated] = true
+
+		refute compile("def a = div { EXPECTED_DEPRECATED }").include?("equal?")
+	ensure
+		Warning[:deprecated] = deprecated
+		COMPONENT.__send__(:remove_const, :EXPECTED_DEPRECATED)
+	end
+
 	test "literal plain is escaped at compile time" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a

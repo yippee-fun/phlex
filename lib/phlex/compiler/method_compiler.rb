@@ -535,6 +535,8 @@ module Phlex::Compiler
 					[plain(value.to_s)]
 				in Refract::StatementsNode[body: [Refract::LocalVariableReadNode => variable]] if element && (expected = expected(variable) { [content_output(variable, element:)] })
 					[expected]
+				in Refract::StatementsNode[body: [Refract::ConstantReadNode | Refract::ConstantPathNode => constant]] if element && (expected = expected_constant(constant) { |value| [content_output(value, element:)] })
+					[expected]
 				in Refract::StatementsNode[body: [Refract::LocalVariableReadNode | Refract::InstanceVariableReadNode => variable]] if element
 					[content_output(variable, element:)]
 				in Refract::StatementsNode[body: [statement]] if pure?(statement) && element
@@ -561,31 +563,98 @@ module Phlex::Compiler
 		# is expected to hold it, and so to render as the literal would. `plain`
 		# raises for true and false, which an element renders as nothing.
 		private def expected(variable, booleans: true)
-			return unless (value = @literal_locals[variable.name]) && (text = rendered_text(value, booleans:))
+			return unless (node = @literal_locals[variable.name])
+
+			value = literal_value(node)
+			return unless String === value || same_as_literal?(value)
+
+			expectation(value, variable, booleans:) { yield }
+		end
+
+		# A constant is expected to hold what it held when compiling, if that's
+		# a literal Ruby would make the same object of, read into a local before
+		# the output around it.
+		private def expected_constant(constant, booleans: true)
+			return unless (names, root = constant_names(constant)) && (found = @environment.constant_value(names, root:))
+			return unless same_as_literal?(found[0])
+
+			local = @locals.fresh(:expected)
+			expectation(found[0], read(local), [write(local, constant)], booleans:) { yield read(local) }
+		end
+
+		private def expectation(value, reader, reads = [], booleans:)
+			return unless (text = rendered_text(value, booleans:)) && (literal = expected_literal(value))
 
 			@appends += 1
 			state_local
-			Output::Expected.new(guard: call(expected_literal(value), :equal?, variable), text:, otherwise: yield)
+			Output::Expected.new(guard: call(literal, :equal?, reader), text:, otherwise: yield, reads:)
+		end
+
+		private def constant_names(node)
+			case node
+			in Refract::ConstantReadNode then [[node.name], false]
+			in Refract::ConstantPathNode[parent: nil] then [[node.name], true]
+			in Refract::ConstantPathNode[parent: Refract::ConstantReadNode | Refract::ConstantPathNode => parent]
+				(names, root = constant_names(parent)) && [[*names, node.name], root]
+			else nil
+			end
+		end
+
+		private def literal_value(node)
+			case node
+			in Refract::StringNode then node.unescaped
+			in Refract::SymbolNode then node.unescaped.to_sym
+			in Refract::IntegerNode | Refract::FloatNode then numeric(node)
+			in Refract::NilNode then nil
+			in Refract::TrueNode then true
+			in Refract::FalseNode then false
+			end
+		end
+
+		VALUE_CLASS = Kernel.instance_method(:class)
+		FROZEN = Kernel.instance_method(:frozen?)
+		INTERNED = String.instance_method(:-@)
+		UNFROZEN = String.instance_method(:+@)
+
+		# Whether a literal written in the compiled code would evaluate to the
+		# very same object, which is only so for a few immediates and for a
+		# String that's the interned copy of its text. The guard compares with
+		# the interned copy, which never has a singleton class or instance
+		# variables, so this only rules out a guard that could never hold.
+		# Interning a frozen String that can be makes it the interned copy.
+		private def same_as_literal?(value)
+			klass = VALUE_CLASS.bind_call(value)
+
+			if klass.equal?(String)
+				FROZEN.bind_call(value) && INTERNED.bind_call(value).equal?(value) && INTERNED.bind_call(UNFROZEN.bind_call(value)).equal?(value)
+			elsif klass.equal?(Integer)
+				Integer(value.to_s).equal?(value)
+			elsif klass.equal?(Float)
+				value.finite? && (written = Float(value.to_s)).equal?(value)
+			else
+				klass.equal?(Symbol) || klass.equal?(NilClass) || klass.equal?(TrueClass) || klass.equal?(FalseClass)
+			end
 		end
 
 		private def rendered_text(value, booleans:)
 			case value
-			in Refract::StringNode | Refract::SymbolNode then Phlex::Escape.html_escape(value.unescaped)
-			in Refract::NilNode then ""
-			in Refract::IntegerNode | Refract::FloatNode then numeric(value).to_s if formats_objects?
-			in Refract::TrueNode | Refract::FalseNode then "" if booleans && formats_objects?
+			in String then Phlex::Escape.html_escape(value)
+			in Symbol then Phlex::Escape.html_escape(value.name)
+			in nil then ""
+			in Integer | Float then value.to_s if formats_objects?
+			in true | false then "" if booleans && formats_objects?
 			end
 		end
 
 		private def expected_literal(value)
 			case value
-			in Refract::StringNode then call(string(value.unescaped), :-@)
-			in Refract::SymbolNode then Refract::SymbolNode.new(unescaped: value.unescaped, quoted: true)
-			in Refract::IntegerNode then Refract::IntegerNode.new(value: value.value)
-			in Refract::FloatNode then Refract::FloatNode.new(value: value.value)
-			in Refract::NilNode then Refract::NilNode.new
-			in Refract::TrueNode then Refract::TrueNode.new
-			in Refract::FalseNode then Refract::FalseNode.new
+			in String then call(string(value), :-@)
+			in Symbol then Refract::SymbolNode.new(unescaped: value.name, quoted: true)
+			in Integer then Refract::IntegerNode.new(value:)
+			in Float then Refract::FloatNode.new(value: value.to_s)
+			in nil then Refract::NilNode.new
+			in true then Refract::TrueNode.new
+			in false then Refract::FalseNode.new
 			end
 		end
 
@@ -1333,6 +1402,8 @@ module Phlex::Compiler
 				in [Refract::NilNode] then Refract::NilNode.new
 				in [Refract::IntegerNode | Refract::FloatNode => number] if (value = numeric(number)) && formats_objects? then plain(value.to_s)
 				in [Refract::LocalVariableReadNode => variable] if (expected = expected(variable, booleans: false) { [node] }) then expected
+				in [Refract::ConstantReadNode | Refract::ConstantPathNode => constant] if (expected = expected_constant(constant, booleans: false) { |value| [node.copy(arguments: node.arguments.copy(arguments: [value]))] })
+					expected
 				else return keep_call(node, "its argument isn't a literal or an interpolation")
 			end
 

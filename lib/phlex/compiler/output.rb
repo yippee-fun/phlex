@@ -52,8 +52,8 @@ module Phlex::Compiler::Output
 	# A value the compiler expects, compared by a guard that can't raise or
 	# have effects, so it can be tested before the text around it: the text
 	# the value renders as when it holds, the statements that render it when
-	# it doesn't.
-	Expected = Data.define(:guard, :text, :otherwise) do
+	# it doesn't, and those that read it, which go before the text around it.
+	Expected = Data.define(:guard, :text, :otherwise, :reads) do
 		include Statement
 	end
 

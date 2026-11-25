@@ -68,14 +68,15 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 	# A run of output that runs nothing else, with expected values in it, is
 	# emitted twice: as static text for when every value is as expected, and
 	# as it would be otherwise. Nothing in the run can change a value between
-	# where it's tested and where it's rendered.
+	# where it's tested and where it's rendered. Values read by constant go
+	# into locals before the run.
 	private def expect(statements)
 		statements.slice_when { |a, b| quiet?(a) != quiet?(b) }.flat_map do |run|
-			guards = quiet?(run.first) ? run.flat_map { |statement| guards(statement) } : []
-			next run if guards.empty?
+			expected = quiet?(run.first) ? run.flat_map { |statement| expected_values(statement) } : []
+			next run if expected.empty?
 
-			predicate = guards.reduce { |left, right| Refract::AndNode.new(left:, operator: "&&", right:) }
-			[if_node(predicate, expected(run, true), else_body: expected(run, false))]
+			predicate = expected.map(&:guard).reduce { |left, right| Refract::AndNode.new(left:, operator: "&&", right:) }
+			[*expected.flat_map(&:reads), if_node(predicate, expected(run, true), else_body: expected(run, false))]
 		end
 	end
 
@@ -88,10 +89,10 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 		end
 	end
 
-	private def guards(statement)
+	private def expected_values(statement)
 		case statement
-		in Output::Expected then [statement.guard]
-		in Output::Enclosed then flatten(statement.body).flat_map { |child| guards(child) }
+		in Output::Expected then [statement]
+		in Output::Enclosed then flatten(statement.body).flat_map { |child| expected_values(child) }
 		else []
 		end
 	end

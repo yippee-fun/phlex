@@ -16,6 +16,9 @@ class Phlex::Compiler::Environment
 	METHOD = Kernel.instance_method(:method)
 	INSTANCE_VARIABLE_GET = Kernel.instance_method(:instance_variable_get)
 	CONST_GET = Module.instance_method(:const_get)
+	CONST_DEFINED = Module.instance_method(:const_defined?)
+	AUTOLOAD = Module.instance_method(:autoload?)
+	ANCESTORS = Module.instance_method(:ancestors)
 	KIT_SOURCE_PATH = Phlex::Kit.instance_method(:const_added).source_location[0]
 
 	Element = Data.define(:tag, :void)
@@ -54,8 +57,9 @@ class Phlex::Compiler::Environment
 
 	# With `inline: false` nothing is recognised, so every method compiles to
 	# its original definition. Used to restore a class before it's frozen.
-	def initialize(component, standard_set: standard_set_on?(component), method_resolver: Phlex::UNBOUND_INSTANCE_METHOD_METHOD.method(:bind_call), refinements: [], inline: true)
+	def initialize(component, standard_set: standard_set_on?(component), method_resolver: Phlex::UNBOUND_INSTANCE_METHOD_METHOD.method(:bind_call), refinements: [], nesting: [component], inline: true)
 		@component = component
+		@nesting = nesting
 		@refinements = refinements
 		@standard_set = standard_set
 		@method_resolver = method_resolver
@@ -148,6 +152,38 @@ class Phlex::Compiler::Environment
 	# on an engine that can't tell.
 	private def core?(method, original)
 		method == original && Phlex::Compiler::CoreCalls.native?(method)
+	end
+
+	# What a constant path names in the class body's lexical scope, wrapped in
+	# an array since it can be nil, if every constant on the path is loaded.
+	# Only Module's reflection is called, so nothing is autoloaded, no
+	# const_missing runs and no module's own const_get does either. Reading a
+	# deprecated constant warns, so none is read while those warnings are on.
+	def constant_value(names, root:)
+		return if Warning[:deprecated]
+
+		first, *rest = names
+		owner = root ? (Object if CONST_DEFINED.bind_call(Object, first, false)) : lexical_owner(first)
+
+		rest.reduce(loaded(owner, first)) do |found, name|
+			found && loaded(inherited_owner(found[0], name), name)
+		end
+	end
+
+	private def loaded(owner, name)
+		[CONST_GET.bind_call(owner, name, false)] if owner && !AUTOLOAD.bind_call(owner, name, false)
+	end
+
+	private def lexical_owner(name)
+		@nesting.find { |scope| CONST_DEFINED.bind_call(scope, name, false) } ||
+			inherited_owner(@nesting.first || Object, name) ||
+			(Object if CONST_DEFINED.bind_call(Object, name, false))
+	end
+
+	private def inherited_owner(namespace, name)
+		return unless MODULE_CASE_EQUALITY.bind_call(Module, namespace)
+
+		ANCESTORS.bind_call(namespace).find { |ancestor| CONST_DEFINED.bind_call(ancestor, name, false) }
 	end
 
 	# An element called on an explicit receiver, so only if it's public.

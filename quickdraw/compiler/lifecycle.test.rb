@@ -482,6 +482,30 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a constant that raises when read leaves out the text before it in its run" do
+		with_component_files(
+			"gone.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleGoneConstant < Phlex::HTML
+					GONE = "gone"
+
+					def view_template
+						span { "a" }
+						div { GONE }
+					rescue NameError
+						plain "rescued"
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleGoneConstant)
+			assert_equal LifecycleGoneConstant.new.call, "<span>a</span><div>gone</div>"
+
+			LifecycleGoneConstant.__send__(:remove_const, :GONE)
+			assert_equal LifecycleGoneConstant.new.call, "rescued"
+		end
+	end
+
 	test "a component that inlined an svg block is recompiled when Phlex::SVG changes" do
 		with_component_files(
 			"icon.rb" => <<~RUBY
