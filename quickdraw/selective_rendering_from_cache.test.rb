@@ -292,6 +292,46 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 		end
 	end
 
+	class OverlappingTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(key, cache_store:)
+			@key = key
+			@cache_store = cache_store
+		end
+
+		def view_template
+			if @key
+				cache(@key) { cache { content } }
+			else
+				content
+			end
+		end
+
+		def content
+			fragment("b") do
+				plain "I"
+				fragment("a") do
+					plain "J"
+					fragment("b") { plain "X" }
+					fragment("b") { plain "S" }
+				end
+				fragment("b") { plain "I" }
+			end
+		end
+	end
+
+	test "selected fragments that overlap rather than nest render the same, cached or not" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		# Uncached, then both caches cold, then only the inner cache warm, then both warm.
+		[nil, 1, 2, 2].each do |key|
+			assert_equal OverlappingTest.new(key, cache_store:).call(fragments: ["b", "a"]), "IJXS"
+			assert_equal OverlappingTest.new(key, cache_store:).call(fragments: ["b"]), "IJX"
+			assert_equal OverlappingTest.new(key, cache_store:).call(fragments: ["a"]), "JXS"
+		end
+	end
+
 	test "fetching a nested fragment from a cached value" do
 		cache_store = Phlex::FIFOCacheStore.new
 		CacheTest.new(1, cache_store:).call # Cache the outer cache for key = 1, and the inner cache for all other keys

@@ -279,18 +279,31 @@ class Phlex::SGML
 			end
 			state.buffer << cached_buffer
 		else
-			found = false
+			ranges = []
 
-			fragment_map.each do |fragment_name, (offset, length, nested_fragments)|
-				if state.fragments.include?(fragment_name)
-					found = true
-					state.fragments.delete(fragment_name)
-					state.fragments.subtract(nested_fragments)
-					state.buffer << cached_buffer.byteslice(offset, length)
+			fragment_map.each do |fragment_name, (offset, length, _nested_fragments)|
+				if state.fragments.delete?(fragment_name)
+					ranges << [offset, offset + length]
 				end
 			end
 
-			state.halt_if_all_fragments_found if found
+			unless ranges.empty?
+				# Selected fragments can nest or overlap, so render the union of their ranges in order, as uncached rendering would.
+				ranges.sort!
+				start, finish = ranges.shift
+
+				ranges.each do |(next_start, next_finish)|
+					if next_start > finish
+						state.buffer << cached_buffer.byteslice(start, finish - start)
+						start, finish = next_start, next_finish
+					elsif next_finish > finish
+						finish = next_finish
+					end
+				end
+
+				state.buffer << cached_buffer.byteslice(start, finish - start)
+				state.halt_if_all_fragments_found
+			end
 		end
 
 		nil
