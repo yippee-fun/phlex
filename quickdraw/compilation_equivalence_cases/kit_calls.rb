@@ -108,6 +108,25 @@ module EquivalenceCases
 			end
 		end
 
+		module Overriding
+			extend Phlex::Kit
+
+			class Card < Phlex::HTML
+				def view_template = plain("overriding card")
+			end
+
+			def self.const_get(name, ...) = (name == :Card) ? Replacement : super
+		end
+
+		class OverridingConstGet < Phlex::HTML
+			include Overriding
+
+			def view_template
+				Card()
+				plain "!"
+			end
+		end
+
 		class OverridesKitMethod < Phlex::HTML
 			include Components
 

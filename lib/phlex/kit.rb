@@ -46,15 +46,14 @@ module Phlex::Kit
 
 	# How a method can reach this kit by name, which a module nested in an
 	# anonymous one doesn't have. A constant can be made private after its
-	# kit's components are defined, so only the top-level one is named.
+	# kit's components are defined, so each is looked up with `const_get`.
 	private def named_reference
 		return unless (name = self.name)
 
-		top, *rest = name.split("::")
-		return unless Object.constants.include?(top.to_sym)
-		return unless rest.reduce(Object.const_get(top, false)) { |namespace, constant| namespace.const_get(constant, false) }.equal?(self)
+		path = name.split("::")
+		return unless path.reduce(Object) { |namespace, constant| namespace.const_get(constant, false) }.equal?(self)
 
-		["::#{top}", *rest.map { |constant| "const_get(:#{constant}, false)" }].join(".")
+		["::Object", *path.map { |constant| "const_get(:#{constant}, false)" }].join(".")
 	rescue NameError, TypeError
 		nil
 	end

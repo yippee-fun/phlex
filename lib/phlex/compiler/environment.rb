@@ -13,6 +13,7 @@ class Phlex::Compiler::Environment
 		Phlex::HTML.instance_method(:doctype).source_location[0],
 	].freeze
 
+	METHOD = Kernel.instance_method(:method)
 	KIT_SOURCE_PATH = Phlex::Kit.instance_method(:const_added).source_location[0]
 
 	Element = Data.define(:tag, :void)
@@ -209,6 +210,8 @@ class Phlex::Compiler::Environment
 	# A kit names `BEGIN` and `END` another way, since they can't be written as
 	# constants. The kit's method calls `new` and `render` from its own file,
 	# where no refinement applies, so a file with refinements keeps the call.
+	# It finds the component with `const_get`, so the path must be public and
+	# every module on it must use Ruby's own `const_get`.
 	private def resolve_kit_component(name)
 		return if name in :BEGIN | :END
 		return if @refinements.any?
@@ -230,11 +233,10 @@ class Phlex::Compiler::Environment
 		false
 	end
 
-	# Whether every constant on the path is public, since the kit's method
-	# finds its component with `const_get`, which ignores visibility.
 	private def public_path?(path)
 		path.split("::").reduce(Object) do |namespace, name|
 			return false unless Module === namespace && namespace.constants.include?(name.to_sym)
+			return false unless METHOD.bind_call(namespace, :const_get).owner.equal?(Module)
 
 			namespace.const_get(name, false)
 		end

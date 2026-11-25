@@ -136,6 +136,20 @@ class KitTest < Quickdraw::Test
 		Object.__send__(:remove_const, :KitTestPrivateOuter) if Object.const_defined?(:KitTestPrivateOuter, false)
 	end
 
+	test "a top-level kit made private finds its components" do
+		kit = Object.const_set(:KitTestPrivateKit, Module.new { extend Phlex::Kit })
+		kit.const_set(:Card, Class.new(Phlex::HTML) { def view_template = hr })
+		Object.__send__(:private_constant, :KitTestPrivateKit)
+		page = Class.new(Phlex::HTML) do
+			include kit
+			def view_template = Card()
+		end
+
+		assert_equal page.call, %(<hr>)
+	ensure
+		Object.__send__(:remove_const, :KitTestPrivateKit) if Object.const_defined?(:KitTestPrivateKit, false)
+	end
+
 	if defined?(::Ractor)
 		# No text or attributes, so rendering doesn't depend on ERB::Escape or
 		# the attribute cache being usable from a non-main Ractor.
