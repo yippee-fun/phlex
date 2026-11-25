@@ -20,31 +20,33 @@ module RubyLsp
 			end
 		end
 
-		class IndexingEnhancement < RubyIndexer::Enhancement
-			def on_call_node_enter(node)
-				name = node.name
-				owner = @listener.current_owner
-				location = node.location
-				arguments = node.arguments&.arguments
+		# ruby-lsp 0.27 replaced RubyIndexer with Rubydex, which has no Enhancement API.
+		if defined?(::RubyIndexer::Enhancement)
+			class IndexingEnhancement < RubyIndexer::Enhancement
+				def on_call_node_enter(node)
+					owner = @listener.current_owner
 
-				return unless owner
-				return unless :register_element == name
+					return unless owner
+					return unless :register_element == node.name
 
-				case arguments
-				in [Prism::SymbolNode[unescaped: String => method_name], *]
-					tag_name = case arguments[1]
-						in Prism::StringNode[unescaped: String => given] then given
-						else method_name.tr("_", "-")
+					case node.arguments&.arguments
+					in [Prism::SymbolNode[unescaped: String => method_name], *rest]
+						tag_name = case rest
+							in [Prism::KeywordHashNode[elements: [*, Prism::AssocNode[key: Prism::SymbolNode[unescaped: "tag"], value: Prism::StringNode | Prism::SymbolNode => tag], *]]]
+								tag.unescaped
+							else
+								method_name.tr("_", "-")
+						end
+
+						@listener.add_method(method_name, node.location, [
+							RubyIndexer::Entry::Signature.new([
+								RubyIndexer::Entry::KeywordRestParameter.new(name: :attributes),
+								RubyIndexer::Entry::BlockParameter.new(name: :content),
+							]),
+						], visibility: :public, comments: "Outputs a `<#{tag_name}>` tag.")
+					else
+						# no-op
 					end
-
-					@listener.add_method(method_name, location, [
-						RubyIndexer::Entry::Signature.new([
-							RubyIndexer::Entry::KeywordRestParameter.new(name: :attributes),
-							RubyIndexer::Entry::BlockParameter.new(name: :content),
-						]),
-					], visibility: :public, comments: "Outputs a `<#{tag_name}>` tag.")
-				else
-					# no-op
 				end
 			end
 		end
