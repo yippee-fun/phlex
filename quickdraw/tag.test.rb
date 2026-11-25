@@ -216,4 +216,18 @@ HTML
 
 		assert_equal html.call, "<div></div><div><img><x-y></x-y>|"
 	end
+
+	test "head flushes like its element method" do
+		component = Class.new(Phlex::HTML) do
+			define_method(:view_template) do
+				tag(:head) { "x" }
+				body
+			end
+		end
+
+		chunks = []
+		component.new.call(chunks)
+
+		assert_equal chunks, ["<head>x</head>", "<body></body>"]
+	end
 end
