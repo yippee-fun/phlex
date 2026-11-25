@@ -56,14 +56,16 @@ module EquivalenceCases
 			def path(**) = "rebound"
 		end
 
+		# Overrides an element no other test inlines, since a Phlex::SVG subclass
+		# that overrides one stops HTML components inlining it in svg blocks.
 		class PrivateElement < Phlex::SVG
 			def view_template
-				svg { |s| s.path(d: "a") }
+				svg { |s| s.polyline(points: "0,0") }
 			rescue NoMethodError => error
 				plain "rescued #{error.name}"
 			end
 
-			private def path(...) = super
+			private def polyline(...) = super
 		end
 
 		class Page < Phlex::HTML
