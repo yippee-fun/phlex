@@ -434,4 +434,38 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 			end
 		end
 	end
+
+	class InnerCacheEndsSelectionTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(cached, cache_store:)
+			@cached = cached
+			@cache_store = cache_store
+		end
+
+		def view_template
+			fragment("target") do
+				plain "A"
+				@cached ? cache { inner } : inner
+				plain "C"
+			end
+
+			fragment("other") { plain "D" }
+		end
+
+		def inner
+			fragment("target") { plain "B" }
+			plain "E"
+		end
+	end
+
+	test "a same-name fragment in an inner cache ends an open selected fragment" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		# Uncached, then cold, then warm.
+		[false, true, true].each do |cached|
+			assert_equal InnerCacheEndsSelectionTest.new(cached, cache_store:).call(fragments: ["target"]), "AB"
+			assert_equal InnerCacheEndsSelectionTest.new(cached, cache_store:).call(fragments: ["target", "other"]), "ABD"
+		end
+	end
 end

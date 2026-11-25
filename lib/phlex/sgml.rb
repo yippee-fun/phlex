@@ -287,33 +287,13 @@ class Phlex::SGML
 
 		cached_buffer, fragment_map = cache_store.fetch(cache_key, **options) { state.caching(&content) }
 
-		if state.should_render?
+		if state.fragments
+			state.select_from_cache(cached_buffer, fragment_map)
+		else
 			fragment_map.each do |fragment_name, (offset, length, nested_fragments)|
 				state.record_fragment(fragment_name, offset, length, nested_fragments)
 			end
 			state.buffer << cached_buffer
-		else
-			found = false
-			# Fragments are recorded in document order, and one that isn't nested can still overlap the
-			# one before it, so only append the bytes past the end of what's already been selected.
-			selected_end = 0
-
-			fragment_map.each do |fragment_name, (offset, length, nested_fragments)|
-				if state.fragments.include?(fragment_name)
-					found = true
-					state.fragments.delete(fragment_name)
-					state.fragments.subtract(nested_fragments)
-
-					fragment_end = offset + length
-					next if fragment_end <= selected_end
-
-					start = (offset > selected_end) ? offset : selected_end
-					state.buffer << cached_buffer.byteslice(start, fragment_end - start)
-					selected_end = fragment_end
-				end
-			end
-
-			state.halt_if_all_fragments_found if found
 		end
 
 		nil
