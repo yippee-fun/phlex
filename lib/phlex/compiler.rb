@@ -166,19 +166,19 @@ module Phlex::Compiler
 		component.instance_variable_get(:@__phlex_compiled__) == true
 	end
 
-	# Runs on every render, so a component that's compiled, or failed to,
-	# returns without the lock, and doesn't wait for another to compile. The
+	# Runs on every render, so a component that's compiled, failed to, can't
+	# be or says not to returns without the lock, and doesn't wait for another
+	# to compile. The
 	# check is repeated under the lock, so two first renders racing each other
 	# still compile and report once. A render that starts during a
 	# recompilation takes the lock, and so waits for the new methods. The
 	# handler runs outside it, since it may well render something.
 	def self.compile_on_first_render(component, on_failure: @on_failure)
 		return unless @enabled && Phlex.__main_ractor__?
-		return if !@recompiling && (compiled?(component) || FAILURES.key?(component))
-		return unless component.compile?
+		return if !@recompiling && settled?(component)
 
 		error = MUTEX.synchronize do
-			return if compiled?(component) || FAILURES.key?(component)
+			return if settled?(component)
 
 			begin
 				compile_ancestry(component, only: :compile?.to_proc)
@@ -189,6 +189,10 @@ module Phlex::Compiler
 		end
 
 		on_failure.call(component, error) if error
+	end
+
+	def self.settled?(component)
+		compiled?(component) || FAILURES.key?(component) || component.frozen? || !component.compile?
 	end
 
 	# Compiles the component as its first render would: unless it says
@@ -213,14 +217,11 @@ module Phlex::Compiler
 		MUTEX.synchronize do
 			FAILURES.delete(component)
 
-			compiled_paths = own_methods(component).filter_map do |name|
-				path = component.instance_method(name).source_location&.first
-				path if Phlex.__compiled_source_maps__.key?(path)
-			end
-
 			# A generation another live component's methods came from is still needed.
-			compiled_paths.select! do |path|
-				GENERATION_COMPONENTS.fetch(path, []).none? { |other| !other.equal?(component) && live?(other) }
+			compiled_paths = GENERATION_COMPONENTS.filter_map do |path, components|
+				next unless components.any? { |owner| owner.equal?(component) }
+
+				path if components.none? { |other| !other.equal?(component) && live?(other) }
 			end
 
 			compiled_paths.each { |path| GENERATION_COMPONENTS.delete(path) }

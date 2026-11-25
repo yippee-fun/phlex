@@ -1135,6 +1135,30 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "forgetting a recompiled component drops every generation it was compiled into" do
+		with_component_files(
+			"recompiled.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRecompiledGone < Phlex::HTML
+					def view_template = div { "gone" }
+				end
+			RUBY
+		) do
+			component = LifecycleRecompiledGone
+			Phlex::Compiler.compile(component)
+			first = component.instance_method(:view_template).source_location[0]
+			Phlex::Compiler.recompile(component)
+			second = component.instance_method(:view_template).source_location[0]
+			refute_equal first, second
+
+			Object.__send__(:remove_const, :LifecycleRecompiledGone)
+			Phlex::Compiler.forget(component)
+
+			refute Phlex.__compiled_source_maps__.key?(first)
+			refute Phlex.__compiled_source_maps__.key?(second)
+		end
+	end
+
 	test "a live component can't be forgotten" do
 		with_component_files(
 			"remembered.rb" => <<~RUBY
@@ -1218,6 +1242,82 @@ class CompilerLifecycleTest < Quickdraw::Test
 			end
 
 			refute compiled_method?(LifecycleDisabled, :view_template)
+		end
+	end
+
+	test "a frozen component renders without waiting for another component compiling" do
+		with_component_files(
+			"frozen.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFrozen < Phlex::HTML
+					def view_template = div { "frozen" }
+				end
+			RUBY
+		) do
+			LifecycleFrozen.freeze
+
+			with_lazy_compilation do
+				locked = Queue.new
+				release = Queue.new
+				compiling = Thread.new do
+					Phlex::Compiler::MUTEX.synchronize do
+						locked << true
+						release.pop
+					end
+				end
+				locked.pop
+
+				render = Thread.new { LifecycleFrozen.call }
+				finished = render.join(2)
+				release << true
+
+				assert finished
+				assert_equal render.value, "<div>frozen</div>"
+				compiling.join
+			ensure
+				release&.<< true
+			end
+		end
+	end
+
+	test "a component that says compile false waits for a recompilation of the methods it inherits" do
+		with_component_files(
+			"inherits.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRecompiledParent < Phlex::HTML
+					def view_template = div { "inherited" }
+				end
+
+				class LifecycleUncompiledChild < LifecycleRecompiledParent
+					compile false
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				Phlex::Compiler.compile(LifecycleRecompiledParent)
+
+				locked = Queue.new
+				release = Queue.new
+				Pause.gate = -> {
+					Pause.gate = nil
+					locked << true
+					release.pop
+				}
+				recompiling = Thread.new { Phlex::Compiler.recompile(LifecycleRecompiledParent) }
+				locked.pop
+
+				render = Thread.new { LifecycleUncompiledChild.call }
+				deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+				Thread.pass until render.status == "sleep" || !render.alive? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+				assert render.alive?
+				release << true
+				assert_equal render.value, "<div>inherited</div>"
+				recompiling.join
+			ensure
+				Pause.gate = nil
+				release&.<< true
+			end
 		end
 	end
 end
