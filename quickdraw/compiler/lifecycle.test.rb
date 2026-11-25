@@ -1536,8 +1536,8 @@ class CompilerLifecycleTest < Quickdraw::Test
 			source = Phlex::Compiler.source(LifecycleSource)
 
 			refute compiled_method?(LifecycleSource, :view_template)
-			assert source.start_with?("# #{path}\n# -*- coding: UTF-8; frozen_string_literal: true -*-\n")
-			assert source.end_with?("LifecycleSource.__send__(:private, :item)\n")
+			assert source.start_with?("# -*- coding: UTF-8; frozen_string_literal: true -*-\n# #{path}\n")
+			assert source.include?("private(:item)\n")
 			assert source.include?("class LifecycleSource")
 			assert source.include?("def view_template")
 			assert source.include?(%(<div class="card">source</div>))
@@ -1545,6 +1545,33 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			Phlex::Compiler.compile(LifecycleSource)
 			assert_equal Phlex::Compiler.source(LifecycleSource), source
+		end
+	end
+
+	test "source declares visibility inside the class, so it evaluates for a private constant" do
+		with_component_files(
+			"private_constant.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSourceNamespace
+					class Hidden < Phlex::HTML
+						def view_template = item
+
+						private def item = span { "hidden" }
+					end
+
+					private_constant :Hidden
+
+					def self.render = Hidden.new.call
+				end
+			RUBY
+		) do
+			component = LifecycleSourceNamespace.const_get(:Hidden)
+			source = Phlex::Compiler.source(component)
+
+			eval(source, TOPLEVEL_BINDING.dup, "(source)", 1)
+
+			assert component.private_method_defined?(:item)
+			assert_equal LifecycleSourceNamespace.render, "<span>hidden</span>"
 		end
 	end
 

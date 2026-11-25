@@ -307,40 +307,51 @@ module Phlex::Compiler
 	end
 
 	# The Ruby the component and its Phlex ancestors compile to, file by file,
-	# as compiling them now would install it. Nothing is compiled, and a
-	# compiled method is generated again from its source.
+	# as compiling them now would install it, with the visibility compiling
+	# restores declared in each class. Nothing is compiled, and a compiled
+	# method is generated again from its source. It's for reading: each file's
+	# part is a program of its own, evaluated in a scope of its own.
 	def self.source(component)
 		component!(component)
 
 		ancestors = phlex_ancestors(component)
 
 		ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.filter_map do |path|
-			parse_result, results, formatting_result = generate(path, components: ancestors, recompile: true, inline: true)
-			next unless results
+			parse_result, _results, formatting_result = generate(path, components: ancestors, recompile: true, inline: true, visibilities: true)
+			next unless parse_result
 
-			visibilities = results.flat_map do |result|
-				result.visibilities.filter_map do |name, visibility|
-					"#{result.component.name}.__send__(:#{visibility}, :#{name})\n" unless visibility == :public
-				end
-			end
-
-			"# #{path}\n#{magic_comments(parse_result)}#{formatting_result.source}#{visibilities.join}"
+			"#{magic_comments(parse_result)}# #{path}\n#{formatting_result.source}"
 		end.join("\n")
 	end
 
 	# Parses the file and compiles the components' definitions in it, without
-	# evaluating them. Returns nothing when there's nothing to compile.
-	def self.generate(path, components:, recompile:, inline:)
+	# evaluating them. Returns nothing when there's nothing to compile. With
+	# visibilities, each class body ends by declaring its compiled methods'
+	# visibility, which compile_file otherwise restores after evaluating them.
+	def self.generate(path, components:, recompile:, inline:, visibilities: false)
 		parse_result = Prism.parse(without_byte_order_mark(File.read(path)), filepath: path)
 		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
 		results = file_compiler.compile(Refract::Converter.new.visit(parse_result.value)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
 
 		program = Refract::StatementsNode.new(
-			body: [*file_compiler.usings, *results.map { |result| wrap_in_namespace(result.namespace, result.compiled_snippets) }]
+			body: [
+				*file_compiler.usings,
+				*results.map do |result|
+					snippets = result.compiled_snippets
+					snippets += visibility_declarations(result.visibilities) if visibilities
+					wrap_in_namespace(result.namespace, snippets)
+				end,
+			]
 		)
 
 		[parse_result, results, Refract::Formatter.new(starting_line: 2).format_node(program)]
+	end
+
+	def self.visibility_declarations(visibilities)
+		visibilities.filter_map do |name, visibility|
+			parse("#{visibility}(#{name.inspect})", PROBE_PATH).statements.body.first unless visibility == :public
+		end
 	end
 
 	# Compiles the methods that the given components, by default every loaded
