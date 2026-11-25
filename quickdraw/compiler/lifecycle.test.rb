@@ -492,7 +492,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 			before = LifecycleIconNew.instance_method(:view_template).source_location
 
 			begin
-				Phlex::SVG.define_singleton_method(:new, Phlex::SGML.singleton_class.instance_method(:new))
+				replace_svg_new
 
 				refute_equal LifecycleIconNew.instance_method(:view_template).source_location, before
 				refute LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:new)
@@ -519,9 +519,15 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	private def replace_svg_new
+		Phlex::SVG.define_singleton_method(:new) do |*args, **kwargs, &block|
+			allocate.tap { |svg| svg.__send__(:initialize, *args, **kwargs, &block) }
+		end
+	end
+
 	# Replacing an undefined method is the only way to remove it on CRuby.
 	private def restore_svg_new
-		Phlex::SVG.define_singleton_method(:new, Phlex::SGML.singleton_class.instance_method(:new))
+		replace_svg_new
 		Phlex::SVG.singleton_class.remove_method(:new)
 	end
 
