@@ -366,6 +366,26 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 	end
 
+	test "elements called on the parameter an element yields itself to are inlined" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				div { |d| d.span { "x" }; d.br }
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("<div><span>x</span><br></div>")
+					end
+					nil)
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
 	test "a conditional over literal content fuses into the append" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a
