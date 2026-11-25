@@ -202,4 +202,295 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 			assert_equal InvalidUTF8CacheTest.new(cache_store:).call(fragments: ["after"]), "<span>b</span>"
 		end
 	end
+
+	class HaltTest < Phlex::HTML
+		attr_reader :cache_store, :events
+
+		def initialize(cache_store:)
+			@cache_store = cache_store
+			@events = []
+		end
+
+		def view_template
+			cache do
+				fragment("target") { h1 { "Target" } }
+			end
+
+			@events << :after_cache
+			fragment("other") { h1 { "Other" } }
+		end
+
+		private def after_template
+			@events << :after_template
+		end
+	end
+
+	test "halts after selecting the last fragment from a cache" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		2.times do
+			component = HaltTest.new(cache_store:)
+			assert_equal component.call(fragments: ["target"]), "<h1>Target</h1>"
+			assert_equal component.events, []
+		end
+	end
+
+	test "keeps rendering after a cache when fragments remain" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		2.times do
+			component = HaltTest.new(cache_store:)
+			assert_equal component.call(fragments: ["target", "other"]), "<h1>Target</h1><h1>Other</h1>"
+			assert_equal component.events, [:after_cache]
+		end
+	end
+
+	test "doesn't halt after a cache when no fragments were selected from it" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		2.times do
+			component = HaltTest.new(cache_store:)
+			assert_equal component.call(fragments: []), ""
+			assert_equal component.events, [:after_cache, :after_template]
+		end
+	end
+
+	class NestedSameNameTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(cache_store:, outer_cache: false, inner_cache: false, nested: true)
+			@cache_store = cache_store
+			@outer_cache = outer_cache
+			@inner_cache = inner_cache
+			@nested = nested
+		end
+
+		def view_template
+			if @outer_cache
+				cache(@nested) { content }
+			else
+				content
+			end
+		end
+
+		def content
+			if @nested
+				fragment("target") { inner }
+			else
+				inner
+			end
+		end
+
+		def inner
+			if @inner_cache
+				cached_inner
+			else
+				fragment("target") { plain "B" }
+			end
+		end
+
+		def cached_inner
+			cache { fragment("target") { plain "B" } }
+		end
+	end
+
+	NESTED_SAME_NAME_MESSAGE = "The fragment `target` is nested inside another fragment named `target`. Nested fragments need different names."
+
+	test "a fragment nested in a fragment of the same name raises, cached or not" do
+		[nil, [], ["target"], ["other"]].each do |fragments|
+			[false, true].product([false, true]).each do |(outer_cache, inner_cache)|
+				cache_store = Phlex::FIFOCacheStore.new
+
+				2.times do
+					error = assert_raises(Phlex::ArgumentError) do
+						NestedSameNameTest.new(cache_store:, outer_cache:, inner_cache:).call(fragments:)
+					end
+
+					assert_equal error.message, NESTED_SAME_NAME_MESSAGE
+				end
+			end
+		end
+	end
+
+	test "a fragment from a warm cache raises inside an open fragment of the same name" do
+		[nil, [], ["target"], ["other"]].each do |fragments|
+			[false, true].each do |outer_cache|
+				cache_store = Phlex::FIFOCacheStore.new
+
+				assert_equal NestedSameNameTest.new(cache_store:, inner_cache: true, nested: false).call, "B"
+
+				error = assert_raises(Phlex::ArgumentError) do
+					NestedSameNameTest.new(cache_store:, outer_cache:, inner_cache: true).call(fragments:)
+				end
+
+				assert_equal error.message, NESTED_SAME_NAME_MESSAGE
+			end
+		end
+	end
+
+	test "a fragment can be rendered again after a nested fragment of the same name raised" do
+		component = Class.new(Phlex::HTML) do
+			def view_template
+				begin
+					fragment("target") { fragment("target") { plain "nested" } }
+				rescue Phlex::ArgumentError
+					plain "rescued"
+				end
+
+				fragment("target") { plain "again" }
+			end
+		end
+
+		assert_equal component.new.call, "rescuedagain"
+	end
+
+	class ImportedFragmentsTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(key, cache_store:)
+			@key = key
+			@cache_store = cache_store
+		end
+
+		def view_template
+			if @key
+				cache(@key) { parent { cache { child } } }
+			else
+				parent { child }
+			end
+		end
+
+		def parent
+			fragment("parent") do
+				plain "A"
+				yield
+				plain "C"
+			end
+		end
+
+		def child
+			fragment("child") { plain "B" }
+		end
+	end
+
+	test "a parent selected with a child from an inner cache renders the child once" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		# Uncached, then both caches cold, then only the inner cache warm, then both warm.
+		[nil, 1, 2, 2].each do |key|
+			assert_equal ImportedFragmentsTest.new(key, cache_store:).call(fragments: ["parent", "child"]), "ABC"
+		end
+	end
+
+	class DuplicateTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(cache_store:, cached:)
+			@cache_store = cache_store
+			@cached = cached
+		end
+
+		def view_template
+			if @cached
+				cache { cache { content } }
+			else
+				content
+			end
+		end
+
+		def content
+			fragment("target") { h1 { "First" } }
+			fragment("wrapper") do
+				fragment("target") { h1 { "Second" } }
+			end
+		end
+	end
+
+	test "duplicate fragment names select the first fragment, cached or not" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		assert_equal DuplicateTest.new(cache_store:, cached: false).call(fragments: ["target"]), "<h1>First</h1>"
+
+		2.times do
+			assert_equal DuplicateTest.new(cache_store:, cached: true).call(fragments: ["target"]), "<h1>First</h1>"
+		end
+	end
+
+	test "a duplicate fragment name doesn't change the fragment that contains it" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		assert_equal DuplicateTest.new(cache_store:, cached: false).call(fragments: ["wrapper"]), "<h1>Second</h1>"
+
+		2.times do
+			assert_equal DuplicateTest.new(cache_store:, cached: true).call(fragments: ["wrapper"]), "<h1>Second</h1>"
+		end
+	end
+
+	class RescuedCacheHitTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(cache_store:, warm_inner: false)
+			@cache_store = cache_store
+			@warm_inner = warm_inner
+		end
+
+		def view_template
+			return inner if @warm_inner
+
+			low_level_cache("outer") do
+				fragment("target") do
+					inner
+				rescue Phlex::ArgumentError
+					plain "rescued"
+				end
+			end
+		end
+
+		def inner
+			low_level_cache("inner") do
+				fragment("before") { plain "A" }
+				fragment("target") { plain "B" }
+			end
+		end
+	end
+
+	test "a cache hit that raises inside an open fragment of the same name records none of its fragments" do
+		cache_store = Phlex::FIFOCacheStore.new
+		assert_equal RescuedCacheHitTest.new(cache_store:, warm_inner: true).call, "AB"
+
+		2.times do
+			assert_equal RescuedCacheHitTest.new(cache_store:).call(fragments: ["before"]), ""
+		end
+	end
+
+	class ConsumedInActiveCacheTest < Phlex::HTML
+		attr_reader :cache_store, :events
+
+		def initialize(cached, cache_store:)
+			@cached = cached
+			@cache_store = cache_store
+			@events = []
+		end
+
+		def view_template
+			fragment("parent") { @cached ? cache { child } : child }
+			@events << :after_parent
+			fragment("child") { plain "D" }
+		end
+
+		def child
+			fragment("child") { plain "B" }
+		end
+	end
+
+	test "a selected fragment in a cache rendered inside another selected fragment is consumed" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		# Uncached, then cold, then warm.
+		[false, true, true].each do |cached|
+			component = ConsumedInActiveCacheTest.new(cached, cache_store:)
+			assert_equal component.call(fragments: ["parent", "child"]), "B"
+			assert_equal component.events, []
+		end
+	end
 end

@@ -93,6 +93,29 @@ class SelectiveRenderingTest < Quickdraw::Test
 		assert_equal output, %(<h1 id="target">Hello<strong>World</strong><img src="image.jpg"></h1><img id="image" src="after.jpg">)
 	end
 
+	class NestedSameNameExample < Phlex::HTML
+		def view_template
+			fragment("target") do
+				plain "A"
+				render Child.new
+				plain "C"
+			end
+		end
+
+		class Child < Phlex::HTML
+			def view_template
+				fragment(:target) { plain "B" }
+			end
+		end
+	end
+
+	test "a fragment nested in a fragment of the same name raises" do
+		[nil, ["target"], ["target", "missing"], ["missing"]].each do |fragments|
+			error = assert_raises(Phlex::ArgumentError) { NestedSameNameExample.new.call(fragments:) }
+			assert_equal error.message, "The fragment `target` is nested inside another fragment named `target`. Nested fragments need different names."
+		end
+	end
+
 	test "halts early after all fragments are found" do
 		called = false
 		checker = -> { called = true }

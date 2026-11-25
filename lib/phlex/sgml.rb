@@ -286,20 +286,29 @@ class Phlex::SGML
 		state = @_state
 
 		cached_buffer, fragment_map = cache_store.fetch(cache_key, **options) { state.caching(&content) }
+		state.refuse_fragments_nested_in_their_own_names(fragment_map)
 
 		if state.should_render?
+			fragments = state.fragments
+
 			fragment_map.each do |fragment_name, (offset, length, nested_fragments)|
+				fragments&.delete(fragment_name)
 				state.record_fragment(fragment_name, offset, length, nested_fragments)
 			end
 			state.buffer << cached_buffer
 		else
+			found = false
+
 			fragment_map.each do |fragment_name, (offset, length, nested_fragments)|
 				if state.fragments.include?(fragment_name)
+					found = true
 					state.fragments.delete(fragment_name)
 					state.fragments.subtract(nested_fragments)
 					state.buffer << cached_buffer.byteslice(offset, length)
 				end
 			end
+
+			state.halt_if_all_fragments_found if found
 		end
 
 		nil
