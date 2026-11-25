@@ -102,7 +102,7 @@ module Phlex::Compiler
 	FAILURES = {}.compare_by_identity
 
 	# component => true, for each forgotten component a generation still waits on
-	FORGOTTEN = {}.compare_by_identity
+	FORGOTTEN = ObjectSpace::WeakMap.new
 
 	DEFAULT_FAILURE_HANDLER = lambda do |component, error|
 		warn "Phlex::Compiler couldn't compile #{component}, so it renders uncompiled: #{error.class}: #{error.message}\n\t#{error.backtrace&.first(5)&.join("\n\t")}"
@@ -264,7 +264,7 @@ module Phlex::Compiler
 			GENERATION_COMPONENTS.each_value do |owners|
 				owners.keys.each { |owner| [owner, *descendants_of(owner)].each { |klass| waiting[klass] = true } }
 			end
-			FORGOTTEN.select! { |component, _| waiting.key?(component) }
+			FORGOTTEN.keys.each { |component| FORGOTTEN.delete(component) unless waiting.key?(component) }
 		end
 	end
 
@@ -562,7 +562,7 @@ module Phlex::Compiler
 	CONST_GET = Module.instance_method(:const_get)
 
 	def self.phlex_ancestors(component)
-		component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }
+		ANCESTORS.bind_call(component).take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }
 	end
 
 	def self.loaded_components
@@ -588,7 +588,7 @@ module Phlex::Compiler
 			next if FROZEN.bind_call(component) || !live?(component)
 
 			own_methods(component).each do |name|
-				method = component.instance_method(name)
+				method = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
 				next unless method.original_name == name && (location = method.source_location)
 
 				source_path, line = location
@@ -619,6 +619,8 @@ module Phlex::Compiler
 	# Module's own method listings, called directly so a class overriding them
 	# can't change what the compiler sees.
 	METHOD_LISTS = [:instance_methods, :private_instance_methods, :protected_instance_methods].map { |list| Module.instance_method(list) }.freeze
+	METHOD_DEFINED = [:method_defined?, :private_method_defined?, :protected_method_defined?].map { |check| Module.instance_method(check) }.freeze
+	ANCESTORS = Module.instance_method(:ancestors)
 
 	# The aliases, in the component or a descendant, that share a body with
 	# the component's method, as [owner, name] pairs. A descendant isn't being
@@ -643,26 +645,26 @@ module Phlex::Compiler
 	# The methods the component defines itself. `initialize` runs before the
 	# component has any state to render into.
 	def self.own_methods(component)
-		names = component.instance_methods(false) + component.private_instance_methods(false) + component.protected_instance_methods(false) - [:initialize]
+		names = METHOD_LISTS.flat_map { |list| list.bind_call(component, false) } - [:initialize]
 		names.reject { |name| revisibilised?(component, name) }
 	end
 
 	# Changing the visibility of an inherited method lists it on the component,
 	# with the component as its owner, but its source is still the ancestor's.
 	def self.revisibilised?(component, name)
-		location = component.instance_method(name).source_location
+		location = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name).source_location
 
-		component.ancestors.any? do |ancestor|
+		ANCESTORS.bind_call(component).any? do |ancestor|
 			next false if ancestor.equal?(component)
 
-			defined = ancestor.method_defined?(name, false) || ancestor.private_method_defined?(name, false) || ancestor.protected_method_defined?(name, false)
-			defined && ancestor.instance_method(name).source_location == location
+			defined = METHOD_DEFINED.any? { |check| check.bind_call(ancestor, name, false) }
+			defined && Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(ancestor, name).source_location == location
 		end
 	end
 
 	def self.defining_files(component)
 		paths = own_methods(component).filter_map do |name|
-			source_path = component.instance_method(name).source_location&.first
+			source_path = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name).source_location&.first
 			Phlex.__compiled_source_maps__[source_path]&.path || source_path
 		end
 		paths << constant_source_path(component)
