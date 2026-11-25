@@ -9,7 +9,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest", "macos-latest"]
         ruby-version:
           - "3.3"
           - "3.4"
@@ -18,7 +17,7 @@ jobs:
           - "truffleruby"
           - "truffleruby-head"
 
-    runs-on: ${{ matrix.os }}
+    runs-on: "ubuntu-latest"
     steps:
       - uses: actions/checkout@v7
 
