@@ -26,6 +26,7 @@ class RubyLspKitTest < Quickdraw::Test
 				Card(title: "Hi")
 				Components::Card(title: "Hi")
 				Missing(title: "Hi")
+				Array(1)
 			end
 		end
 
@@ -47,11 +48,36 @@ class RubyLspKitTest < Quickdraw::Test
 	end
 
 	test "goes to the component from a kit call within the kit's namespace" do
-		assert_equal definition_lines(22, 5), [5]
+		assert_equal definition_lines(23, 5), [5]
 	end
 
 	test "ignores capitalised calls that aren't components" do
 		assert_equal definition_lines(15, 3), []
+		assert_equal definition_lines(16, 3), []
+	end
+
+	test "prefers the included kit's component over a lexical constant" do
+		source = <<~RUBY
+			module Components
+				extend Phlex::Kit
+			end
+
+			class Components::Card < Phlex::HTML
+			end
+
+			class Card < Phlex::HTML
+			end
+
+			class Page < Phlex::HTML
+				include Components
+
+				def view_template
+					Card()
+				end
+			end
+		RUBY
+
+		assert_equal definition_lines(14, 3, source), [4]
 	end
 
 	test "shows the component and its initializer on hover" do
@@ -62,12 +88,14 @@ class RubyLspKitTest < Quickdraw::Test
 		assert hover.contents.value.include?("(title:, size: <default>)")
 	end
 
-	private def definition_lines(line, character)
-		Array(request("textDocument/definition", line, character)).map { |link| link.target_range.start.line }
+	private def definition_lines(line, character, source = SOURCE)
+		Array(request("textDocument/definition", line, character, source)).map { |link| link.target_range.start.line }
 	end
 
-	private def request(method, line, character)
-		with_server(SOURCE) do |server, uri|
+	private def request(method, line, character, source = SOURCE)
+		with_server(source) do |server, uri|
+			server.global_state.index.index_single(URI::Generic.from_path(path: "/phlex/html.rb"), "module Phlex; class SGML; end; class HTML < SGML; end; end")
+			server.global_state.index.index_single(URI::Generic.from_path(path: "/core/array.rb"), "class Array; end")
 			server.process_message(id: 1, method:, params: { textDocument: { uri: }, position: { line:, character: } })
 			pop_result(server).response
 		end

@@ -22,9 +22,8 @@ module RubyLsp
 
 				case node.receiver
 				in nil
-					component(@index.resolve(name, @node_context.nesting)) || ancestors.lazy.filter_map { |ancestor|
-						component(@index.resolve("#{ancestor}::#{name}", []))
-					}.first
+					ancestors.lazy.filter_map { |ancestor| component(@index.resolve("#{ancestor}::#{name}", [])) }.first ||
+						component(@index.resolve(name, @node_context.nesting))
 				in Prism::ConstantReadNode | Prism::ConstantPathNode => receiver
 					component(@index.resolve("#{receiver.slice}::#{name}", @node_context.nesting))
 				else
@@ -32,14 +31,15 @@ module RubyLsp
 				end
 			end
 
-			private def ancestors
-				@index.linearized_ancestors_of(@node_context.fully_qualified_name)
+			private def ancestors(name = @node_context.fully_qualified_name)
+				@index.linearized_ancestors_of(name)
 			rescue RubyIndexer::Index::NonExistingNamespaceError
 				[]
 			end
 
+			# Kits only define methods for Phlex::SGML subclasses.
 			private def component(entries)
-				entries if entries&.any? { |entry| RubyIndexer::Entry::Class === entry }
+				entries if entries&.any? { |entry| RubyIndexer::Entry::Class === entry && ancestors(entry.name).include?("Phlex::SGML") }
 			end
 		end
 
