@@ -816,9 +816,14 @@ module Phlex::Compiler
 		# serialised entry by entry. Static entries are serialised now, and each
 		# dynamic value is evaluated into a local where the hash is, then
 		# serialised in order. A `style:` hash is serialised as styles, so it's
-		# left to the serialiser.
+		# left to the serialiser. A literal hash inside one is serialised the same
+		# way, with its entry's name as its base, as the serialiser recurses.
 		private def nested_attributes(key_value, name, value, hoisted)
-			return unless Refract::HashNode === value && key_value != :style
+			nested_entries(name, value, hoisted) unless key_value == :style
+		end
+
+		private def nested_entries(name, value, hoisted)
+			return unless Refract::HashNode === value
 
 			base = "#{name}-"
 			return unless value.elements.all? { |assoc| assoc in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode] }
@@ -841,13 +846,15 @@ module Phlex::Compiler
 				return
 			end
 
-			entries.map do |entry|
+			entries.flat_map do |entry|
 				case entry
 				in [:static, text]
-					literal(text)
+					[literal(text)]
 				in [:dynamic, nested_key, nested_name, nested_value]
-					nested_value = hoisted_local(nested_value, hoisted)
-					typed_attribute(nested_value, nested_name) { call(constant("Phlex::Compiler"), :nested_attributes, nested_key, nested_value, string(base)) }
+					nested_entries(nested_name, nested_value, hoisted) || begin
+						nested_value = hoisted_local(nested_value, hoisted)
+						[typed_attribute(nested_value, nested_name) { call(constant("Phlex::Compiler"), :nested_attributes, nested_key, nested_value, string(base)) }]
+					end
 				end
 			end
 		end
