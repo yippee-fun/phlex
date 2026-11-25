@@ -91,20 +91,22 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
-	test "a compiled method is reported as such" do
+	test "a compiled method is explained from its source, as it was before compiling" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "clean.rb")
 			File.write(path, <<~RUBY)
 				class CleanCase < Phlex::HTML
-					def view_template = div { "x" }
+					def view_template = div(**{}) { "x" }
 				end
 			RUBY
 			load path
 
+			before = Phlex::Compiler.explain(CleanCase)
 			Phlex::Compiler.compile(CleanCase)
 
-			assert_equal Phlex::Compiler.explain(CleanCase).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, [
-				"2: view_template is already compiled",
+			assert_equal Phlex::Compiler.explain(CleanCase), before
+			assert_equal before.map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, [
+				"2: div's attributes are serialised together because a key is splatted or isn't a literal",
 			]
 		ensure
 			Object.__send__(:remove_const, :CleanCase)

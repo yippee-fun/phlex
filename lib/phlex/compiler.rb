@@ -244,7 +244,8 @@ module Phlex::Compiler
 
 	# Why parts of the files defining the component and its Phlex ancestors are
 	# left to the runtime, as Diagnostics::Diagnostic records in file order.
-	# Nothing is compiled; an already compiled method is reported as such.
+	# Nothing is compiled, and a compiled method is explained from its source
+	# as it was before compiling.
 	def self.explain(component)
 		component!(component)
 
@@ -258,7 +259,7 @@ module Phlex::Compiler
 
 		failures + ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.flat_map do |path|
 			diagnostics = Diagnostics.new(path, strict: false)
-			FileCompiler.new(path, targets: targets(path, ancestors), diagnostics:).compile(parse(File.read(path), path))
+			FileCompiler.new(path, targets: targets(path, ancestors, recompile: true), diagnostics:, recompile: true).compile(parse(File.read(path), path))
 			diagnostics.to_a
 		end
 	end
