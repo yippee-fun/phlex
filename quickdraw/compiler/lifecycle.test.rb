@@ -587,7 +587,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 		with_component_files(
 			"icon.rb" => <<~RUBY
 				# frozen_string_literal: true
-				class LifecycleIconNew < Phlex::HTML
+				class LifecycleIconClassNew < Phlex::HTML
 					def view_template = svg { |s| s.circle(r: 1) }
 				end
 			RUBY
@@ -597,9 +597,9 @@ class CompilerLifecycleTest < Quickdraw::Test
 				def new(...) = __lifecycle_new__(...)
 			end
 
-			Phlex::Compiler.compile(LifecycleIconNew)
-			refute LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:circle)
-			assert_equal LifecycleIconNew.new.call, %(<svg><circle r="1"></circle></svg>)
+			Phlex::Compiler.compile(LifecycleIconClassNew)
+			refute LifecycleIconClassNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:circle)
+			assert_equal LifecycleIconClassNew.new.call, %(<svg><circle r="1"></circle></svg>)
 		ensure
 			Class.class_eval do
 				alias_method :new, :__lifecycle_new__
