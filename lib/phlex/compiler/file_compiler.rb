@@ -211,7 +211,7 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 				raise Phlex::Compiler::Error, "#{@path}:#{first.start_line} defines #{component}##{first.name}, but reopening its class and module statements reaches #{probe.component.inspect}"
 			end
 
-			environment = environments[component] ||= Phlex::Compiler::Environment.new(component, standard_set: probe.set.equal?(::Set), method_resolver: probe.method_resolver, inline: @inline)
+			environment = environments[component] ||= Phlex::Compiler::Environment.new(component, standard_set: probe.set.equal?(::Set), method_resolver: probe.method_resolver, refinements: probe.refinements, inline: @inline)
 			snippets = []
 			visibilities = {}
 

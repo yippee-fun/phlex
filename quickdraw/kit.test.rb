@@ -100,6 +100,72 @@ class KitTest < Quickdraw::Test
 		assert_equal KeywordExample.call, %(<hr><br>)
 	end
 
+	test "a kit's method finds the component of the kit its name now refers to" do
+		kit = Module.new { extend Phlex::Kit }
+		Object.const_set(:KitTestReloadedKit, kit)
+		kit.const_set(:Card, Class.new(Phlex::HTML) { def view_template = hr })
+		page = Class.new(Phlex::HTML) do
+			include kit
+			def view_template = Card()
+		end
+
+		# As a reloader does, which removes the old kit's constants too.
+		Object.__send__(:remove_const, :KitTestReloadedKit)
+		kit.__send__(:remove_const, :Card)
+		reloaded = Module.new { extend Phlex::Kit }
+		Object.const_set(:KitTestReloadedKit, reloaded)
+		reloaded.const_set(:Card, Class.new(Phlex::HTML) { def view_template = br })
+
+		assert_equal page.call, %(<br>)
+	ensure
+		Object.__send__(:remove_const, :KitTestReloadedKit) if Object.const_defined?(:KitTestReloadedKit, false)
+	end
+
+	test "a kit under a private constant finds its components" do
+		outer = Object.const_set(:KitTestPrivateOuter, Module.new)
+		kit = outer.const_set(:Kit, Module.new { extend Phlex::Kit })
+		kit.const_set(:Card, Class.new(Phlex::HTML) { def view_template = hr })
+		outer.__send__(:private_constant, :Kit)
+		page = Class.new(Phlex::HTML) do
+			include kit
+			def view_template = Card()
+		end
+
+		assert_equal page.call, %(<hr>)
+	ensure
+		Object.__send__(:remove_const, :KitTestPrivateOuter) if Object.const_defined?(:KitTestPrivateOuter, false)
+	end
+
+	test "a top-level kit made private finds its components" do
+		kit = Object.const_set(:KitTestPrivateKit, Module.new { extend Phlex::Kit })
+		kit.const_set(:Card, Class.new(Phlex::HTML) { def view_template = hr })
+		Object.__send__(:private_constant, :KitTestPrivateKit)
+		page = Class.new(Phlex::HTML) do
+			include kit
+			def view_template = Card()
+		end
+
+		assert_equal page.call, %(<hr>)
+	ensure
+		Object.__send__(:remove_const, :KitTestPrivateKit) if Object.const_defined?(:KitTestPrivateKit, false)
+	end
+
+	test "a kit's own const_get and methods don't change how it finds its components" do
+		kit = Object.const_set(:KitTestCustomisedKit, Module.new)
+		kit.define_singleton_method(:const_get) { |name| super(name) }
+		kit.define_singleton_method(:named_reference) { |*| "Other" }
+		kit.extend(Phlex::Kit)
+		kit.const_set(:Card, Class.new(Phlex::HTML) { def view_template = hr })
+		page = Class.new(Phlex::HTML) do
+			include kit
+			def view_template = Card()
+		end
+
+		assert_equal page.call, %(<hr>)
+	ensure
+		Object.__send__(:remove_const, :KitTestCustomisedKit) if Object.const_defined?(:KitTestCustomisedKit, false)
+	end
+
 	if defined?(::Ractor)
 		# No text or attributes, so rendering doesn't depend on ERB::Escape or
 		# the attribute cache being usable from a non-main Ractor.
