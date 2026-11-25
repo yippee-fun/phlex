@@ -1581,6 +1581,39 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a class overriding instance variable reflection doesn't change its compile setting" do
+		component = Class.new(Phlex::HTML) do
+			compile false
+
+			def self.instance_variable_defined?(*) = false
+			def self.instance_variable_get(*) = true
+		end
+
+		refute component.compile?
+	end
+
+	test "a namespace overriding constant reflection doesn't hide a loaded component" do
+		with_component_files(
+			"namespaced.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSecretive
+					def self.const_defined?(*) = false
+					def self.autoload?(*) = "elsewhere"
+					def self.const_get(*) = nil
+
+					class Hidden < Phlex::HTML
+						def view_template = div { "hidden" }
+					end
+				end
+			RUBY
+		) do
+			component = LifecycleSecretive::Hidden
+
+			error = assert_raises(ArgumentError) { Phlex::Compiler.forget(component) }
+			assert_equal error.message, "Can't forget LifecycleSecretive::Hidden because it's still loaded."
+		end
+	end
+
 	test "a live component can't be forgotten" do
 		with_component_files(
 			"remembered.rb" => <<~RUBY

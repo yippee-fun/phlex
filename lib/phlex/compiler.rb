@@ -491,16 +491,20 @@ module Phlex::Compiler
 		return false unless (name = NAME.bind_call(component))
 
 		name.split("::").reduce(Object) do |namespace, constant|
-			return false unless Module === namespace && namespace.const_defined?(constant, false) && !namespace.autoload?(constant, false)
+			return false unless Module === namespace && CONST_DEFINED.bind_call(namespace, constant, false) && !AUTOLOAD.bind_call(namespace, constant, false)
 
-			namespace.const_get(constant, false)
+			CONST_GET.bind_call(namespace, constant, false)
 		end.equal?(component)
 	rescue NameError
 		false
 	end
 
-	# Module#name is called directly, so a class overriding name can't pass for another.
+	# Module's reflection is called directly, so a class overriding name can't
+	# pass for another, nor a namespace hide or invent its constants.
 	NAME = Module.instance_method(:name)
+	CONST_DEFINED = Module.instance_method(:const_defined?)
+	AUTOLOAD = Module.instance_method(:autoload?)
+	CONST_GET = Module.instance_method(:const_get)
 
 	def self.phlex_ancestors(component)
 		component.ancestors.take_while { |ancestor| ancestor != Phlex::SGML }.select { |ancestor| Class === ancestor }

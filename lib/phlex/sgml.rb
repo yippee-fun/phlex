@@ -31,13 +31,15 @@ class Phlex::SGML
 
 		def compile?
 			klass = self
-			klass = SUPERCLASS.bind_call(klass) until klass.instance_variable_defined?(:@__phlex_compile__)
-			klass.instance_variable_get(:@__phlex_compile__)
+			klass = SUPERCLASS.bind_call(klass) until IVAR_DEFINED.bind_call(klass, :@__phlex_compile__)
+			IVAR_GET.bind_call(klass, :@__phlex_compile__)
 		end
 	end
 
-	# Called directly, so a class overriding superclass can't change which setting it inherits.
+	# Called directly, so a class overriding them can't change which setting it inherits.
 	SUPERCLASS = Class.instance_method(:superclass)
+	IVAR_DEFINED = Kernel.instance_method(:instance_variable_defined?)
+	IVAR_GET = Kernel.instance_method(:instance_variable_get)
 
 	@__phlex_compile__ = true
 
