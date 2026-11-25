@@ -44,8 +44,9 @@ module Phlex::Compiler::Output
 	end
 
 	# Statements whose output is followed by the closing text however they
-	# exit, unless none of it can exit early.
-	Enclosed = Data.define(:body, :closing) do
+	# exit, unless none of it can exit early, and whether the text the closing
+	# text closes was static.
+	Enclosed = Data.define(:body, :closing, :opened) do
 		include Statement
 	end
 

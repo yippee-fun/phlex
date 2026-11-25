@@ -184,6 +184,13 @@ class CompilerTest < Quickdraw::Test
 		COMPONENT.__send__(:remove_const, :EXPECTED_DEPRECATED)
 	end
 
+	test "a long run of expected values doesn't nest its guard as deeply" do
+		source = "def a\n\tcount = 1\n#{"\tdiv { count }\n" * 1200}end"
+		compiled = Thread.new { compile(source) }.value
+
+		assert compiled.include?("<div>1</div>" * 1200)
+	end
+
 	test "literal plain is escaped at compile time" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a

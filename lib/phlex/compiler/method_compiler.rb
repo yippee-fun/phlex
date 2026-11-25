@@ -351,10 +351,12 @@ module Phlex::Compiler
 
 			@environment.inlined << :block_given?
 
+			opening = append(literal("<#{tag}"), *attributes.parts, literal(">"))
+
 			statements([
 				*attributes.hoisted,
-				append(literal("<#{tag}"), *attributes.parts, literal(">")),
-				Output::Enclosed.new(body: compile_content(node, element: true), closing: "</#{tag}>"),
+				opening,
+				Output::Enclosed.new(body: compile_content(node, element: true), closing: "</#{tag}>", opened: opening.static?),
 				raw("</#{tag}>"),
 				*(flush_after_head if tag == "head"),
 			])
@@ -615,22 +617,30 @@ module Phlex::Compiler
 		FROZEN = Kernel.instance_method(:frozen?)
 		INTERNED = String.instance_method(:-@)
 		UNFROZEN = String.instance_method(:+@)
+		INTEGER_TEXT = Integer.instance_method(:to_s)
+		FLOAT_TEXT = Float.instance_method(:to_s)
+		FINITE = Float.instance_method(:finite?)
+		ZERO = Float.instance_method(:zero?)
+		PARSE_INTEGER = Kernel.instance_method(:Integer)
+		PARSE_FLOAT = Kernel.instance_method(:Float)
 
 		# Whether a literal written in the compiled code would evaluate to the
 		# very same object, which is only so for a few immediates and for a
 		# String that's the interned copy of its text. The guard compares with
 		# the interned copy, which never has a singleton class or instance
 		# variables, so this only rules out a guard that could never hold.
-		# Interning a frozen String that can be makes it the interned copy.
+		# Interning a frozen String that can be makes it the interned copy. A
+		# Float zero is left out, since an engine comparing Floats by value
+		# would take -0.0 for 0.0. Only core methods as Ruby loaded them run.
 		private def same_as_literal?(value)
 			klass = VALUE_CLASS.bind_call(value)
 
 			if klass.equal?(String)
 				FROZEN.bind_call(value) && INTERNED.bind_call(value).equal?(value) && INTERNED.bind_call(UNFROZEN.bind_call(value)).equal?(value)
 			elsif klass.equal?(Integer)
-				Integer(value.to_s).equal?(value)
+				PARSE_INTEGER.bind_call(self, INTEGER_TEXT.bind_call(value)).equal?(value)
 			elsif klass.equal?(Float)
-				value.finite? && (written = Float(value.to_s)).equal?(value)
+				FINITE.bind_call(value) && !ZERO.bind_call(value) && PARSE_FLOAT.bind_call(self, FLOAT_TEXT.bind_call(value)).equal?(value)
 			else
 				klass.equal?(Symbol) || klass.equal?(NilClass) || klass.equal?(TrueClass) || klass.equal?(FalseClass)
 			end

@@ -12,6 +12,9 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 	def initialize(locals)
 		super()
 		@locals = locals
+		@flattened = {}.compare_by_identity
+		@quiet = {}.compare_by_identity
+		@expected_values = {}.compare_by_identity
 	end
 
 	visit Refract::StatementsNode do |node|
@@ -45,46 +48,66 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 			in nil then []
 			in Refract::StatementsNode then flatten(statement.body)
 			in Output::Enclosed if Output.static?(statement) then flatten(statement.body)
-			in Output::Enclosed
-				body = flatten(statement.body)
-				leading = body.take_while { |child| ascii_text?(child) }
-				rest = body.drop(leading.length)
-				trailing = rest.reverse.take_while { |child| ascii_text?(child) }.reverse
-				body = rest.take(rest.length - trailing.length)
-
-				enclosed = case body
-					in [Output::Enclosed => inner] if statement.closing.ascii_only? && inner.closing.ascii_only?
-						inner.with(closing: inner.closing + statement.closing)
-					else
-						statement.with(body:)
-				end
-
-				[*leading, enclosed, *trailing]
+			in Output::Enclosed then @flattened.fetch(statement) { @flattened[statement] = flatten_enclosed(statement) }
 			else [statement]
 			end
 		end
+	end
+
+	# The same enclosure is flattened again as each list around it is, so what
+	# it flattens to is kept, and flattening that gives it back unchanged.
+	private def flatten_enclosed(statement)
+		body = flatten(statement.body)
+		leading = body.take_while { |child| ascii_text?(child) }
+		rest = body.drop(leading.length)
+		trailing = rest.reverse.take_while { |child| ascii_text?(child) }.reverse
+		body = rest.take(rest.length - trailing.length)
+
+		enclosed = case body
+			in [Output::Enclosed => inner] if statement.closing.ascii_only? && inner.closing.ascii_only?
+				inner.with(closing: inner.closing + statement.closing, opened: inner.opened && statement.opened)
+			else
+				statement.with(body:)
+		end
+
+		@flattened[enclosed] = [enclosed]
+		[*leading, enclosed, *trailing]
 	end
 
 	# A run of output that runs nothing else, with expected values in it, is
 	# emitted twice: as static text for when every value is as expected, and
 	# as it would be otherwise. Nothing in the run can change a value between
 	# where it's tested and where it's rendered. Values read by constant go
-	# into locals before the run.
+	# into locals before the run. An enclosure whose opening text wasn't
+	# static is never part of a run, since if a read raised it would have to
+	# close something already appended: it expects its own values inside.
 	private def expect(statements)
-		statements.slice_when { |a, b| quiet?(a) != quiet?(b) }.flat_map do |run|
-			expected = quiet?(run.first) ? run.flat_map { |statement| expected_values(statement) } : []
+		quiet = statements.map { |statement| quiet?(statement) }
+
+		statements.zip(quiet).slice_when { |(_, a), (_, b)| a != b }.flat_map do |pairs|
+			run = pairs.map(&:first)
+			next run unless pairs.first[1]
+
+			expected = run.flat_map { |statement| expected_values(statement) }
 			next run if expected.empty?
 
-			predicate = expected.map(&:guard).reduce { |left, right| Refract::AndNode.new(left:, operator: "&&", right:) }
-			[*expected.flat_map(&:reads), if_node(predicate, expected(run, true), else_body: expected(run, false))]
+			[*expected.flat_map(&:reads), if_node(all(expected.map(&:guard)), expected(run, true), else_body: expected(run, false))]
 		end
+	end
+
+	# Balanced, so a long run doesn't nest the predicate as deeply as it's long.
+	private def all(guards)
+		return guards.first if guards.one?
+
+		half = guards.length / 2
+		parenthesized([Refract::AndNode.new(left: all(guards.take(half)), operator: "&&", right: all(guards.drop(half)))])
 	end
 
 	private def quiet?(statement)
 		case statement
 		in Output::Expected then true
 		in Output::Append then statement.static?
-		in Output::Enclosed then flatten(statement.body).all? { |child| quiet?(child) }
+		in Output::Enclosed then @quiet.fetch(statement) { @quiet[statement] = statement.opened && flatten(statement.body).all? { |child| quiet?(child) } }
 		else false
 		end
 	end
@@ -92,7 +115,7 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 	private def expected_values(statement)
 		case statement
 		in Output::Expected then [statement]
-		in Output::Enclosed then flatten(statement.body).flat_map { |child| expected_values(child) }
+		in Output::Enclosed then @expected_values.fetch(statement) { @expected_values[statement] = flatten(statement.body).flat_map { |child| expected_values(child) } }
 		else []
 		end
 	end

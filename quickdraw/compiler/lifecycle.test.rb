@@ -506,6 +506,28 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a constant that raises when read inside an element with dynamic attributes still closes it" do
+		with_component_files(
+			"gone.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleGoneInside < Phlex::HTML
+					GONE = "gone"
+
+					def view_template
+						div(class: @class) { span { GONE } }
+					rescue NameError
+						plain "rescued"
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleGoneInside)
+			LifecycleGoneInside.__send__(:remove_const, :GONE)
+
+			assert_equal LifecycleGoneInside.new.call, "<div><span></span></div>rescued"
+		end
+	end
+
 	test "a component that inlined an svg block is recompiled when Phlex::SVG changes" do
 		with_component_files(
 			"icon.rb" => <<~RUBY
