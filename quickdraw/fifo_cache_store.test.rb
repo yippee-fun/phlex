@@ -139,6 +139,28 @@ class FIFOCacheStoreTest < Quickdraw::Test
 		Object.__send__(:remove_const, :FIFOCacheStoreTestRegistered) if Object.const_defined?(:FIFOCacheStoreTestRegistered, false)
 	end
 
+	test "a value is classified before a dump hook can change it" do
+		registry = {}
+		hooked = Object.const_set(:FIFOCacheStoreTestHooked, Class.new do
+			attr_accessor :owner
+
+			define_method(:_dump) { |_| owner.default = nil; "hooked" }
+			define_singleton_method(:_load) { |name| registry[name] ||= new }
+		end)
+
+		value = {}
+		value.default = hooked.new.tap { |it| it.owner = value }
+		store = Phlex::FIFOCacheStore.new
+		store.fetch("hooked") { value }
+		hit = store.fetch("hooked") { nil }
+
+		assert hit.default.equal?(registry["hooked"])
+		refute hit.frozen?
+		refute registry["hooked"].frozen?
+	ensure
+		Object.__send__(:remove_const, :FIFOCacheStoreTestHooked) if Object.const_defined?(:FIFOCacheStoreTestHooked, false)
+	end
+
 	test "cyclic values and core objects with instance variables are loaded on each hit" do
 		store = Phlex::FIFOCacheStore.new
 

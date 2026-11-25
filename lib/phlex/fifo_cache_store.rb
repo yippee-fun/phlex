@@ -27,13 +27,15 @@ class Phlex::FIFOCacheStore
 			entry.serialized ? Marshal.load(entry.value) : entry.value
 		else
 			result = yield
+			# Classified before dumping, since a custom dump hook could change the value.
+			plain = plain?(result)
 			dump = Marshal.dump(result)
 
 			# The FIFO won't keep a value larger than the store. A plain value is
 			# frozen as it loads, not with `freeze: true`, which would deduplicate
 			# equal Strings. The proc is made here because other Ractors can't share one.
 			if dump.bytesize <= @max_bytesize
-				fifo[key] = plain?(result) ? Entry.new(Marshal.load(dump, proc(&:freeze)), false, dump.bytesize) : Entry.new(dump, true, dump.bytesize)
+				fifo[key] = plain ? Entry.new(Marshal.load(dump, proc(&:freeze)), false, dump.bytesize) : Entry.new(dump, true, dump.bytesize)
 			end
 
 			result
