@@ -11,6 +11,8 @@ class AttributePropertiesTest < Quickdraw::Test
 
 	URL_ATTRIBUTES = Set["href", "src", "action", "formaction", "lowsrc", "dynsrc", "background", "ping", "xlink:href", "data"].freeze
 	UNSAFE_ATTRIBUTES = Set["srcdoc", "sandbox", "http-equiv"].freeze
+	# Names whose value Phlex drops when it's a script URL.
+	REFERENCE_ATTRIBUTES = (Attributes::REF_ATTRIBUTES | [Attributes::DATA_ATTRIBUTE]).freeze
 	EVENT_HANDLER = /\Aon[a-z]+\z/
 
 	fuzz "renders attributes a browser reads as written, or refuses them", ATTRIBUTES do |attributes|
@@ -55,7 +57,7 @@ class AttributePropertiesTest < Quickdraw::Test
 	end
 
 	test "a string value renders with only its quotes and angle brackets escaped" do
-		check(TEXT, NAME.filter { |name| name.match?(/\A[a-z]+(-[a-z]+)*\z/) && !name.start_with?("on") && !UNSAFE_ATTRIBUTES.include?(name) && !URL_ATTRIBUTES.include?(name) && name != "id" }) do |value, name|
+		check(TEXT, NAME.filter { |name| name.match?(/\A[a-z]+(-[a-z]+)*\z/) && !name.start_with?("on") && !UNSAFE_ATTRIBUTES.include?(name) && !REFERENCE_ATTRIBUTES.include?(name) && name != "id" }) do |value, name|
 			expected = %( #{name}="#{value.gsub(/["<>]/, '"' => '&quot;', '<' => '&lt;', '>' => '&gt;')}")
 
 			assert_equal Attributes.generate_attributes({ name.to_sym => value }), expected

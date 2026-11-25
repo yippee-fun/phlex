@@ -1,6 +1,6 @@
 # phlex-native
 
-A C extension that serialises Phlex attributes. It needs the latest stable Ruby (currently 4.0). Add it to your Gemfile alongside `phlex` and Phlex will use it automatically:
+A C extension that serialises Phlex attributes. It needs the latest stable Ruby (currently 4.0) and, because it compiles when it’s installed, a C compiler. Add it to your Gemfile alongside `phlex` and Phlex will use it automatically:
 
 ```ruby
 gem "phlex"
@@ -35,11 +35,9 @@ PHLEX_NATIVE=true PHLEX_NATIVE_STRESS=true PHLEX_NATIVE_SANITIZE=true bundle exe
 
 1. Release Phlex first. This gem takes its version from `lib/phlex/version.rb` and depends on exactly that version of Phlex.
 2. Set `revision` in `phlex-native.gemspec`: `nil` for the first release with a new version of Phlex, then 1, 2 and so on for each release after it.
-3. With Docker running (OrbStack works), from the repository root:
+3. From the repository root:
 
 ```sh
-mise run native:package  # phlex-native/pkg: the source gem, and a precompiled gem for each platform
-mise run native:release  # gem push each of them
+mise run native:package  # builds the gem into phlex-native/pkg
+mise run native:release  # pushes it to RubyGems
 ```
-
-The precompiled gems are cross-compiled with [rake-compiler-dock](https://github.com/rake-compiler/rake-compiler-dock), one platform at a time. The source gem compiles on install, for platforms without one.
