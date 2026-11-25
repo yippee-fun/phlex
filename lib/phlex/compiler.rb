@@ -188,13 +188,15 @@ module Phlex::Compiler
 	# recompilation takes the lock, and so waits for the new methods. The
 	# handler runs outside it, since it may well render something.
 	def self.compile_on_first_render(component, on_failure: @on_failure)
-		return unless @enabled && Phlex.__main_ractor__?
+		return unless Phlex.__main_ractor__?
+		# A recompilation replaces methods even while disabled, so a render still waits for it.
+		return unless @enabled || @recompiling
 		return if !@recompiling && settled?(component)
 		# Reached from inside a compilation, such as by a class it autoloads.
 		return if MUTEX.owned?
 
 		error = MUTEX.synchronize do
-			return if settled?(component)
+			return if !@enabled || settled?(component)
 
 			failed = []
 
@@ -331,6 +333,60 @@ module Phlex::Compiler
 		end
 	end
 
+	# The Ruby the component and its Phlex ancestors compile to, file by file,
+	# as compiling them now would install it, with the visibility compiling
+	# restores declared in each class. Nothing is compiled, and a compiled
+	# method is generated again from its source. It's for reading: each file's
+	# part is a program of its own, evaluated in a scope of its own.
+	def self.source(component)
+		component!(component)
+
+		ancestors = phlex_ancestors(component)
+
+		# A compilation in progress has its methods' visibility restored once it's done.
+		MUTEX.synchronize do
+			ancestors.flat_map { |ancestor| defining_files(ancestor) }.uniq.filter_map do |path|
+				parse_result, _results, formatting_result = generate(path, components: ancestors, recompile: true, inline: true, visibilities: true)
+				next unless parse_result
+
+				"#{magic_comments(parse_result)}# #{path}\n#{formatting_result.source}"
+			end.join("\n")
+		end
+	end
+
+	# Parses the file and compiles the components' definitions in it, without
+	# evaluating them. Returns nothing when there's nothing to compile. With
+	# visibilities, each class body ends by declaring its compiled methods'
+	# visibility, which compile_file otherwise restores after evaluating them.
+	def self.generate(path, components:, recompile:, inline:, visibilities: false, verify: false)
+		parse_result = Prism.parse(without_byte_order_mark(File.read(path)), filepath: path)
+		file_targets = targets(path, components, recompile:)
+		file_compiler = FileCompiler.new(path, targets: file_targets, recompile:, inline:)
+		results = file_compiler.compile(Refract::Converter.new.visit(parse_result.value)).reject { |result| result.compiled_snippets.empty? }
+		return if results.empty?
+
+		unchanged!(path, file_targets.values.map(&:component).uniq) if verify
+
+		program = Refract::StatementsNode.new(
+			body: [
+				*file_compiler.usings,
+				*results.map do |result|
+					snippets = result.compiled_snippets
+					snippets += visibility_declarations(result.visibilities) if visibilities
+					wrap_in_namespace(result.namespace, snippets)
+				end,
+			]
+		)
+
+		[parse_result, results, Refract::Formatter.new(starting_line: 2).format_node(program)]
+	end
+
+	def self.visibility_declarations(visibilities)
+		visibilities.filter_map do |name, visibility|
+			parse("#{visibility}(#{name.inspect})", PROBE_PATH).statements.body.first unless visibility == :public
+		end
+	end
+
 	# Compiles the methods that the given components, by default every loaded
 	# one, define in an already-loaded file.
 	def self.compile_file(path, components: loaded_components, recompile: false, inline: true)
@@ -340,18 +396,8 @@ module Phlex::Compiler
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
 		end
 
-		parse_result = Prism.parse(without_byte_order_mark(File.read(path)), filepath: path)
-		file_targets = targets(path, components, recompile:)
-		file_compiler = FileCompiler.new(path, targets: file_targets, recompile:, inline:)
-		results = file_compiler.compile(Refract::Converter.new.visit(parse_result.value)).reject { |result| result.compiled_snippets.empty? }
-		return if results.empty?
-
-		unchanged!(path, file_targets.values.map(&:component).uniq)
-
-		program = Refract::StatementsNode.new(
-			body: [*file_compiler.usings, *results.map { |result| wrap_in_namespace(result.namespace, result.compiled_snippets) }]
-		)
-		formatting_result = Refract::Formatter.new(starting_line: 2).format_node(program)
+		parse_result, results, formatting_result = generate(path, components:, recompile:, inline:, verify: true)
+		return unless results
 
 		compiled_path = -"#{path} (compiled #{@generations += 1})"
 
@@ -434,7 +480,8 @@ module Phlex::Compiler
 		# Another Ractor can't share the main one's reflection, so it takes its own.
 		ivar_get = Phlex.__main_ractor__? ? IVAR_GET : Kernel.instance_method(:instance_variable_get)
 
-		related = target.singleton_class? ? target.ancestors : target.ancestors + descendants_of(target)
+		ancestors = Phlex.__main_ractor__? ? ANCESTORS.bind_call(target) : target.ancestors
+		related = target.singleton_class? ? ancestors : ancestors + descendants_of(target)
 		affected = related.select do |klass|
 			(inlined = ivar_get.bind_call(klass, :@__phlex_inlined__)) && names.any? { |name| inlined.include?(name) }
 		end

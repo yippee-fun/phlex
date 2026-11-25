@@ -13,6 +13,12 @@ class CompilerLifecycleTest < Quickdraw::Test
 		Phlex.__compiled_source_maps__.key?(component.instance_method(name).source_location[0])
 	end
 
+	# Until the thread finishes or waits on a lock, for at most five seconds.
+	def wait_until_blocked(thread)
+		deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+		Thread.pass until !thread.alive? || thread.backtrace&.first(3)&.any? { |line| line.include?("synchronize") } || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+	end
+
 	def with_component_files(files)
 		Dir.mktmpdir do |dir|
 			paths = files.map do |name, source|
@@ -1579,7 +1585,9 @@ class CompilerLifecycleTest < Quickdraw::Test
 	module InstallPause
 		def without_redefinition_warnings(&)
 			Thread.current[:lifecycle_install_gate]&.call
-			super
+			result = super
+			Thread.current[:lifecycle_installed_gate]&.call
+			result
 		end
 	end
 
@@ -1625,6 +1633,74 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "source waits for a compilation restoring visibility" do
+		with_component_files(
+			"race_source.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRaceSource < Phlex::HTML
+					def view_template = header
+
+					private
+
+					def header = h1 { "x" }
+				end
+			RUBY
+		) do
+			paused = Queue.new
+			resume = Queue.new
+			compiling = Thread.new do
+				Thread.current[:lifecycle_installed_gate] = -> {
+					Thread.current[:lifecycle_installed_gate] = nil
+					paused << true
+					resume.pop
+				}
+				Phlex::Compiler.compile(LifecycleRaceSource)
+			end
+
+			compiling.join unless paused.pop(timeout: 5)
+			reading = Thread.new { Phlex::Compiler.source(LifecycleRaceSource) }
+			Thread.pass until !reading.alive? || reading.backtrace&.first&.include?("synchronize")
+			resume << true
+			compiling.join
+
+			assert reading.value.include?("private(:header)")
+		end
+	end
+
+	test "source waits for a direct compile_file restoring visibility" do
+		with_component_files(
+			"race_file_source.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRaceFileSource < Phlex::HTML
+					def view_template = header
+
+					private
+
+					def header = h1 { "x" }
+				end
+			RUBY
+		) do |(path)|
+			paused = Queue.new
+			resume = Queue.new
+			compiling = Thread.new do
+				Thread.current[:lifecycle_installed_gate] = -> {
+					Thread.current[:lifecycle_installed_gate] = nil
+					paused << true
+					resume.pop
+				}
+				Phlex::Compiler.compile_file(path, components: [LifecycleRaceFileSource])
+			end
+
+			compiling.join unless paused.pop(timeout: 5)
+			reading = Thread.new { Phlex::Compiler.source(LifecycleRaceFileSource) }
+			Thread.pass until !reading.alive? || reading.backtrace&.first&.include?("synchronize")
+			resume << true
+			compiling.join
+
+			assert reading.value.include?("private(:header)")
+		end
+	end
+
 	test "a component defined in a block renders beside a compiled one in the same file" do
 		with_component_files(
 			"block_defined.rb" => <<~RUBY
@@ -1641,6 +1717,65 @@ class CompilerLifecycleTest < Quickdraw::Test
 				assert_equal LifecycleBlockDefined.new.call, "<span>block</span>"
 				assert compiled_method?(LifecycleStatement, :view_template)
 			end
+		end
+	end
+
+	test "a render with the compiler disabled still waits for a recompilation" do
+		with_component_files(
+			"disabled_race.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDisabledRaceParent < Phlex::HTML
+				end
+
+				class LifecycleDisabledRace < LifecycleDisabledRaceParent
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleDisabledRace)
+
+			without_lazy_compilation do
+				paused = Queue.new
+				resume = Queue.new
+				redefining = Thread.new do
+					Thread.current[:lifecycle_install_gate] = -> {
+						Thread.current[:lifecycle_install_gate] = nil
+						paused << true
+						resume.pop
+					}
+					LifecycleDisabledRaceParent.class_eval { def div(**, &) = super(class: "redefined", &) }
+				end
+
+				redefining.join unless paused.pop(timeout: 5)
+				rendering = Thread.new { LifecycleDisabledRace.new.call }
+				wait_until_blocked(rendering)
+				waited = rendering.alive?
+				resume << true
+				redefining.join
+
+				assert waited
+				assert_equal rendering.value, %(<div class="redefined">x</div>)
+			end
+		end
+	end
+
+	test "a class overriding visibility and ancestry reflection keeps its methods and recompiles" do
+		with_component_files(
+			"reflective_visibility.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReflectiveVisibility < Phlex::HTML
+					def self.private_method_defined?(*) = true
+					def self.ancestors = []
+
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleReflectiveVisibility)
+			assert LifecycleReflectiveVisibility.public_method_defined?(:view_template)
+
+			LifecycleReflectiveVisibility.class_eval { def div(**, &) = super(class: "redefined", &) }
+			assert_equal LifecycleReflectiveVisibility.new.call, %(<div class="redefined">x</div>)
 		end
 	end
 
@@ -1876,6 +2011,74 @@ class CompilerLifecycleTest < Quickdraw::Test
 			end
 
 			refute compiled_method?(LifecycleDisabled, :view_template)
+		end
+	end
+
+	test "source returns the Ruby a component compiles to, without compiling it" do
+		with_component_files(
+			"source.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSource < Phlex::HTML
+					def view_template = div(class: "card") { "source" }
+
+					def helper = "not compiled"
+
+					private def item = span { "item" }
+				end
+			RUBY
+		) do |(path)|
+			source = Phlex::Compiler.source(LifecycleSource)
+
+			refute compiled_method?(LifecycleSource, :view_template)
+			assert source.start_with?("# -*- coding: UTF-8; frozen_string_literal: true -*-\n# #{path}\n")
+			assert source.include?("private(:item)\n")
+			assert source.include?("class LifecycleSource")
+			assert source.include?("def view_template")
+			assert source.include?(%(<div class="card">source</div>))
+			refute source.include?("def helper")
+
+			Phlex::Compiler.compile(LifecycleSource)
+			assert_equal Phlex::Compiler.source(LifecycleSource), source
+		end
+	end
+
+	test "source declares visibility inside the class, so it evaluates for a private constant" do
+		with_component_files(
+			"private_constant.rb" => <<~RUBY
+				# frozen_string_literal: true
+				module LifecycleSourceNamespace
+					class Hidden < Phlex::HTML
+						def view_template = item
+
+						private def item = span { "hidden" }
+					end
+
+					private_constant :Hidden
+
+					def self.render = Hidden.new.call
+				end
+			RUBY
+		) do
+			component = LifecycleSourceNamespace.const_get(:Hidden)
+			source = Phlex::Compiler.source(component)
+
+			eval(source, TOPLEVEL_BINDING.dup, "(source)", 1)
+
+			assert component.private_method_defined?(:item)
+			assert_equal LifecycleSourceNamespace.render, "<span>hidden</span>"
+		end
+	end
+
+	test "source is empty when nothing would be compiled" do
+		with_component_files(
+			"nothing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleNothingToSource < Phlex::HTML
+					def label = "plain Ruby"
+				end
+			RUBY
+		) do
+			assert_equal Phlex::Compiler.source(LifecycleNothingToSource), ""
 		end
 	end
 
