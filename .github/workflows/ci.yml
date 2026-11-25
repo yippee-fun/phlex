@@ -4,6 +4,9 @@ on:
     branches: ["main", "2.4"]
   pull_request:
     branches: ["main", "2.4"]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   tests:
     strategy:
