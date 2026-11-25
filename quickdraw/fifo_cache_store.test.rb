@@ -159,6 +159,18 @@ class FIFOCacheStoreTest < Quickdraw::Test
 		refute hit[0].instance_variable_get(:@tag).frozen?
 	end
 
+	test "frozen hits keep shared and distinct strings as they were" do
+		store = Phlex::FIFOCacheStore.new
+
+		shared = +"x"
+		store.fetch("strings") { [shared, shared, +"y", +"y"] }
+		hit = store.fetch("strings") { nil }
+
+		assert hit.frozen?
+		assert hit[0].equal?(hit[1])
+		refute hit[2].equal?(hit[3])
+	end
+
 	test "identity hashes keep their distinct keys on each hit" do
 		store = Phlex::FIFOCacheStore.new
 
