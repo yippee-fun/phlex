@@ -9,6 +9,10 @@ require "refract"
 #
 # Use `Phlex::Compiler.compile(component)` to compile a class, or
 # `Phlex::Compiler.enable!` to compile each class on its first render.
+# `Phlex::Compiler.precompile(component)` compiles a class the way its first
+# render would, before forking or starting Ractors, and
+# `Phlex::Compiler.forget(component)` drops what that recorded once a code
+# reloader has unloaded it.
 # `Phlex::Compiler.explain(component)` lists what's left to the runtime and why.
 #
 # A component's live methods say which files and lines define them. Each file
@@ -181,6 +185,37 @@ module Phlex::Compiler
 		end
 
 		@on_failure.call(component, error) if error
+	end
+
+	# Compiles the component as its first render would after `enable!`: a
+	# failure is reported to the handler once and leaves it rendering
+	# uncompiled. Use it to compile before forking or starting Ractors.
+	def self.precompile(component)
+		component!(component)
+
+		compile_on_first_render(component)
+	end
+
+	# Drops what compiling a component recorded once a code reloader has
+	# unloaded it: why it failed to compile, and the source maps of the
+	# generations its methods were compiled into.
+	def self.forget(component)
+		component!(component)
+
+		if live?(component)
+			raise ArgumentError, "Can't forget #{component} because it's still loaded."
+		end
+
+		MUTEX.synchronize do
+			FAILURES.delete(component)
+
+			compiled_paths = own_methods(component).filter_map do |name|
+				path = component.instance_method(name).source_location&.first
+				path if Phlex.__compiled_source_maps__.key?(path)
+			end
+
+			Phlex.__remove_compiled_source_maps__(compiled_paths) if compiled_paths.any?
+		end
 	end
 
 	# Compiles the methods of the component and its Phlex ancestors wherever

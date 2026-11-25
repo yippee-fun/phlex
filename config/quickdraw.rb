@@ -30,3 +30,8 @@ Quickdraw.configure do |config|
 	# Under AddressSanitizer, phlex-native's differential tests take minutes.
 	config.timeout = 1800 if ENV["PHLEX_NATIVE_SANITIZE"] == "true"
 end
+
+# Runs the suite compiled, raising where a component would fall back to rendering uncompiled.
+if ENV["PHLEX_COMPILER"] == "true"
+	Phlex::Compiler.enable!(on_failure: -> (component, error) { raise error })
+end

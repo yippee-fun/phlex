@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "compiler_helper"
 
 class CompilerLifecycleTest < Quickdraw::Test
+	include CompilerHelper
+
 	Phlex::Compiler
 
 	def compiled_method?(component, name)
@@ -90,8 +93,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 				end
 			RUBY
 		) do
-			Phlex::Compiler.enable!
-			begin
+			with_lazy_compilation do
 				LifecycleWaits.call
 				assert Phlex::Compiler.compiled?(LifecycleWaits)
 
@@ -116,7 +118,6 @@ class CompilerLifecycleTest < Quickdraw::Test
 			ensure
 				Pause.gate = nil
 				release&.<< true
-				Phlex::Compiler.disable!
 			end
 		end
 	end
@@ -130,8 +131,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 				end
 			RUBY
 		) do
-			Phlex::Compiler.enable!
-			begin
+			with_lazy_compilation do
 				LifecyclePrompt.call
 				assert Phlex::Compiler.compiled?(LifecyclePrompt)
 
@@ -155,7 +155,6 @@ class CompilerLifecycleTest < Quickdraw::Test
 				compiling.join
 			ensure
 				release&.<< true
-				Phlex::Compiler.disable!
 			end
 		end
 	end
@@ -193,13 +192,10 @@ class CompilerLifecycleTest < Quickdraw::Test
 		) do
 			refute compiled_method?(LifecycleLazy, :view_template)
 
-			Phlex::Compiler.enable!
-			begin
+			with_lazy_compilation do
 				assert_equal LifecycleLazy.new.call, "<div>lazy</div>"
 				assert compiled_method?(LifecycleLazy, :view_template)
 				assert_equal LifecycleLazy.new.call, "<div>lazy</div>"
-			ensure
-				Phlex::Compiler.disable!
 			end
 		end
 	end
@@ -250,13 +246,10 @@ class CompilerLifecycleTest < Quickdraw::Test
 			failures = []
 			Sabotage.active = true
 			# The handler renders the component itself, which must not deadlock on the compiler lock.
-			Phlex::Compiler.enable!(on_failure: -> (component, error) { failures << [component, error.message, component.new.call] })
-
-			begin
+			with_lazy_compilation(on_failure: -> (component, error) { failures << [component, error.message, component.new.call] }) do
 				assert_equal LifecycleFailing.new.call, "<div>still works</div>"
 				assert_equal LifecycleFailing.new.call, "<div>still works</div>"
 			ensure
-				Phlex::Compiler.disable!
 				Sabotage.active = false
 			end
 
@@ -1010,11 +1003,8 @@ class CompilerLifecycleTest < Quickdraw::Test
 			old = LifecycleGone::View
 			Object.__send__(:remove_const, :LifecycleGone)
 
-			Phlex::Compiler.enable!
-			begin
+			with_lazy_compilation do
 				assert_equal old.new.call, "<div>gone</div>"
-			ensure
-				Phlex::Compiler.disable!
 			end
 		end
 	end
@@ -1040,6 +1030,94 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert compiled_method?(LifecycleUndefParent, :view_template)
 			assert_equal LifecycleUndefParent.new.call, "<div>d</div><span>s</span>"
 			assert_equal LifecycleUndefChild.new.call, "fine"
+		end
+	end
+
+	test "precompiling compiles a component as its first render would, reporting a failure rather than raising" do
+		with_component_files(
+			"precompiled.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecyclePrecompiled < Phlex::HTML
+					def view_template = div { "compiled" }
+				end
+			RUBY
+			"precompile_failing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecyclePrecompileFailing < Phlex::HTML
+					def view_template = div { "still works" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.precompile(LifecyclePrecompiled)
+			assert compiled_method?(LifecyclePrecompiled, :view_template)
+
+			failures = []
+			with_lazy_compilation(on_failure: -> (component, error) { failures << [component, error.message] }) do
+				Sabotage.active = true
+				Phlex::Compiler.precompile(LifecyclePrecompileFailing)
+				Phlex::Compiler.precompile(LifecyclePrecompileFailing)
+			ensure
+				Sabotage.active = false
+			end
+
+			refute compiled_method?(LifecyclePrecompileFailing, :view_template)
+			assert_equal failures, [[LifecyclePrecompileFailing, "sabotaged"]]
+			assert_equal LifecyclePrecompileFailing.new.call, "<div>still works</div>"
+		end
+	end
+
+	test "forgetting an unloaded component drops its compiled source maps and failures" do
+		with_component_files(
+			"forgotten.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleForgotten < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+			"forgotten_failing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleForgottenFailing < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			forgotten = LifecycleForgotten
+			Phlex::Compiler.compile(forgotten)
+			compiled_path = forgotten.instance_method(:view_template).source_location[0]
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+
+			failing = LifecycleForgottenFailing
+			with_lazy_compilation(on_failure: -> (*) {}) do
+				Sabotage.active = true
+				Phlex::Compiler.precompile(failing)
+			ensure
+				Sabotage.active = false
+			end
+			assert Phlex::Compiler::FAILURES.key?(failing)
+
+			Object.__send__(:remove_const, :LifecycleForgotten)
+			Object.__send__(:remove_const, :LifecycleForgottenFailing)
+			Phlex::Compiler.forget(forgotten)
+			Phlex::Compiler.forget(failing)
+
+			refute Phlex.__compiled_source_maps__.key?(compiled_path)
+			refute Phlex::Compiler::FAILURES.key?(failing)
+		end
+	end
+
+	test "a live component can't be forgotten" do
+		with_component_files(
+			"remembered.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRemembered < Phlex::HTML
+					def view_template = div { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleRemembered)
+
+			error = assert_raises(ArgumentError) { Phlex::Compiler.forget(LifecycleRemembered) }
+			assert_equal error.message, "Can't forget LifecycleRemembered because it's still loaded."
 		end
 	end
 end

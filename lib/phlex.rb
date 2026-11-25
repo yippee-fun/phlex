@@ -57,6 +57,12 @@ module Phlex
 		end
 	end
 
+	def self.__remove_compiled_source_maps__(compiled_paths)
+		COMPILED_SOURCE_MAPS_MUTEX.synchronize do
+			@compiled_source_maps = @compiled_source_maps.except(*compiled_paths).freeze
+		end
+	end
+
 	# The original line for a location that may be in compiled code.
 	def self.__source_line__(location)
 		if (generation = @compiled_source_maps[location.path])
