@@ -15,6 +15,8 @@ group :development do
 	gem "rubocop"
 	gem "ruby-lsp"
 	gem "benchmark-ips"
+	gem "rake"
+	gem "rake-compiler"
 end
 
 gem "refract", github: "yippee-fun/refract"

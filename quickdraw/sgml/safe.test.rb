@@ -36,7 +36,7 @@ class SafeTest < Quickdraw::Test
 		assert_equal cache.size, 1
 	end
 
-	# phlex-native serialises attributes without the cache.
+	# The C extension serialises attributes without the cache.
 	unless defined?(Phlex::Native)
 		test "rendering safe attribute values hits the attribute cache" do
 			value = "safe-value-cache-#{object_id}"

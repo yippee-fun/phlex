@@ -67,7 +67,7 @@ class RactorTest < Quickdraw::Test
 		end
 	end
 
-	# phlex-native serialises attributes without a cache on every Ractor.
+	# The C extension serialises attributes without a cache on every Ractor.
 	unless defined?(Phlex::Native)
 		test "the main Ractor uses ATTRIBUTE_CACHE" do
 			assert Phlex.__attribute_cache__.equal?(Phlex::ATTRIBUTE_CACHE)

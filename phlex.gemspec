@@ -24,10 +24,14 @@ Gem::Specification.new do |spec|
 	spec.files = Dir[
 		"README.md",
 		"LICENSE.txt",
-		"lib/**/*.rb"
+		"lib/**/*.rb",
+		"ext/**/*.{c,rb}"
 	]
 
 	spec.require_paths = ["lib"]
+
+	# Optional: skipped wherever it can’t be built, leaving Phlex in Ruby.
+	spec.extensions = ["ext/phlex_native/extconf.rb"]
 
 	spec.add_dependency "zeitwerk", "~>2.7"
 	spec.add_dependency "refract", "~> 2.0.0"

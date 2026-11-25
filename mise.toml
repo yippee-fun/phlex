@@ -1,6 +1,6 @@
 [tasks.setup]
 description = "Install all project dependencies."
-run = ["mise install", "bundle install --jobs 4", "bundle install --jobs 4 --gemfile phlex-native/Gemfile", "bundle exec qd browser install"]
+run = ["mise install", "bundle install --jobs 4", "bundle exec qd browser install"]
 
 [tasks.test]
 description = "Run tests"
@@ -27,25 +27,18 @@ description = "Run browser tests in Chromium and WebKit"
 run = ["bundle exec qd browser"]
 
 [tasks."native:compile"]
-description = "Compile phlex-native from source"
-dir = "phlex-native"
+description = "Compile the C extension from source"
 run = "bundle exec rake compile"
 
 [tasks."native:test"]
-description = "Run tests with phlex-native loaded"
+description = "Run tests with the C extension loaded"
 depends = ["native:compile"]
 env = { PHLEX_NATIVE = "true" }
 run = "bundle exec qd"
 
-[tasks."native:package"]
-description = "Build the phlex-native gem"
-dir = "phlex-native"
-run = ["bundle exec rake clobber", "bundle exec rake gem"]
-
-[tasks."native:release"]
-description = "Push the phlex-native gem in phlex-native/pkg to RubyGems"
-dir = "phlex-native"
-run = "gem push pkg/*.gem"
+[tasks."native:clean"]
+description = "Remove the compiled C extension"
+run = "bundle exec rake clobber"
 
 [tools]
 ruby = "latest"
