@@ -95,8 +95,9 @@ module Phlex
 
 	ATTRIBUTE_CACHE_EXPANSION_MUTEX = Mutex.new
 
+	# Other Ractors size their caches from the main one, which only it can expand.
 	def self.__expand_attribute_cache__(file_path)
-		return unless File.exist?(file_path)
+		return unless __main_ractor__? && File.exist?(file_path)
 
 		ATTRIBUTE_CACHE_EXPANSION_MUTEX.synchronize do
 			unless CACHED_FILES.include?(file_path)
@@ -104,6 +105,29 @@ module Phlex
 				@attribute_cache_max_bytesize = Phlex::ATTRIBUTE_CACHE.expand(File.size(file_path))
 			end
 		end
+	end
+
+	# What a file was like when a class first had a method defined from it, so
+	# the compiler can tell the file has changed since and refuse to compile
+	# code the class isn't running. A compiled class having one defined means
+	# the file is being loaded again, which it may recompile from. Only the
+	# main Ractor compiles, so only it records them.
+	IVAR_SET = Kernel.instance_method(:instance_variable_set)
+
+	def self.__record_source_stamp__(component, path)
+		get = SGML::IVAR_GET
+		stamps = get.bind_call(component, :@__phlex_source_stamps__) || IVAR_SET.bind_call(component, :@__phlex_source_stamps__, {})
+		return if @compiled_source_maps.key?(path)
+		return if stamps.key?(path) && !get.bind_call(component, :@__phlex_compiled__)
+
+		stamps[path] = __source_stamp__(path)
+	end
+
+	def self.__source_stamp__(path)
+		stat = File.stat(path)
+		[stat.size, stat.mtime, stat.ino].freeze
+	rescue SystemCallError
+		nil
 	end
 
 	if !defined?(::Ractor)

@@ -37,5 +37,16 @@ module EquivalenceCases
 				span(title:)
 			end
 		end
+
+		class KeywordShorthand < Phlex::HTML
+			def view_template
+				card
+				card(class: "wide")
+				div(if:) { "method" }
+			end
+
+			private def card(class: "card") = div(class:) { "local" }
+			private def if = "shown"
+		end
 	end
 end

@@ -739,10 +739,21 @@ module Phlex::Compiler
 		end
 
 		# Shorthand `title:` wraps its value in an ImplicitNode, which the
-		# formatter prints as nothing when it's taken out of the hash.
+		# formatter prints as nothing when it's taken out of the hash. A
+		# shorthand named like a keyword, such as `class:`, can't be read by its
+		# name anywhere else, so it's read back out of a hash of its own.
 		private def attribute_value(assoc)
-			(Refract::ImplicitNode === assoc.value) ? assoc.value.value : assoc.value
+			case assoc.value
+			in Refract::ImplicitNode => implicit if KEYWORDS.include?(implicit.value.name)
+				call(Refract::HashNode.new(elements: [assoc]), :[], assoc.key)
+			in Refract::ImplicitNode => implicit
+				implicit.value
+			else
+				assoc.value
+			end
 		end
+
+		KEYWORDS = %i[__ENCODING__ __LINE__ __FILE__ BEGIN END alias and begin break case class def defined? do else elsif end ensure false for if in module next nil not or redo rescue retry return self super then true undef unless until when while yield].to_set.freeze
 
 		# One attribute's parts of the opening tag.
 		private def attribute_piece(key, key_value, value, hoisted, hoist:)

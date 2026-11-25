@@ -512,10 +512,10 @@ class Phlex::SGML
 	end
 
 	private_class_method def self.method_added(method_name)
-		if method_name == :view_template
-			location = instance_method(method_name).source_location[0]
+		if Phlex.__main_ractor__? && (location = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(self, method_name).source_location&.first)
+			Phlex.__record_source_stamp__(self, location)
 
-			if location[0] in "/" | "."
+			if method_name == :view_template && (location[0] in "/" | ".")
 				Phlex.__expand_attribute_cache__(location)
 			end
 		end
