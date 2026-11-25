@@ -1562,7 +1562,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 				class LifecycleExplicitSplit < Phlex::HTML
 					def view_template = div { heading }
 
-					private def heading = h1 { "first" }
+					protected def heading = h1 { "first" }
 				end
 			RUBY
 			"explicit_split_second.rb" => <<~RUBY
@@ -1578,7 +1578,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 			refute compiled_method?(LifecycleExplicitSplit, :view_template)
 			refute compiled_method?(LifecycleExplicitSplit, :heading)
 			assert_equal LifecycleExplicitSplit.instance_variable_get(:@__phlex_inlined__), nil
-			assert LifecycleExplicitSplit.private_method_defined?(:heading)
+			assert LifecycleExplicitSplit.protected_method_defined?(:heading)
 			without_lazy_compilation { assert_equal LifecycleExplicitSplit.new.call, "<div><h1>first</h1></div>" }
 		end
 	end
@@ -1599,6 +1599,15 @@ class CompilerLifecycleTest < Quickdraw::Test
 				# frozen_string_literal: true
 				class LifecycleRolledBackChild
 					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+			"rolled_back_parent_footer.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRolledBackParent
+					def footer = footer_element { "footer" }
+
+					private def footer_element(&) = p(&)
 				end
 			RUBY
 			"rolled_back_sibling.rb" => <<~RUBY
@@ -1639,6 +1648,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 				# frozen_string_literal: true
 				class LifecycleRaisingHook
 					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
 
 					@loaded = true
 				end
@@ -1652,6 +1662,64 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			LifecycleRaisingHookParent.class_eval { def h1(**, &) = plain("parent h1") }
 			without_lazy_compilation { assert_equal LifecycleRaisingHook.new.call, "<div>parent h1</div>" }
+		end
+	end
+
+	test "a rollback keeps an inherited method the component only made private following its parent" do
+		with_component_files(
+			"revisibilised.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRevisibilisedParent < Phlex::HTML
+					def helper = h1 { "parent" }
+				end
+
+				class LifecycleRevisibilised < LifecycleRevisibilisedParent
+					private :helper
+
+					def view_template = div { helper }
+				end
+			RUBY
+			"revisibilised_failing.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRevisibilised
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+		) do
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleRevisibilised) }
+
+			LifecycleRevisibilisedParent.class_eval { def helper = h2 { "redefined" } }
+			without_lazy_compilation { assert_equal LifecycleRevisibilised.new.call, "<div><h2>redefined</h2></div>" }
+		end
+	end
+
+	test "a rollback keeps the record of what an earlier compile_file inlined" do
+		with_component_files(
+			"earlier_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleEarlierParent < Phlex::HTML
+				end
+
+				class LifecycleEarlier < LifecycleEarlierParent
+					def view_template = div { "first" }
+				end
+			RUBY
+			"earlier_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleEarlier
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+		) do |(first, _second)|
+			Phlex::Compiler.compile_file(first, components: [LifecycleEarlier])
+			inlined = LifecycleEarlier.instance_variable_get(:@__phlex_inlined__)
+			assert inlined.include?(:div)
+
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleEarlier) }
+			assert compiled_method?(LifecycleEarlier, :view_template)
+			assert_equal LifecycleEarlier.instance_variable_get(:@__phlex_inlined__), inlined
 		end
 	end
 

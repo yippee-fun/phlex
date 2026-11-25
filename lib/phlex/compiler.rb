@@ -538,19 +538,26 @@ module Phlex::Compiler
 	VISIBILITIES = { public: Module.instance_method(:public_instance_methods), private: Module.instance_method(:private_instance_methods), protected: Module.instance_method(:protected_instance_methods) }.freeze
 	DEFINE_METHOD = Module.instance_method(:define_method)
 
-	# The component's own methods as they are, with their visibility.
+	INLINED = [:@__phlex_inlined__, :@__phlex_inlined_svg__, :@__phlex_inlined_super__].freeze
+
+	# The component's own methods as they are, with their visibility, and what
+	# those inline.
 	def self.definitions(component)
-		VISIBILITIES.flat_map do |visibility, list|
-			list.bind_call(component, false).map { |name| [name, Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name), visibility] }
+		methods = VISIBILITIES.flat_map do |visibility, list|
+			list.bind_call(component, false).filter_map do |name|
+				[name, Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name), visibility] unless revisibilised?(component, name)
+			end
 		end
+
+		[methods, INLINED.to_h { |name| [name, IVAR_GET.bind_call(component, name)] }]
 	end
 
 	# Puts back the methods a compilation that failed partway through replaced.
 	# Ruby defines each before calling `method_added`, so one that raises
 	# doesn't stop the rest, and the compilation's own error is the one raised.
-	def self.restore(component, definitions)
+	def self.restore(component, (methods, inlined))
 		without_redefinition_warnings do
-			definitions.each do |name, method, visibility|
+			methods.each do |name, method, visibility|
 				current = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
 				# Only what compiling installed, not what another thread defined meanwhile.
 				next if current == method || !Phlex.__compiled_source_maps__.key?(current.source_location&.first)
@@ -565,11 +572,17 @@ module Phlex::Compiler
 			end
 		end
 
-		forget_inlined(component)
+		inlined.each do |name, value|
+			if value
+				IVAR_SET.bind_call(component, name, value)
+			elsif IVAR_DEFINED.bind_call(component, name)
+				REMOVE_IVAR.bind_call(component, name)
+			end
+		end
 	end
 
 	def self.forget_inlined(component)
-		[:@__phlex_inlined__, :@__phlex_inlined_svg__, :@__phlex_inlined_super__].each do |name|
+		INLINED.each do |name|
 			REMOVE_IVAR.bind_call(component, name) if IVAR_DEFINED.bind_call(component, name)
 		end
 	end
