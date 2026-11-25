@@ -16,7 +16,7 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 					div(**@attrs) { "x" }
 					img(srcset: @srcset)
 					div("bad name": 1)
-					ul { |list| li }
+					ul { |list| li; list }
 					plain title
 					raw title
 					whitespace(1)

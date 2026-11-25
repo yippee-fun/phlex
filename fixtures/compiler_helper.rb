@@ -11,4 +11,12 @@ module CompilerHelper
 	ensure
 		enabled ? Phlex::Compiler.enable!(on_failure: previous) : Phlex::Compiler.disable!
 	end
+
+	def without_lazy_compilation
+		enabled = Phlex::Compiler.enabled?
+		Phlex::Compiler.disable!
+		yield
+	ensure
+		Phlex::Compiler.enable!(on_failure: Phlex::Compiler.instance_variable_get(:@on_failure)) if enabled
+	end
 end

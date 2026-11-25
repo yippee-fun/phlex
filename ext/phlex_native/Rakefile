@@ -1,0 +1,16 @@
+# frozen_string_literal: true
+
+# RubyGems runs this when it installs Phlex, rather than make, so that a missing
+# make can’t fail the install either. Phlex works without the extension.
+task :default do
+	archdir = ENV.fetch("RUBYARCHDIR")
+	make = ENV["MAKE"] || (RUBY_PLATFORM.include?("mswin") ? "nmake" : "make")
+
+	built = system(RbConfig.ruby, "extconf.rb") &&
+		system(make) &&
+		system(make, "install", "sitearchdir=#{archdir}", "sitelibdir=#{archdir}")
+
+	warn "Phlex will serialise attributes in Ruby because its C extension couldn’t be built." unless built
+rescue StandardError, ScriptError => e
+	warn "Phlex will serialise attributes in Ruby because its C extension couldn’t be built (#{e.message})."
+end

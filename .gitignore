@@ -14,3 +14,6 @@ Gemfile.lock
 .covered.db
 .DS_Store
 .gem
+/base-*.yml
+/tabs-*.yml
+/lib/phlex_native/

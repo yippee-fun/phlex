@@ -37,6 +37,7 @@ module Phlex::Compiler
 			@appends = 0
 			@guarded_blocks = 0
 			@compiling_calls = true
+			@method_locals = Set.new
 		end
 
 		# Returns nil when there's nothing to compile, unless the method is being
@@ -91,11 +92,14 @@ module Phlex::Compiler
 		visit Refract::DefNode do |node|
 			return node unless @stack.size == 1
 
-			if (reserved = (LocalsScanner.names(node) | BareCallScanner.names(node)).find { |name| name.start_with?("__phlex_") })
+			@method_locals = LocalsScanner.names(node)
+
+			if (reserved = (@method_locals | BareCallScanner.names(node)).find { |name| name.start_with?("__phlex_") })
 				@diagnostics.refuse(node, "#{reserved} is a name the compiler reserves for locals; names starting with __phlex_ can't be used")
 				return node
 			end
 
+			@definition = node
 			parameters = without_compiling_calls(because: "it's in a parameter default") { visit(node.parameters) }
 			body = visit(node.body)
 
@@ -115,6 +119,18 @@ module Phlex::Compiler
 			end
 
 			super(node)
+		end
+
+		# In an override of an element, `super` that reaches the registered element
+		# renders it, as a call to the element would.
+		[Refract::SuperNode, Refract::ForwardingSuperNode].each do |super_node|
+			visit super_node do |node|
+				if @compiling_calls && statement?(node) && (compiled = compile_super(node))
+					return compiled
+				end
+
+				super(node)
+			end
 		end
 
 		# A block passed to a method we don't know about might be evaluated against a
@@ -201,7 +217,7 @@ module Phlex::Compiler
 			appends = @appends
 
 			compiled = if (element = @environment.element(node.name))
-				element.void ? compile_void_element(node, element.tag) : compile_standard_element(node, element.tag)
+				compile_element(node, element)
 			elsif @environment.helper?(node.name)
 				case node.name
 				in :plain then compile_plain(node)
@@ -217,6 +233,49 @@ module Phlex::Compiler
 
 			@environment.inlined << node.name if compiled && (@appends > appends || !(Refract::CallNode === compiled))
 			compiled
+		end
+
+		private def compile_element(node, element)
+			element.void ? compile_void_element(node, element.tag) : compile_standard_element(node, element.tag)
+		end
+
+		# `super` passes the method's block when it isn't given one, which a void
+		# element ignores, and the method's parameters when it isn't given
+		# arguments, which is only reproduced for keywords gathered into `**`.
+		# Kept as a call, it stays a `super`, with anything compiled inside its
+		# block.
+		private def compile_super(node)
+			return unless (name = @definition.name) && (element = @environment.super_element(name))
+
+			arguments = case node
+				in Refract::SuperNode then node.arguments
+				in Refract::ForwardingSuperNode then super_arguments or return
+			end
+
+			block = node.block || (Refract::BlockArgumentNode.new(expression: nil) unless element.void)
+			appends = @appends
+			compiled = compile_element(Refract::CallNode.new(name:, arguments:, block:), element)
+			@environment.inlined_super << name if @appends > appends || !(Refract::CallNode === compiled)
+
+			case [compiled, node]
+			in [Refract::CallNode, Refract::SuperNode] then node.copy(arguments: compiled.arguments, block: node.block && compiled.block)
+			in [Refract::CallNode, Refract::ForwardingSuperNode] then node.copy(block: node.block && compiled.block)
+			else compiled
+			end
+		end
+
+		# Anonymous keywords can't be forwarded from a block, and compiled
+		# content can end up in one, so they're only forwarded by a `super` in
+		# the method's own statements.
+		private def super_arguments
+			case @definition.parameters
+			in nil | Refract::ParametersNode[requireds: [], optionals: [], rest: nil, posts: [], keywords: [], keyword_rest: nil]
+				Refract::ArgumentsNode.new(arguments: [])
+			in Refract::ParametersNode[requireds: [], optionals: [], rest: nil, posts: [], keywords: [], keyword_rest: Refract::KeywordRestParameterNode[name:]] if name || @stack[-2].equal?(@definition.body)
+				Refract::ArgumentsNode.new(arguments: [Refract::KeywordHashNode.new(elements: [Refract::AssocSplatNode.new(value: name && read(name))])])
+			else
+				nil
+			end
 		end
 
 		# The runtime closes the element however its content exits, which the
@@ -412,6 +471,8 @@ module Phlex::Compiler
 				[]
 			in Refract::BlockNode[parameters: nil, body: nil]
 				[]
+			in Refract::BlockNode => block if element && (rewritten = without_self_parameter(block))
+				compile_content(node.copy(block: rewritten), element:)
 			in Refract::BlockNode => block if inlinable?(block)
 				case block.body
 				in Refract::StatementsNode[body:] if returns_nil?(body.last)
@@ -469,6 +530,24 @@ module Phlex::Compiler
 
 		private def yield_content(block)
 			call(nil, :__yield_content__, block:)
+		end
+
+		# An element's block whose only parameter is the element's receiver, with
+		# the elements called on the parameter called bare instead. A bare call
+		# with no arguments would read a local of the same name, so a name the
+		# method uses as a local is left alone.
+		private def without_self_parameter(block)
+			return unless block.body && block.parameters in Refract::BlockParametersNode[
+				locals: [],
+				parameters: Refract::ParametersNode[requireds: [Refract::RequiredParameterNode => parameter], optionals: [], rest: nil, posts: [], keywords: [], keyword_rest: nil, block: nil],
+			]
+
+			body = SelfParameter.rewrite(block.body, parameter.name) do |name|
+				@environment.public_element(name) && !@method_locals.include?(name)
+			end
+
+			rewritten = body && block.copy(parameters: nil, body:)
+			rewritten if rewritten && inlinable?(rewritten)
 		end
 
 		private def inlinable?(block)
@@ -760,9 +839,14 @@ module Phlex::Compiler
 		# serialised entry by entry. Static entries are serialised now, and each
 		# dynamic value is evaluated into a local where the hash is, then
 		# serialised in order. A `style:` hash is serialised as styles, so it's
-		# left to the serialiser.
+		# left to the serialiser. A literal hash inside one is serialised the same
+		# way, with its entry's name as its base, as the serialiser recurses.
 		private def nested_attributes(key_value, name, value, hoisted)
-			return unless Refract::HashNode === value && key_value != :style
+			nested_entries(name, value, hoisted) unless key_value == :style
+		end
+
+		private def nested_entries(name, value, hoisted)
+			return unless Refract::HashNode === value
 
 			base = "#{name}-"
 			return unless value.elements.all? { |assoc| assoc in Refract::AssocNode[key: Refract::StringNode | Refract::SymbolNode] }
@@ -785,13 +869,15 @@ module Phlex::Compiler
 				return
 			end
 
-			entries.map do |entry|
+			entries.flat_map do |entry|
 				case entry
 				in [:static, text]
-					literal(text)
+					[literal(text)]
 				in [:dynamic, nested_key, nested_name, nested_value]
-					nested_value = hoisted_local(nested_value, hoisted)
-					typed_attribute(nested_value, nested_name) { call(constant("Phlex::Compiler"), :nested_attributes, nested_key, nested_value, string(base)) }
+					nested_entries(nested_name, nested_value, hoisted) || begin
+						nested_value = hoisted_local(nested_value, hoisted)
+						[typed_attribute(nested_value, nested_name) { call(constant("Phlex::Compiler"), :nested_attributes, nested_key, nested_value, string(base)) }]
+					end
 				end
 			end
 		end
@@ -852,8 +938,26 @@ module Phlex::Compiler
 				TokenChoice.new(condition: node.predicate, truthy: branch_token(node.statements), falsy: branch_token(node.subsequent&.statements))
 			in Refract::UnlessNode
 				TokenChoice.new(condition: node.predicate, truthy: branch_token(node.else_clause&.statements), falsy: branch_token(node.statements))
+			# `x && "token"` is the token or a falsy `x`, which is nil or false,
+			# and the serialiser skips both.
+			in Refract::AndNode if same_as_condition?(node.left)
+				TokenChoice.new(condition: node.left, truthy: token_literal(node.right), falsy: nil)
 			else
 				token_literal(node)
+			end
+		end
+
+		# Whether an expression means the same in condition position, where a
+		# regular expression literal matches `$_` and a range is a flip-flop.
+		private def same_as_condition?(node)
+			case node
+			in Refract::CallNode[name: :!, receiver:, arguments: nil] then receiver.nil? || same_as_condition?(receiver)
+			in Refract::CallNode | Refract::LocalVariableReadNode | Refract::ItLocalVariableReadNode | Refract::InstanceVariableReadNode |
+				Refract::ConstantReadNode | Refract::ConstantPathNode | Refract::GlobalVariableReadNode | Refract::ClassVariableReadNode
+				true
+			in Refract::ParenthesesNode[body: Refract::StatementsNode[body: [inner]]] then same_as_condition?(inner)
+			in Refract::AndNode | Refract::OrNode then same_as_condition?(node.left) && same_as_condition?(node.right)
+			else false
 			end
 		end
 

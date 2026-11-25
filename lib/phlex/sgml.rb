@@ -79,6 +79,7 @@ class Phlex::SGML
 		end
 
 		@_state = state
+		@_parent = parent
 
 		return "" unless render?
 
@@ -120,6 +121,11 @@ class Phlex::SGML
 				You can’t access the context before the component has started rendering.
 			MESSAGE
 		end
+	end
+
+	# The component that rendered this one, or `nil` if it was rendered from the outside.
+	def parent
+		@_parent
 	end
 
 	# Returns `false` before rendering and `true` once the component has started rendering.
