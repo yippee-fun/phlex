@@ -94,6 +94,9 @@ module Phlex::Compiler
 
 	MUTEX = Mutex.new
 
+	# compiled path => the components whose methods that generation compiled
+	GENERATION_COMPONENTS = {}
+
 	# component => the exception that stopped it compiling on first render
 	FAILURES = {}.compare_by_identity
 
@@ -215,6 +218,12 @@ module Phlex::Compiler
 				path if Phlex.__compiled_source_maps__.key?(path)
 			end
 
+			# A generation another live component's methods came from is still needed.
+			compiled_paths.select! do |path|
+				GENERATION_COMPONENTS.fetch(path, []).none? { |other| !other.equal?(component) && live?(other) }
+			end
+
+			compiled_paths.each { |path| GENERATION_COMPONENTS.delete(path) }
 			Phlex.__remove_compiled_source_maps__(compiled_paths) if compiled_paths.any?
 		end
 	end
@@ -309,6 +318,8 @@ module Phlex::Compiler
 		formatting_result.source_map.each_with_index do |original_line, generated_line|
 			lines[generated_line] = original_line if original_line
 		end
+
+		GENERATION_COMPONENTS[compiled_path] = results.map(&:component).uniq.freeze
 
 		# Added before the methods exist, so nothing running them finds a line unmapped.
 		Phlex.__add_compiled_source_map__(compiled_path, Generation.new(path: -path, lines: lines.freeze))
