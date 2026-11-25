@@ -22,7 +22,7 @@ class Phlex::HTML < Phlex::SGML
 	# [Spec](https://html.spec.whatwg.org/#the-svg-element)
 	def svg(*, **, &)
 		if block_given?
-			super { render Phlex::SVG.new(&) }
+			super { render(Phlex::SVG.new, &) }
 		else
 			super
 		end
@@ -111,7 +111,7 @@ class Phlex::HTML < Phlex::SGML
 
 					begin
 						if :svg == name
-							render Phlex::SVG.new(&)
+							render(Phlex::SVG.new, &)
 						else
 							__yield_content__(&)
 						end
@@ -131,7 +131,7 @@ class Phlex::HTML < Phlex::SGML
 					buffer << ("<#{tag}>")
 					begin
 						if :svg == name
-							render Phlex::SVG.new(&)
+							render(Phlex::SVG.new, &)
 						else
 							__yield_content__(&)
 						end

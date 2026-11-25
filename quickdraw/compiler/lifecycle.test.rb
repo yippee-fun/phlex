@@ -563,11 +563,11 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert inlined.call
 
 			begin
-				Phlex::SVG.define_method(:instance_variable_set) { |*| raise "no blocks" }
+				Phlex::SVG.define_method(:initialize) { |*| raise "no svg" }
 				refute inlined.call
 				assert_raises(RuntimeError) { LifecycleIconSetup.new.call }
 			ensure
-				Phlex::SVG.remove_method(:instance_variable_set)
+				Phlex::SVG.remove_method(:initialize)
 			end
 
 			Phlex::Compiler.recompile(LifecycleIconSetup)
@@ -583,27 +583,27 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
-	test "an svg block isn't inlined while a core method building Phlex::SVG is replaced" do
+	test "an svg block isn't inlined while Class#new is replaced" do
 		with_component_files(
 			"icon.rb" => <<~RUBY
 				# frozen_string_literal: true
-				class LifecycleIconAllocate < Phlex::HTML
+				class LifecycleIconNew < Phlex::HTML
 					def view_template = svg { |s| s.circle(r: 1) }
 				end
 			RUBY
 		) do
 			Class.class_eval do
-				alias_method :__lifecycle_allocate__, :allocate
-				def allocate = __lifecycle_allocate__
+				alias_method :__lifecycle_new__, :new
+				def new(...) = __lifecycle_new__(...)
 			end
 
-			Phlex::Compiler.compile(LifecycleIconAllocate)
-			refute LifecycleIconAllocate.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:circle)
-			assert_equal LifecycleIconAllocate.new.call, %(<svg><circle r="1"></circle></svg>)
+			Phlex::Compiler.compile(LifecycleIconNew)
+			refute LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:circle)
+			assert_equal LifecycleIconNew.new.call, %(<svg><circle r="1"></circle></svg>)
 		ensure
 			Class.class_eval do
-				alias_method :allocate, :__lifecycle_allocate__
-				remove_method :__lifecycle_allocate__
+				alias_method :new, :__lifecycle_new__
+				remove_method :__lifecycle_new__
 			end
 		end
 	end

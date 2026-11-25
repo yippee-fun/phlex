@@ -5,18 +5,9 @@ class Phlex::SGML
 	include Phlex::Helpers
 
 	class << self
-		# Render the view to a String. Arguments are delegated to {.new}.
-		def call(...)
-			new(...).call
-		end
-
-		# Create a new instance of the component.
-		# @note The block will not be delegated to {#initialize}. Instead, it will be sent to {#view_template} when rendering.
-		def new(*, **, &block)
-			object = allocate
-			object.__send__(:initialize, *, **)
-			object.instance_variable_set(:@_content_block, block) if block
-			object
+		# Render the view to a String. Arguments are delegated to {.new} and the block to {#view_template}.
+		def call(*, **, &)
+			new(*, **).call(&)
 		end
 	end
 
@@ -68,8 +59,6 @@ class Phlex::SGML
 			# the block is read once.
 			if block_given?
 				__render_with_content__(state, &)
-			elsif (content_block = @_content_block)
-				__render_with_content__(state, &content_block)
 			else
 				state.around_render(self) do
 					before_template
@@ -535,7 +524,7 @@ class Phlex::SGML
 	# Inlined svg blocks rely on the class methods that build a Phlex::SVG.
 	# Defined before the hooks below, which call it when it's defined.
 	private_class_method def self.__svg_class_changed__(method_name)
-		__inlining_changed__(self, [method_name]) if (method_name in :new | :allocate | :===) && Phlex::SVG <= self
+		__inlining_changed__(self, [method_name]) if (method_name in :new | :===) && Phlex::SVG <= self
 	end
 
 	private_class_method def self.singleton_method_added(method_name)

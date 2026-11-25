@@ -18,8 +18,10 @@ module EquivalenceCases
 
 		class Page < Phlex::HTML
 			def view_template
-				render Layout.new { div { "page" } }
-				render CaptureLayout.new { p { "captured" } }
+				render(Layout.new) { div { "page" } }
+				render CaptureLayout.new do
+					p { "captured" }
+				end
 				render(CaptureLayout.new) { "plain text" }
 			end
 		end

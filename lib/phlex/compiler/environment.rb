@@ -19,21 +19,19 @@ class Phlex::Compiler::Environment
 	# code skips when it inlines the block.
 	SVG_RENDER = %i[render? before_template around_template after_template view_template internal_call __render_with_content__ __yield_content__ __implicit_output__].freeze
 
-	# The core methods Phlex::SGML.new and render call on the Phlex::SVG, and
+	# The core methods `new` and render call on the Phlex::SVG, and
 	# block_given?, which its render methods and elements ask, by owner.
 	# Each as it was when the compiler loaded.
 	SVG_CORE = {
 		initialize: BasicObject.instance_method(:initialize),
-		__send__: BasicObject.instance_method(:__send__),
-		instance_variable_set: Kernel.instance_method(:instance_variable_set),
 		block_given?: Kernel.instance_method(:block_given?),
 	}.freeze
 
-	CLASS_ALLOCATE = Class.instance_method(:allocate)
+	CLASS_NEW = Class.instance_method(:new)
 	MODULE_CASE_EQUALITY = Module.instance_method(:===)
 
-	# The class methods `render Phlex::SVG.new` calls.
-	SVG_CLASS_METHODS = %i[new allocate ===].freeze
+	# The class methods `render(Phlex::SVG.new, &)` calls.
+	SVG_CLASS_METHODS = %i[new ===].freeze
 
 	# Everything an inlined svg block relies on besides the elements it calls.
 	SVG_DEPENDENCIES = [*SVG_RENDER, *SVG_CORE.keys, *SVG_CLASS_METHODS].freeze
@@ -125,12 +123,10 @@ class Phlex::Compiler::Environment
 		end
 	end
 
-	# Whether `render Phlex::SVG.new` builds and recognises the SVG as Phlex wrote it.
+	# Whether `render(Phlex::SVG.new, &)` builds and recognises the SVG as Phlex wrote it.
 	private def sgml_new?
 		Phlex::SVG.singleton_class.public_method_defined?(:new) &&
-			(new = instance_method(:new, Phlex::SVG.singleton_class)) && new.owner == Phlex::SGML.singleton_class &&
-			new.original_name == :new && new.source_location&.first == SGML_SOURCE_PATH &&
-			core?(instance_method(:allocate, Phlex::SVG.singleton_class), CLASS_ALLOCATE) &&
+			core?(instance_method(:new, Phlex::SVG.singleton_class), CLASS_NEW) &&
 			core?(instance_method(:===, Phlex::SGML.singleton_class), MODULE_CASE_EQUALITY)
 	end
 
