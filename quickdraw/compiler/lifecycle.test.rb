@@ -1517,6 +1517,99 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a component reopened in a file that fails is left uncompiled in the files that compiled" do
+		with_component_files(
+			"split_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleSplitParent < Phlex::HTML
+				end
+			RUBY
+			"split_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleSplit < LifecycleSplitParent
+					def view_template = div { "first" }
+				end
+			RUBY
+			"split_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSplit
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+		) do
+			reports = []
+
+			with_lazy_compilation(on_failure: -> (component, _error) { reports << component }) do
+				assert_equal LifecycleSplit.new.call, "<div>first</div>"
+			end
+
+			assert_equal reports, [LifecycleSplit]
+			refute Phlex::Compiler.compiled?(LifecycleSplit)
+			assert_equal LifecycleSplit.instance_variable_get(:@__phlex_inlined__), Set[]
+			assert LifecycleSplit.private_method_defined?(:delegate)
+
+			LifecycleSplitParent.class_eval { def div(**, &) = plain("parent div") }
+			assert_equal LifecycleSplit.new.call, "parent div"
+		end
+	end
+
+	test "a component that fails to compile partway through is left uncompiled by an explicit compile" do
+		with_component_files(
+			"explicit_split_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleExplicitSplit < Phlex::HTML
+					def view_template = div { heading }
+
+					private def heading = h1 { "first" }
+				end
+			RUBY
+			"explicit_split_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleExplicitSplit
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+		) do
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleExplicitSplit) }
+			refute Phlex::Compiler.compiled?(LifecycleExplicitSplit)
+			assert_equal LifecycleExplicitSplit.instance_variable_get(:@__phlex_inlined__), Set[]
+			assert LifecycleExplicitSplit.private_method_defined?(:heading)
+			without_lazy_compilation { assert_equal LifecycleExplicitSplit.new.call, "<div><h1>first</h1></div>" }
+		end
+	end
+
+	test "compiling a subclass compiles the ancestors its first render left alone" do
+		with_component_files(
+			"left_alone_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleLeftAloneParent < Phlex::HTML
+					compile false
+
+					def heading = h1 { "parent" }
+				end
+			RUBY
+			"left_alone_child.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleLeftAloneChild < LifecycleLeftAloneParent
+					compile true
+
+					def view_template = div { heading }
+				end
+			RUBY
+		) do
+			with_lazy_compilation { assert_equal LifecycleLeftAloneChild.new.call, "<div><h1>parent</h1></div>" }
+			assert compiled_method?(LifecycleLeftAloneChild, :view_template)
+			refute compiled_method?(LifecycleLeftAloneParent, :heading)
+
+			Phlex::Compiler.compile(LifecycleLeftAloneChild)
+			assert compiled_method?(LifecycleLeftAloneParent, :heading)
+			assert Phlex::Compiler.compiled?(LifecycleLeftAloneParent)
+			assert_equal LifecycleLeftAloneChild.new.call, "<div><h1>parent</h1></div>"
+		end
+	end
+
 	test "the compiler doesn't keep unloaded components alive when nothing forgets them" do
 		skip "Needs a precise garbage collector" unless RUBY_ENGINE == "ruby"
 

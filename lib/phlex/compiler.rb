@@ -39,7 +39,7 @@ require "refract"
 # Redefining one on a class or by including a module recompiles whatever
 # inlined it.
 #
-# Seven differences remain, all deliberate:
+# Eight differences remain, all deliberate:
 # - Changing what an inlined element or helper resolves to through a module
 #   already mixed into a compiled component, or into Phlex::SVG for an inlined
 #   svg block, isn't seen: defining, removing or undefining it on that module,
@@ -78,6 +78,8 @@ require "refract"
 #   a copy of the original, used when the block runs with another `self`. A
 #   literal Ruby reuses on each evaluation, such as a regular expression or a
 #   range, is a different object in each copy.
+# - Compiling, recompiling or decompiling a class defines its methods again,
+#   so its own `method_added` runs again for each of them.
 #
 # Methods a component gains from mixins aren't compiled, which only costs speed.
 module Phlex::Compiler
@@ -278,9 +280,11 @@ module Phlex::Compiler
 		MUTEX.synchronize { compile_ancestry(component) }
 	end
 
-	# On first render, an ancestor that says `compile false` is left alone.
+	# On first render, an ancestor that says `compile false` is left alone. An
+	# explicit compile of a class that compiled on its first render goes on to
+	# the ancestors that left alone.
 	def self.compile_ancestry(component, only: nil, failed: [])
-		return if FROZEN.bind_call(component) || compiled?(component)
+		return if FROZEN.bind_call(component)
 
 		ancestors = phlex_ancestors(component).reject { |ancestor| FROZEN.bind_call(ancestor) || compiled?(ancestor) }
 		ancestors.select!(&only) if only
@@ -295,11 +299,14 @@ module Phlex::Compiler
 		rescue StandardError, ScriptError, SystemStackError
 			failed.concat(components.select { |ancestor| files[ancestor].include?(path) })
 
-			# One whose files all compiled has compiled methods, so it's marked compiled.
+			# One whose files all compiled is marked compiled. The rest go back to
+			# their original definitions, so none is left compiled in some files.
 			ancestors.each do |ancestor|
-				next if failed.include?(ancestor) || !(files[ancestor] || []).all? { |file| compiled_paths.include?(file) }
-
-				IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true)
+				if !failed.include?(ancestor) && (files[ancestor] || []).all? { |file| compiled_paths.include?(file) }
+					IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true)
+				elsif files.key?(ancestor)
+					uncompile(ancestor)
+				end
 			end
 
 			raise
@@ -450,7 +457,7 @@ module Phlex::Compiler
 			stamps = Phlex::SGML::IVAR_GET.bind_call(component, :@__phlex_source_stamps__) || {}
 
 			unless stamps.key?(path)
-				raise Error, "Can't compile #{path} for #{component} because Phlex didn't see its methods defined there, such as in another Ractor, so it can't tell whether the file has changed since."
+				raise Error, "Can't compile #{path} for #{component} because Phlex didn't see its methods defined there, such as in another Ractor or under a `method_added` that doesn't call `super`, so it can't tell whether the file has changed since."
 			end
 
 			unless current && stamps[path] == current
@@ -517,15 +524,33 @@ module Phlex::Compiler
 		MUTEX.synchronize do
 			# Its subclasses render the methods being replaced too.
 			@recompiling = true
-			REMOVE_IVAR.bind_call(component, :@__phlex_inlined__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined__)
-			REMOVE_IVAR.bind_call(component, :@__phlex_inlined_svg__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined_svg__)
-			REMOVE_IVAR.bind_call(component, :@__phlex_inlined_super__) if IVAR_DEFINED.bind_call(component, :@__phlex_inlined_super__)
+			forget_inlined(component)
 
 			defining_files(component).each do |path|
 				compile_file(path, components: [component], recompile: true, inline:)
 			end
 		ensure
 			@recompiling = false
+		end
+	end
+
+	# Reinstalls the original definitions in each file where the component has
+	# compiled methods, after a compilation that failed partway through.
+	def self.uncompile(component)
+		forget_inlined(component)
+
+		paths = own_methods(component).filter_map do |name|
+			Phlex.__compiled_source_maps__[Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name).source_location&.first]&.path
+		end
+
+		paths.uniq.each do |path|
+			compile_file(path, components: [component], recompile: true, inline: false)
+		end
+	end
+
+	def self.forget_inlined(component)
+		[:@__phlex_inlined__, :@__phlex_inlined_svg__, :@__phlex_inlined_super__].each do |name|
+			REMOVE_IVAR.bind_call(component, name) if IVAR_DEFINED.bind_call(component, name)
 		end
 	end
 
