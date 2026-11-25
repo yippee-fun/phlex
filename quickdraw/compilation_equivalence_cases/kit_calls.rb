@@ -47,6 +47,13 @@ module EquivalenceCases
 			end
 		end
 
+		class Replacement < Phlex::HTML
+			def initialize(*) = nil
+			def view_template = plain("swappable 2")
+		end
+
+		ORIGINAL = Components::Swappable
+
 		class KitCalls < Phlex::HTML
 			include Components
 			include Components::Nested
@@ -64,13 +71,9 @@ module EquivalenceCases
 			end
 
 			# Replaces the component, as a reloader might, while the arguments are evaluated.
-			private def swap
-				version = (Components.const_get(:Swappable).new.call == "swappable 1") ? 2 : 1
+			private def swap(to = Replacement)
 				Components.__send__(:remove_const, :Swappable)
-				Components.const_set(:Swappable, Class.new(Phlex::HTML) {
-					define_method(:initialize) { |*| nil }
-					define_method(:view_template) { plain "swappable #{version}" }
-				})
+				Components.const_set(:Swappable, to)
 				nil
 			end
 
@@ -93,7 +96,11 @@ module EquivalenceCases
 				Card("Lambda", &-> (_card) { plain "from lambda" })
 				Card("Symbol", &:footer_text)
 				Secret()
-				Swappable(swap)
+				begin
+					Swappable(swap)
+				ensure
+					swap(ORIGINAL)
+				end
 				Card(title_for(:a), tone: title_for(:b)) { plain @log.join(",") }
 				Failing() if @raising
 			rescue ArgumentError => error
