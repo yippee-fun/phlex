@@ -26,7 +26,7 @@ module Phlex::Compiler
 
 		UNINLINABLE_BLOCK = "it has parameters or contains a return, break, next or local assignment"
 		GUARDED_BLOCK_DEPTH_LIMIT = 4
-		COMPILED_HELPERS = Set[:plain, :raw, :whitespace, :doctype, :comment, :fragment, :svg].freeze
+		COMPILED_HELPERS = Set[:plain, :raw, :whitespace, :doctype, :comment, :svg].freeze
 
 		def initialize(environment, path, diagnostics: Diagnostics.new(path))
 			super()
@@ -126,8 +126,12 @@ module Phlex::Compiler
 		# renders it, as a call to the element would.
 		[Refract::SuperNode, Refract::ForwardingSuperNode].each do |super_node|
 			visit super_node do |node|
-				if @compiling_calls && statement?(node) && (compiled = compile_super(node))
-					return compiled
+				if @compiling_calls
+					if statement?(node) && (compiled = compile_super(node))
+						return compiled
+					end
+				elsif @uncompiled_because && statement?(node) && @definition&.name && @environment.super_element(@definition.name)
+					@diagnostics.report(node, "super keeps its call because #{@uncompiled_because}")
 				end
 
 				super(node)

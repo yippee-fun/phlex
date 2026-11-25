@@ -340,6 +340,11 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 					def entries(m) = m
 				end
 
+				class DeepCaseSuper < Phlex::HTML
+					def view_template = b
+					def b(...) = [1].each { [2].each { [3].each { [4].each { [5].each { super; fragment(:f) { i } } } } } }
+				end
+
 				class DeepCaseActivity < Phlex::HTML
 					def view_template = ul { yield self }
 					def period(title) = li { h2 { title }; yield self }
@@ -353,19 +358,26 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 				"20: span keeps its call because it's more than 4 blocks deep",
 				"20: plain keeps its call because it's more than 4 blocks deep",
 			]
+			assert_equal Phlex::Compiler.explain(DeepCaseSuper).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, [
+				"29: super keeps its call because it's more than 4 blocks deep",
+				"29: i keeps its call because it's more than 4 blocks deep",
+			]
 
 			periods = [{ title: "Today", events: ["a", "b"] }, { title: "Later", events: ["c"] }]
-			expected = [DeepCase.new(periods).call, DeepCaseDeeper.new.call]
+			expected = [DeepCase.new(periods).call, DeepCaseDeeper.new.call, DeepCaseSuper.new.call]
 
 			Phlex::Compiler.compile(DeepCase)
 			Phlex::Compiler.compile(DeepCaseDeeper)
+			Phlex::Compiler.compile(DeepCaseSuper)
 
-			assert_equal [DeepCase.new(periods).call, DeepCaseDeeper.new.call], expected
+			assert_equal [DeepCase.new(periods).call, DeepCaseDeeper.new.call, DeepCaseSuper.new.call], expected
+			assert_equal expected[2], "<b></b><i></i>"
 			assert_equal expected[1], "<div><span>5</span><ul></ul>text</div>"
 			assert_equal expected[0], "<ul><li><h2>Today</h2><li>a</li><li>b</li></li><li><h2>Later</h2><li>c</li></li></ul>"
 		ensure
 			Object.__send__(:remove_const, :DeepCase)
 			Object.__send__(:remove_const, :DeepCaseDeeper)
+			Object.__send__(:remove_const, :DeepCaseSuper)
 			Object.__send__(:remove_const, :DeepCaseActivity)
 		end
 	end
