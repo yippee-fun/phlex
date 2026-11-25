@@ -1190,13 +1190,13 @@ class CompilerLifecycleTest < Quickdraw::Test
 					def view_template = div { "released" }
 				end
 
-				class LifecycleKept < Phlex::HTML
+				class LifecycleSharedKept < Phlex::HTML
 					def view_template = div { "kept" }
 				end
 			RUBY
 		) do
 			released = LifecycleReleased
-			kept = LifecycleKept
+			kept = LifecycleSharedKept
 			Phlex::Compiler.compile_file(released.instance_method(:view_template).source_location[0], components: [released, kept])
 			compiled_path = kept.instance_method(:view_template).source_location[0]
 
