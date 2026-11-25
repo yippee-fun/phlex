@@ -859,8 +859,26 @@ module Phlex::Compiler
 				TokenChoice.new(condition: node.predicate, truthy: branch_token(node.statements), falsy: branch_token(node.subsequent&.statements))
 			in Refract::UnlessNode
 				TokenChoice.new(condition: node.predicate, truthy: branch_token(node.else_clause&.statements), falsy: branch_token(node.statements))
+			# `x && "token"` is the token or a falsy `x`, which is nil or false,
+			# and the serialiser skips both.
+			in Refract::AndNode if same_as_condition?(node.left)
+				TokenChoice.new(condition: node.left, truthy: token_literal(node.right), falsy: nil)
 			else
 				token_literal(node)
+			end
+		end
+
+		# Whether an expression means the same in condition position, where a
+		# regular expression literal matches `$_` and a range is a flip-flop.
+		private def same_as_condition?(node)
+			case node
+			in Refract::CallNode[name: :!, receiver:, arguments: nil] then receiver.nil? || same_as_condition?(receiver)
+			in Refract::CallNode | Refract::LocalVariableReadNode | Refract::ItLocalVariableReadNode | Refract::InstanceVariableReadNode |
+				Refract::ConstantReadNode | Refract::ConstantPathNode | Refract::GlobalVariableReadNode | Refract::ClassVariableReadNode
+				true
+			in Refract::ParenthesesNode[body: Refract::StatementsNode[body: [inner]]] then same_as_condition?(inner)
+			in Refract::AndNode | Refract::OrNode then same_as_condition?(node.left) && same_as_condition?(node.right)
+			else false
 			end
 		end
 
