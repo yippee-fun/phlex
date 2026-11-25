@@ -13,6 +13,8 @@ class Phlex::Compiler::Environment
 		Phlex::HTML.instance_method(:doctype).source_location[0],
 	].freeze
 
+	KIT_SOURCE_PATH = Phlex::Kit.instance_method(:const_added).source_location[0]
+
 	Element = Data.define(:tag, :void)
 
 	# What Phlex::HTML#svg's Phlex::SVG runs around its block, which compiled
@@ -54,6 +56,7 @@ class Phlex::Compiler::Environment
 		@inline = inline
 		@elements = {}
 		@helpers = {}
+		@kit_components = {}
 		@inlined = Set.new
 		@inlined_svg = Set.new
 	end
@@ -76,6 +79,16 @@ class Phlex::Compiler::Environment
 		return @helpers[name] if @helpers.key?(name)
 
 		@helpers[name] = resolve_helper(name)
+	end
+
+	# The path of the constant a bare call to the method renders, if it's the
+	# method Phlex::Kit defined for a component in a kit, and no loaded
+	# descendant overrides it.
+	def kit_component(name)
+		return unless @inline
+		return @kit_components[name] if @kit_components.key?(name)
+
+		@kit_components[name] = resolve_kit_component(name)
 	end
 
 	# An environment for the Phlex::SVG that `svg` renders around its block,
@@ -160,6 +173,28 @@ class Phlex::Compiler::Environment
 		return if overridden_by_descendant?(name, owner)
 
 		Element.new(tag:, void: registry.void_elements.key?(name))
+	end
+
+	# A kit names `BEGIN` and `END` another way, since they can't be written as constants.
+	private def resolve_kit_component(name)
+		return if name in :BEGIN | :END
+		return unless (method = instance_method(name))
+
+		kit = method.owner
+		return unless Phlex::Kit === kit && method.source_location&.first == KIT_SOURCE_PATH && method.original_name == name
+		return unless (kit_name = kit.name) && named?(kit, kit_name)
+
+		return unless kit.const_defined?(name, false)
+		return if overridden_by_descendant?(name, kit)
+
+		"#{kit_name}::#{name}"
+	end
+
+	# Whether the constant path finds the module, so compiled code can name it.
+	private def named?(mod, name)
+		Object.const_get(name).equal?(mod)
+	rescue NameError
+		false
 	end
 
 	private def resolve_helper(name)

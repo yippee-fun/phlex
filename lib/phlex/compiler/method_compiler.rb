@@ -216,10 +216,24 @@ module Phlex::Compiler
 				in :svg then compile_inline_svg(node)
 				else nil
 				end
+			elsif (component = @environment.kit_component(node.name))
+				compile_kit_call(node, component)
 			end
 
 			@environment.inlined << node.name if compiled && (@appends > appends || !(Refract::CallNode === compiled))
 			compiled
+		end
+
+		# A kit's method renders a new component with the arguments it's given
+		# and passes its block on, so it's called that way directly.
+		private def compile_kit_call(node, component)
+			return unless @environment.helper?(:render)
+
+			# Counted as compiled output, so a block it's in is only used with self unchanged.
+			@appends += 1
+			@environment.inlined.merge([node.name, :render])
+			new_component = Refract::CallNode.new(receiver: constant(component), name: :new, arguments: node.arguments)
+			visit(call(nil, :render, new_component, block: node.block))
 		end
 
 		# The runtime closes the element however its content exits, which the
