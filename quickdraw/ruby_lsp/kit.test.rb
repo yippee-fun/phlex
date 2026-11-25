@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 require "ruby_lsp/internal"
+
+# These features use RubyIndexer, which ruby-lsp 0.27 replaced with Rubydex.
+return unless defined?(RubyIndexer::Index)
 require "ruby_lsp/test_helper"
 
 class RubyLspKitTest < Quickdraw::Test
