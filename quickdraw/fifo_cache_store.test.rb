@@ -139,6 +139,26 @@ class FIFOCacheStoreTest < Quickdraw::Test
 		Object.__send__(:remove_const, :FIFOCacheStoreTestRegistered) if Object.const_defined?(:FIFOCacheStoreTestRegistered, false)
 	end
 
+	test "cyclic values and core objects with instance variables are loaded on each hit" do
+		store = Phlex::FIFOCacheStore.new
+
+		cyclic = [1]
+		cyclic << cyclic
+		store.fetch("cyclic") { cyclic }
+		hit = store.fetch("cyclic") { nil }
+
+		assert hit[1].equal?(hit)
+		refute hit.frozen?
+
+		tagged = +"tagged"
+		tagged.instance_variable_set(:@tag, [+"mutable"])
+		store.fetch("tagged") { [tagged] }
+		hit = store.fetch("tagged") { nil }
+
+		assert_equal hit[0].instance_variable_get(:@tag), ["mutable"]
+		refute hit[0].instance_variable_get(:@tag).frozen?
+	end
+
 	test "values larger than the store aren't cached" do
 		store = Phlex::FIFOCacheStore.new(max_bytesize: 10)
 

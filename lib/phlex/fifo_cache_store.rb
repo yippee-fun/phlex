@@ -43,16 +43,20 @@ class Phlex::FIFOCacheStore
 		@fifo.clear
 	end
 
-	private def plain?(value)
+	# Shared or cyclic containers, and core objects carrying instance variables,
+	# aren't plain, so the walk is linear and nothing but the copy is frozen.
+	private def plain?(value, seen = {}.compare_by_identity)
 		case value
 		when Symbol, Integer, Float, true, false, nil
 			true
 		when String
-			String.equal?(value.class)
+			String.equal?(value.class) && value.instance_variables.empty?
 		when Array
-			Array.equal?(value.class) && value.all? { |item| plain?(item) }
+			Array.equal?(value.class) && value.instance_variables.empty? && !seen.key?(value) && (seen[value] = true) &&
+				value.all? { |item| plain?(item, seen) }
 		when Hash
-			Hash.equal?(value.class) && value.all? { |k, v| plain?(k) && plain?(v) }
+			Hash.equal?(value.class) && value.instance_variables.empty? && value.default.nil? && !seen.key?(value) && (seen[value] = true) &&
+				value.all? { |k, v| plain?(k, seen) && plain?(v, seen) }
 		else
 			false
 		end
