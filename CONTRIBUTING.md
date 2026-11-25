@@ -19,6 +19,27 @@ Tests are written using [Quickdraw](https://github.com/joeldrapper/quickdraw) an
 bundle exec qd
 ```
 
+## C extension
+
+`ext/phlex_native` serialises attributes in C. It must produce exactly the same output, and raise exactly the same errors, as the Ruby in `lib/phlex/sgml/attributes.rb`, handing anything uncommon back to Ruby. It assumes core methods such as `String#gsub` and `Hash#each` haven’t been redefined globally, and that `Phlex::SGML::Attributes` hasn’t been overridden.
+
+`gem install phlex` builds it on CRuby 4.0 or later when a C compiler is available. Everywhere else, including JRuby, TruffleRuby, machines without a compiler or `make`, and failed builds, the install still succeeds and Phlex uses Ruby. RubyGems runs `ext/phlex_native/Rakefile` rather than `make`, so that a missing `make` can’t fail the install. Setting `PHLEX_NATIVE=false` while installing skips it.
+
+To run the tests with it loaded:
+
+```
+mise run native:test
+```
+
+To build it with AddressSanitizer and UndefinedBehaviorSanitizer and run the differential tests while the GC compacts and runs constantly, use a Ruby built with AddressSanitizer, as the `native-sanitizers` CI job does:
+
+```
+PHLEX_NATIVE_SANITIZE=true bundle exec rake compile
+PHLEX_NATIVE=true PHLEX_NATIVE_STRESS=true PHLEX_NATIVE_SANITIZE=true bundle exec qd ./quickdraw/native/attributes.test.rb
+```
+
+Run `bundle exec rake clobber` afterwards, or the extension stays loaded for every test run.
+
 ## Documentation
 
 Documentation is deployed when it’s merged into the `latest` branch with a release. But you can build and preview the docs locally by running `bin/docs`.

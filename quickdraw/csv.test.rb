@@ -313,39 +313,33 @@ CSV
 CSV
 	end
 
-	test "with a yielder that yields more than once" do
+	test "a custom yielder raises" do
 		example = Class.new(Phlex::CSV) do
 			def escape_csv_injection? = true
-			def trim_whitespace? = false
 
 			def yielder(item)
-				yield(item.name, item.price)
-				yield(item.name, item.price)
+				yield(item.name)
 			end
 
-			def row_template(name, price)
+			def row_template(name)
 				column "Name", name
-				column "Price", price
 			end
 		end
 
-		assert_equal example.new(products).call, <<~CSV
-   Name,Price
-   Apple,1.0
-   Apple,1.0
-   " Banana ",2.0
-   " Banana ",2.0
-   strawberry,Three pounds
-   strawberry,Three pounds
-   "'=SUM(A1:B1)","'=SUM(A1:B1)"
-   "'=SUM(A1:B1)","'=SUM(A1:B1)"
-   "Abc, ""def""","Foo\nbar ""baz"""
-   "Abc, ""def""","Foo\nbar ""baz"""
-   "",""
-   "",""
-   "",""
-   "",""
-CSV
+		error = assert_raises(Phlex::ArgumentError) { example.new(products).call }
+		assert error.message.include?("around_row")
+	end
+
+	test "view_template is not used as a row template" do
+		example = Class.new(Phlex::CSV) do
+			def escape_csv_injection? = true
+
+			def view_template(item)
+				column "Name", item.name
+			end
+		end
+
+		assert_raises(NoMethodError) { example.new(products).call }
 	end
 
 	test "with a custom delimiter defined as a method" do
