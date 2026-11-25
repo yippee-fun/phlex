@@ -9,6 +9,11 @@ class Phlex::SGML
 		def call(*, **, &)
 			new(*, **).call(&)
 		end
+
+		# Build a component that keeps its content block, e.g. `render Card.with_content(title:) { "Hi" }`. Arguments are delegated to {.new}.
+		def with_content(*, **, &)
+			new(*, **).with_content(&)
+		end
 	end
 
 	def view_template

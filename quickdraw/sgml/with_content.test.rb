@@ -49,8 +49,15 @@ class WithContentTest < Quickdraw::Test
 		assert_equal page.call, %(<article>given</article>)
 	end
 
+	test "the class method passes its arguments to new" do
+		card = Card.with_content("Title") { "Hi" }
+		assert Card === card
+		assert_equal Page.call(card), %(<main><article><h1>Title</h1>Hi</article></main>)
+	end
+
 	test "with_content requires a block" do
 		assert_raises(Phlex::ArgumentError) { Card.new.with_content }
+		assert_raises(Phlex::ArgumentError) { Card.with_content }
 	end
 
 	test "new does not capture a block" do
