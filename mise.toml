@@ -20,7 +20,7 @@ run = ["mise upgrade --bump", "bundle update --jobs 4"]
 
 [tasks.bench]
 description = "Run benchmarks"
-run = ["bundle exec ./bench.rb"]
+run = ["bundle exec ruby benchmarks/compiler.rb"]
 
 [tasks.browser_tests]
 description = "Run browser tests in Chromium and WebKit"

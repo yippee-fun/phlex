@@ -14,3 +14,5 @@ Gemfile.lock
 .covered.db
 .DS_Store
 .gem
+/base-*.yml
+/tabs-*.yml
