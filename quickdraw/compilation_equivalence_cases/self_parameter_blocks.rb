@@ -37,6 +37,10 @@ module EquivalenceCases
 				defs = "local"
 				svg { |s| s.defs; s.path(d: defs) }
 				svg { |s| s.secret }
+				svg { |s| Rebinder.new.instance_exec { s.path(d: "f") } }
+				svg { |s| -> { s.path(d: "g") }.call }
+				svg { |s| ::Kernel.eval("s").path(d: "h") }
+				svg { |s| s.path(d: Kernel.binding.local_variable_defined?(:s).to_s) }
 			rescue RuntimeError => error
 				plain "rescued #{error.message}"
 			end
@@ -46,6 +50,10 @@ module EquivalenceCases
 			def secret
 				plain "public"
 			end
+		end
+
+		class Rebinder
+			def path(**) = "rebound"
 		end
 
 		class PrivateElement < Phlex::SVG
