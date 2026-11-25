@@ -19,6 +19,14 @@ class Phlex::SGML
 		end
 	end
 
+	# Store a content block to render with, so the component can be rendered later without one, e.g. `render Card.new.with_content { "Hi" }`. A block passed to `render` or {#call} takes precedence.
+	def with_content(&block)
+		raise Phlex::ArgumentError.new("with_content requires a block.") unless block
+
+		@_content_block = block
+		self
+	end
+
 	def to_proc
 		proc { |c| c.render(self) }
 	end
@@ -59,6 +67,8 @@ class Phlex::SGML
 			# which a component can't override, and the block is read once.
 			if defined?(yield)
 				__render_with_content__(state, &)
+			elsif (content_block = @_content_block)
+				__render_with_content__(state, &content_block)
 			else
 				state.around_render(self) do
 					before_template
