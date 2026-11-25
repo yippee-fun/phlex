@@ -115,7 +115,8 @@ module EquivalenceCases
 				def view_template = plain("overriding card")
 			end
 
-			def self.const_get(name, ...) = (name == :Card) ? Replacement : super
+			def self.const_get(name) = (name == :Card) ? Replacement : super
+			def self.named_reference(*) = "Other"
 		end
 
 		class OverridingConstGet < Phlex::HTML
