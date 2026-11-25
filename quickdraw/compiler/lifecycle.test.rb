@@ -1043,35 +1043,27 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
-	def registered_element_calls(name)
-		calls = 0
-		trace = TracePoint.new(:call) { |tp| calls += 1 if tp.method_id == name && tp.path == Phlex::Compiler::Environment::ELEMENTS_SOURCE_PATH }
-		trace.enable { yield }
-		calls
-	end
-
 	test "super from an override of an element is compiled as the element" do
 		with_component_files(
 			"super.rb" => <<~RUBY
 				# frozen_string_literal: true
 				class LifecycleSuper < Phlex::HTML
-					def view_template = h1(id: "title") { "Hello" }
+					def view_template = h1(id: "title") { yielded_by_element? ? "element" : "compiled" }
 
 					def h1(**attrs, &)
 						super(**mix(attrs, class: "font-bold"), &)
 					end
+
+					def yielded_by_element? = caller_locations.any? { |location| location.path == Phlex::Compiler::Environment::ELEMENTS_SOURCE_PATH }
 				end
 			RUBY
 		) do
-			assert_equal registered_element_calls(:h1) { LifecycleSuper.new.call }, 1
+			assert_equal LifecycleSuper.new.call, %(<h1 id="title" class="font-bold">element</h1>)
 
 			Phlex::Compiler.compile(LifecycleSuper)
 			assert compiled_method?(LifecycleSuper, :h1)
 			assert_equal LifecycleSuper.instance_variable_get(:@__phlex_inlined_super__), Set[:h1]
-
-			output = nil
-			assert_equal registered_element_calls(:h1) { output = LifecycleSuper.new.call }, 0
-			assert_equal output, %(<h1 id="title" class="font-bold">Hello</h1>)
+			assert_equal LifecycleSuper.new.call, %(<h1 id="title" class="font-bold">compiled</h1>)
 		end
 	end
 
