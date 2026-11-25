@@ -100,6 +100,27 @@ class KitTest < Quickdraw::Test
 		assert_equal KeywordExample.call, %(<hr><br>)
 	end
 
+	test "a kit's method finds the component of the kit its name now refers to" do
+		kit = Module.new { extend Phlex::Kit }
+		Object.const_set(:KitTestReloadedKit, kit)
+		kit.const_set(:Card, Class.new(Phlex::HTML) { def view_template = hr })
+		page = Class.new(Phlex::HTML) do
+			include kit
+			def view_template = Card()
+		end
+
+		# As a reloader does, which removes the old kit's constants too.
+		Object.__send__(:remove_const, :KitTestReloadedKit)
+		kit.__send__(:remove_const, :Card)
+		reloaded = Module.new { extend Phlex::Kit }
+		Object.const_set(:KitTestReloadedKit, reloaded)
+		reloaded.const_set(:Card, Class.new(Phlex::HTML) { def view_template = br })
+
+		assert_equal page.call, %(<br>)
+	ensure
+		Object.__send__(:remove_const, :KitTestReloadedKit) if Object.const_defined?(:KitTestReloadedKit, false)
+	end
+
 	if defined?(::Ractor)
 		# No text or attributes, so rendering doesn't depend on ERB::Escape or
 		# the attribute cache being usable from a non-main Ractor.

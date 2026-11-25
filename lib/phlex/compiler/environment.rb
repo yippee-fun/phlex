@@ -201,7 +201,7 @@ class Phlex::Compiler::Environment
 	end
 
 	# Whether every constant on the path is public, since the kit's method
-	# reaches its component lexically, where a private constant is visible.
+	# finds its component with `const_get`, which ignores visibility.
 	private def public_path?(path)
 		path.split("::").reduce(Object) do |namespace, name|
 			return false unless Module === namespace && namespace.constants.include?(name.to_sym)

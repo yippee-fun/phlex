@@ -44,6 +44,14 @@ module Phlex::Kit
 		(name[0] == name[0].upcase && constants.include?(name) && const_get(name) && methods.include?(name)) || super
 	end
 
+	# A name Ruby code can write, which a module nested in an anonymous one
+	# doesn't have.
+	private def permanent_name
+		Object.const_get(name).equal?(self) && name
+	rescue NameError, TypeError
+		nil
+	end
+
 	def const_added(name)
 		return if autoload?(name)
 
@@ -54,8 +62,16 @@ module Phlex::Kit
 			if constant < Phlex::SGML
 				constant.include(self)
 
-				# Defined from a string so they can be called from any Ractor.
-				reference = (name in :BEGIN | :END) ? "::Module.nesting.first.const_get(:#{name})" : name
+				# Defined from a string so they can be called from any Ractor. A named
+				# kit is looked up by its name, as compiled code does, so a reloaded
+				# kit's component is found even from a component that wasn't reloaded.
+				reference = if (kit_name = permanent_name)
+					"::#{kit_name}.const_get(:#{name}, false)"
+				elsif name in :BEGIN | :END
+					"::Module.nesting.first.const_get(:#{name})"
+				else
+					name
+				end
 
 				module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
 					def #{name}(*, **, &)
