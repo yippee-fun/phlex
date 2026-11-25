@@ -16,7 +16,7 @@
 #define PREFIX_CAPACITY 1024
 #define NORMALIZED_CAPACITY 16
 
-static ID id_to_s, id_unsafe_reference_p, id_unsafe_reference_list_p, id_Phlex, id_SGML, id_Attributes, id_SafeObject, id_SafeValue;
+static ID id_to_s, id_lshift, id_unsafe_reference_p, id_unsafe_reference_list_p, id_Phlex, id_SGML, id_Attributes, id_SafeObject, id_SafeValue;
 static VALUE sym_style, sym_id, sym_underscore;
 static VALUE empty_string;
 static int utf8_index, usascii_index;
@@ -28,6 +28,8 @@ typedef struct {
 	VALUE receiver;
 	VALUE string;
 	char *ptr;
+	// The string's length before anything was written.
+	long base;
 	long length;
 	long capacity;
 	int depth;
@@ -40,35 +42,100 @@ typedef struct {
 	int fallback;
 } nested_t;
 
-// The string is hidden from ObjectSpace until it's finished, so nothing can
-// change it behind the cached pointer while unsafe_reference? runs.
-static void output_init(output_t *o, VALUE receiver) {
+// Writes after the end of a plain, UTF-8 String, leaving its length alone
+// until the output is finished, so Ruby run in the meantime, or an exception,
+// sees the string as it was.
+static void output_init(output_t *o, VALUE receiver, VALUE string) {
 	o->receiver = receiver;
-	o->string = rb_str_buf_new(128);
-	rb_obj_hide(o->string);
-	rb_enc_associate_index(o->string, utf8_index);
-	o->ptr = RSTRING_PTR(o->string);
-	o->length = 0;
-	o->capacity = (long)rb_str_capacity(o->string);
+	o->string = string;
+	// String#<< forgets a broken coderange, and keeps any other.
+	int coderange = ENC_CODERANGE(string);
+	rb_str_modify(string);
+	if (coderange != ENC_CODERANGE_BROKEN) ENC_CODERANGE_SET(string, coderange);
+	o->base = RSTRING_LEN(string);
+	o->length = o->base;
+	o->ptr = RSTRING_PTR(string);
+	o->capacity = (long)rb_str_capacity(string);
 	o->depth = 0;
 }
 
-static VALUE output_finish(output_t *o) {
+// rb_str_set_len works out the coderange of what was written, as String#<< would.
+static inline void output_finish(output_t *o) {
 	rb_str_set_len(o->string, o->length);
-	ENC_CODERANGE_CLEAR(o->string);
-	return rb_obj_reveal(o->string, rb_cString);
+}
+
+// Whether `string` is the output, which can move as it grows, so it can't be copied into itself.
+static inline int output_p(output_t *o, VALUE string) {
+	return string == o->string;
+}
+
+typedef struct {
+	VALUE receiver;
+	ID method;
+	VALUE argument;
+	int argc;
+} call_t;
+
+static VALUE run_call(VALUE arg) {
+	call_t *c = (call_t *)arg;
+	return rb_funcallv(c->receiver, c->method, c->argc, &c->argument);
+}
+
+// Ruby sees the string terminated where it was, and anything that changes it
+// in the meantime is refused, since what's been written would be lost. Only
+// Phlex's own methods and Float#to_s are called, so growing the string and
+// shrinking it back, which this can't see, would take a redefinition.
+static VALUE output_call(output_t *o, VALUE receiver, ID method, int argc, VALUE argument) {
+	char first = o->ptr[o->base];
+	o->ptr[o->base] = '\0';
+	call_t c = { receiver, method, argument, argc };
+	VALUE result = run_call((VALUE)&c);
+	if (RSTRING_PTR(o->string) != o->ptr || RSTRING_LEN(o->string) != o->base || (long)rb_str_capacity(o->string) != o->capacity ||
+		OBJ_FROZEN(o->string) || ENCODING_GET(o->string) != utf8_index) {
+		rb_raise(rb_eRuntimeError, "the buffer changed while attributes were written to it");
+	}
+	o->ptr[o->base] = first;
+	RB_GC_GUARD(result);
+	return result;
+}
+
+typedef struct {
+	output_t *output;
+	long expand;
+} expand_t;
+
+static VALUE run_expand(VALUE arg) {
+	expand_t *e = (expand_t *)arg;
+	rb_str_set_len(e->output->string, e->output->length);
+	rb_str_modify_expand(e->output->string, e->expand);
+	return Qnil;
 }
 
 // Ruby raises the same error when a string would outgrow a long, which is 32 bits on Windows.
 #define RAISE_TOO_BIG() rb_raise(rb_eArgError, "string size too big")
 
+// Growing keeps what's been written, so it's committed while the string
+// grows, and the string is put back as it was afterwards, even on an exception.
 static void reserve(output_t *o, long n) {
 	if (n > LONG_MAX - o->length) RAISE_TOO_BIG();
 	if (o->length + n <= o->capacity) return;
-	rb_str_set_len(o->string, o->length);
-	rb_str_modify_expand(o->string, (o->length > n && o->length <= LONG_MAX / 2) ? o->length : n);
-	o->ptr = RSTRING_PTR(o->string);
-	o->capacity = (long)rb_str_capacity(o->string);
+	VALUE string = o->string;
+	int coderange = ENC_CODERANGE(string);
+	char first = o->ptr[o->base];
+	// Cleared, so committing doesn't scan what's been written.
+	ENC_CODERANGE_CLEAR(string);
+	expand_t e = { o, (o->length > n && o->length <= LONG_MAX / 2) ? o->length : n };
+	int state = 0;
+	rb_protect(run_expand, (VALUE)&e, &state);
+	rb_str_set_len(string, o->base);
+	o->ptr = RSTRING_PTR(string);
+	o->capacity = (long)rb_str_capacity(string);
+	o->ptr[o->base] = first;
+	ENC_CODERANGE_SET(string, coderange);
+	if (state) {
+		o->ptr[o->base] = '\0';
+		rb_jump_tag(state);
+	}
 }
 
 static inline void put(output_t *o, const char *p, long n) {
@@ -187,8 +254,8 @@ static int put_number(output_t *o, VALUE v) {
 	if (RB_TYPE_P(v, T_BIGNUM) && RBASIC_CLASS(v) == rb_cInteger) {
 		s = rb_big2str(v, 10);
 	} else if (RB_FLOAT_TYPE_P(v)) {
-		s = rb_funcall(v, id_to_s, 0);
-		if (!plain_string_p(s) || !compatible_string(s) || memchr(RSTRING_PTR(s), '"', RSTRING_LEN(s))) return 0;
+		s = output_call(o, v, id_to_s, 0, Qnil);
+		if (!plain_string_p(s) || output_p(o, s) || !compatible_string(s) || memchr(RSTRING_PTR(s), '"', RSTRING_LEN(s))) return 0;
 	} else {
 		return 0;
 	}
@@ -203,14 +270,14 @@ static inline int safe_value_p(VALUE v) {
 
 static int put_scalar(output_t *o, VALUE v) {
 	if (safe_value_p(v)) {
-		VALUE s = rb_funcall(v, id_to_s, 0);
-		if (!plain_string_p(s) || !compatible_string(s)) return 0;
+		VALUE s = output_call(o, v, id_to_s, 0, Qnil);
+		if (!plain_string_p(s) || output_p(o, s) || !compatible_string(s)) return 0;
 		put_value(o, RSTRING_PTR(s), RSTRING_LEN(s), 0);
 		RB_GC_GUARD(s);
 		return 1;
 	}
 	if (plain_string_p(v)) {
-		if (!compatible_string(v)) return 0;
+		if (output_p(o, v) || !compatible_string(v)) return 0;
 		put_value(o, RSTRING_PTR(v), RSTRING_LEN(v), 0);
 		RB_GC_GUARD(v);
 		return 1;
@@ -405,12 +472,12 @@ static int put_style_array(output_t *o, VALUE declarations, long start) {
 		if (!RTEST(declaration)) continue;
 
 		if (plain_string_p(declaration)) {
-			if (!compatible_string(declaration)) return 0;
+			if (output_p(o, declaration) || !compatible_string(declaration)) return 0;
 			if (RSTRING_LEN(declaration) == 0) continue;
 			put_declaration(o, declaration, start);
 		} else if (safe_value_p(declaration)) {
-			VALUE value = rb_funcall(declaration, id_to_s, 0);
-			if (!plain_string_p(value) || !compatible_string(value)) return 0;
+			VALUE value = output_call(o, declaration, id_to_s, 0, Qnil);
+			if (!plain_string_p(value) || output_p(o, value) || !compatible_string(value)) return 0;
 			put_declaration(o, value, start);
 		} else if (plain_hash_p(declaration)) {
 			long mark = o->length;
@@ -465,7 +532,7 @@ static int unsafe_reference_p(output_t *o, long start, int kind) {
 	long n = o->length - start;
 	if (!memchr(p, '&', n) && !(memchr(p, ':', n) && (memchr(p, 'j', n) || memchr(p, 'J', n)))) return 0;
 	ID check = kind == REFERENCE_LIST ? id_unsafe_reference_list_p : id_unsafe_reference_p;
-	return RTEST(rb_funcall(o->receiver, check, 1, rb_utf8_str_new(p, n)));
+	return RTEST(output_call(o, o->receiver, check, 1, rb_utf8_str_new(p, n)));
 }
 
 // One attribute whose name has passed the top-level checks.
@@ -587,24 +654,73 @@ fallback:
 	return ST_STOP;
 }
 
-// The serialised attributes, or Qundef to fall back.
-static VALUE generate(VALUE receiver, VALUE attributes) {
-	if (!plain_hash_p(attributes)) return Qundef;
-	output_t o;
-	output_init(&o, receiver);
-	nested_t top = { &o, 0, 0 };
+static VALUE new_output_string(void) {
+	VALUE string = rb_str_buf_new(128);
+	rb_enc_associate_index(string, utf8_index);
+	ENC_CODERANGE_SET(string, ENC_CODERANGE_7BIT);
+	return string;
+}
+
+// Writes the serialised attributes after the end of `string`, or returns 0
+// to fall back, leaving it as it was.
+static int generate(output_t *o, VALUE attributes) {
+	nested_t top = { o, 0, 0 };
 	rb_hash_foreach(attributes, top_level_each, (VALUE)&top);
-	return top.fallback ? Qundef : output_finish(&o);
+	if (top.fallback) {
+		o->ptr[o->base] = '\0';
+		return 0;
+	}
+	output_finish(o);
+	return 1;
+}
+
+typedef struct {
+	output_t *output;
+	VALUE attributes;
+} generate_t;
+
+static VALUE run_generate(VALUE arg) {
+	generate_t *g = (generate_t *)arg;
+	return generate(g->output, g->attributes) ? Qtrue : Qfalse;
+}
+
+static inline int appendable_p(VALUE buffer) {
+	return plain_string_p(buffer) && ENCODING_GET(buffer) == utf8_index && !OBJ_FROZEN(buffer);
 }
 
 // Phlex::Native::SerializedAttributes.fetch(attributes) { generate in Ruby }
 // generate_attributes itself isn't prepended, so a fallback doesn't run the C twice.
 static VALUE native_fetch(VALUE self, VALUE attributes) {
 	// The block loads Phlex::SGML::Attributes, which prepends Phlex::Native::Attributes.
-	if (NIL_P(attributes_module)) return rb_yield_values(0);
+	if (NIL_P(attributes_module) || !plain_hash_p(attributes)) return rb_yield_values(0);
 
-	VALUE result = generate(attributes_module, attributes);
-	return result == Qundef ? rb_yield_values(0) : result;
+	output_t o;
+	output_init(&o, attributes_module, new_output_string());
+	return generate(&o, attributes) ? o.string : rb_yield_values(0);
+}
+
+// Phlex::Native::SerializedAttributes.append(buffer, attributes) { generate in Ruby }
+// The same as `buffer << fetch(attributes) { ... }`, without the intermediate String.
+static VALUE native_append(VALUE self, VALUE buffer, VALUE attributes) {
+	if (NIL_P(attributes_module) || !plain_hash_p(attributes) || !appendable_p(buffer)) {
+		VALUE result = native_fetch(self, attributes);
+		if (plain_string_p(buffer)) rb_str_concat(buffer, result);
+		else rb_funcall(buffer, id_lshift, 1, result);
+		return buffer;
+	}
+
+	output_t o;
+	output_init(&o, attributes_module, buffer);
+	generate_t g = { &o, attributes };
+	int state = 0;
+	VALUE written = rb_protect(run_generate, (VALUE)&g, &state);
+	if (state) {
+		// Terminated again where it was, unless Ruby changed it.
+		if (RSTRING_PTR(buffer) == o.ptr && RSTRING_LEN(buffer) == o.base && (long)rb_str_capacity(buffer) == o.capacity) o.ptr[o.base] = '\0';
+		rb_jump_tag(state);
+	}
+	if (!RTEST(written)) rb_str_concat(buffer, rb_yield_values(0));
+	return buffer;
 }
 
 // Phlex::Native::Attributes.prepended(base), called once when attributes.rb
@@ -630,8 +746,6 @@ static VALUE serialize_validated(VALUE self, int argc, VALUE *argv, int referenc
 	if (!RTEST(v)) return empty_string;
 	if (!plain_string_p(name) || !compatible_string(name)) return rb_call_super(argc, argv);
 
-	output_t o;
-	output_init(&o, self);
 	char stack_name[256];
 	long n = RSTRING_LEN(name);
 	if (n > (long)sizeof stack_name) return rb_call_super(argc, argv);
@@ -657,10 +771,13 @@ static VALUE serialize_validated(VALUE self, int argc, VALUE *argv, int referenc
 		if (normalized_length == 6 && memcmp(normalized, "values", 6) == 0) reference = REFERENCE_LIST;
 	}
 
+	output_t o;
+	output_init(&o, self, new_output_string());
 	if (!put_attribute(&o, k, stack_name, n, v, reference)) return rb_call_super(argc, argv);
 	// A dropped reference returns the literal "" in Ruby.
 	if (reference && o.length == 0) return empty_string;
-	return output_finish(&o);
+	output_finish(&o);
+	return o.string;
 }
 
 // Phlex::SGML::Attributes.attribute(k, name, v)
@@ -677,6 +794,7 @@ void Init_phlex_native(void) {
 	rb_ext_ractor_safe(true);
 
 	id_to_s = rb_intern("to_s");
+	id_lshift = rb_intern("<<");
 	id_unsafe_reference_p = rb_intern("unsafe_reference?");
 	id_unsafe_reference_list_p = rb_intern("unsafe_reference_list?");
 	id_Phlex = rb_intern("Phlex");
@@ -703,4 +821,5 @@ void Init_phlex_native(void) {
 
 	VALUE mSerializedAttributes = rb_define_module_under(mNative, "SerializedAttributes");
 	rb_define_singleton_method(mSerializedAttributes, "fetch", native_fetch, 1);
+	rb_define_singleton_method(mSerializedAttributes, "append", native_append, 2);
 }

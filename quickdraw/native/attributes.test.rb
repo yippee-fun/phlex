@@ -170,10 +170,41 @@ class NativeAttributesTest < Quickdraw::Test
 		{ method_name:, args:, ruby:, native: } unless ruby == native
 	end
 
+	# Buffers in each coderange, one that must grow, and ones append can't write to directly.
+	BUFFERS = [
+		"",
+		"<div",
+		"<p>café</p><div",
+		"<p>\xFF</p><div".dup.force_encoding(Encoding::UTF_8),
+		"<div" * 64,
+		"<div".b,
+		"<div".dup.force_encoding(Encoding::US_ASCII),
+	].freeze
+
 	def self.compare_fetch(attributes)
 		ruby = outcome { Attributes.instance_method(:generate_attributes).bind_call(Attributes, attributes) }
 		native = outcome { Phlex.__attribute_cache__.fetch(attributes) { Attributes.generate_attributes(attributes) } }
-		{ method_name: :fetch, args: [attributes], ruby:, native: } unless ruby == native
+		return { method_name: :fetch, args: [attributes], ruby:, native: } unless ruby == native
+
+		BUFFERS.each do |buffer|
+			ruby = append_outcome(buffer) { |b| b << Attributes.instance_method(:generate_attributes).bind_call(Attributes, attributes) }
+			native = append_outcome(buffer) { |b| Phlex.__attribute_cache__.append(b, attributes) { Attributes.generate_attributes(attributes) } }
+			return { method_name: :append, args: [buffer, attributes], ruby:, native: } unless ruby == native
+		end
+
+		nil
+	end
+
+	# The coderange is cached, so it's compared with one worked out afresh.
+	def self.append_outcome(buffer)
+		buffer = String.new(buffer)
+		result = begin
+			yield(buffer).equal?(buffer)
+		rescue Exception => e
+			[:raised, e.class, e.message.b.gsub(/0x\h+/, "0x")]
+		end
+		fresh = buffer.b.force_encoding(buffer.encoding)
+		[result, buffer.b, buffer.encoding, buffer.ascii_only?, buffer.valid_encoding?, fresh.ascii_only?, fresh.valid_encoding?]
 	end
 
 	test "is prepended to Phlex::SGML::Attributes" do
@@ -216,6 +247,58 @@ class NativeAttributesTest < Quickdraw::Test
 
 	test "fetch yields when it can't serialise the attributes" do
 		assert_equal Phlex.__attribute_cache__.fetch({ class: Set["a"] }) { "fallback" }, "fallback"
+	end
+
+	test "append writes to the buffer, or yields when it can't serialise the attributes" do
+		buffer = +"<a"
+		assert Phlex.__attribute_cache__.append(buffer, { href: "/", class: ["a", :b] }) { raise }.equal?(buffer)
+		assert Phlex.__attribute_cache__.append(buffer, { class: Set["c"] }) { %( class="c") }.equal?(buffer)
+		assert_equal buffer, %(<a href="/" class="a b" class="c")
+	end
+
+	test "append matches the Ruby implementation when the buffer is one of the values" do
+		[
+			-> (buffer) { { class: "x" * 300, title: buffer } },
+			-> (buffer) { { href: "&amp;", title: Phlex::SGML::SafeValue.new(buffer) } },
+			-> (buffer) { { style: ["a: b", buffer], data: { x: buffer } } },
+		].each do |attributes|
+			ruby, native = String.new("<a"), String.new("<a")
+			ruby << Attributes.instance_method(:generate_attributes).bind_call(Attributes, attributes.(ruby))
+			Phlex.__attribute_cache__.append(native, attributes.(native)) { Attributes.generate_attributes(attributes.(native)) }
+			assert_equal native, ruby
+		end
+	end
+
+	test "append refuses a buffer that Ruby it calls changes, and leaves it as Ruby left it" do
+		script = <<~RUBY
+			require "phlex"
+			Phlex::SGML::Attributes.define_singleton_method(:unsafe_reference?) { |_| $hook.call }
+			buffer = nil
+			attributes = { id: "x", class: "a" * 200, title: [0xE9].pack("U"), href: "&" }
+			hooks = [-> { raise "boom" }, -> { buffer << "!" }, -> { buffer.freeze }, -> { buffer.force_encoding(Encoding::US_ASCII) }, -> { buffer.setbyte(0, 0xFF) && nil }]
+			outcomes = hooks.map do |hook|
+				$hook = hook
+				buffer = String.new("<a", encoding: Encoding::UTF_8)
+				Phlex.__attribute_cache__.append(buffer, attributes) { raise "fell back" }
+				[buffer.b, buffer.valid_encoding?, buffer.ascii_only?, buffer.b.force_encoding(Encoding::UTF_8).valid_encoding?]
+			rescue => e
+				[e.message, buffer.b, buffer.frozen?, buffer.encoding.name]
+			end
+			p defined?(Phlex::Native) && outcomes
+		RUBY
+
+		output = IO.popen([RbConfig.ruby, "-e", script], err: [:child, :out], &:read)
+		assert_equal $?.exitstatus, 0
+		changed = "the buffer changed while attributes were written to it"
+		written = %(\xFFa id="x" class="#{'a' * 200}" title="\xC3\xA9" href="&").b
+		expected = [
+			["boom", "<a", false, "UTF-8"],
+			[changed, "<a!", false, "UTF-8"],
+			[changed, "<a", true, "UTF-8"],
+			[changed, "<a", false, "US-ASCII"],
+			[written, false, false, false],
+		]
+		assert_equal output, "#{expected.inspect}\n"
 	end
 
 	test "generate_attributes stays in Ruby so a fallback doesn't run the C twice" do

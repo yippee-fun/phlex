@@ -151,7 +151,7 @@ module Phlex::SGML::Elements
 						buffer << "<#{tag}"
 						begin
 							#{Phlex::SGML::Elements.normalizer_call(method_name)}
-							buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+							state.attribute_cache.append(buffer, attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 						ensure
 							buffer << ">"
 						end
@@ -182,7 +182,7 @@ module Phlex::SGML::Elements
 						buffer << "<#{tag}"
 						begin
 							#{Phlex::SGML::Elements.normalizer_call(method_name)}
-							buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+							state.attribute_cache.append(buffer, attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 						ensure
 							buffer << "></#{tag}>"
 						end
@@ -262,7 +262,7 @@ module Phlex::SGML::Elements
 					buffer << "<#{tag}"
 					begin
 						#{Phlex::SGML::Elements.normalizer_call(method_name)}
-						buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+						state.attribute_cache.append(buffer, attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 					ensure
 						buffer << ">"
 					end

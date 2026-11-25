@@ -36,6 +36,10 @@ class Phlex::AttributeCache < Phlex::FIFO
 		value
 	end
 
+	def append(buffer, attributes, &)
+		buffer << fetch(attributes, &)
+	end
+
 	def [](attributes)
 		snapshot, value = @store[attributes.hash]
 		value if snapshot && matches?(snapshot, attributes)

@@ -90,7 +90,7 @@ class Phlex::HTML < Phlex::SGML
 						Phlex::SGML::Elements.public_send(normalizer, attributes)
 					end
 
-					buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+					state.attribute_cache.append(buffer, attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 				ensure
 					buffer << ">"
 				end
@@ -104,7 +104,7 @@ class Phlex::HTML < Phlex::SGML
 				if block_given # with content block
 					buffer << "<#{tag}"
 					begin
-						buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+						state.attribute_cache.append(buffer, attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 					ensure
 						buffer << ">"
 					end
@@ -121,7 +121,7 @@ class Phlex::HTML < Phlex::SGML
 				else # without content
 					buffer << "<#{tag}"
 					begin
-						buffer << state.attribute_cache.fetch(attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
+						state.attribute_cache.append(buffer, attributes) { Phlex::SGML::Attributes.generate_attributes(attributes) }
 					ensure
 						buffer << "></#{tag}>"
 					end
