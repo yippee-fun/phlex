@@ -9,10 +9,10 @@ module Phlex::Compiler::CoreCalls
 
 	# Receiver class => methods called on it, or nil for any that Phlex defines.
 	CALLS = {
-		String => %i[<< include? ascii_only? encoding valid_encoding? +@],
-		Symbol => %i[name],
-		Integer => %i[== > to_s],
-		Float => %i[to_s],
+		String => %i[<< include? ascii_only? encoding valid_encoding? +@ -@ equal?],
+		Symbol => %i[name equal?],
+		Integer => %i[== > to_s equal?],
+		Float => %i[to_s equal?],
 		Hash => %i[length []],
 		String.singleton_class => %i[===],
 		Symbol.singleton_class => %i[===],
@@ -20,8 +20,9 @@ module Phlex::Compiler::CoreCalls
 		Float.singleton_class => %i[===],
 		Phlex::SGML::SafeObject.singleton_class => %i[===],
 		Exception.singleton_class => %i[===],
-		TrueClass => %i[=== ==],
-		NilClass => %i[=== ==],
+		TrueClass => %i[=== == equal?],
+		FalseClass => %i[equal?],
+		NilClass => %i[=== == equal?],
 		Encoding => %i[equal?],
 		Set.singleton_class => %i[[]],
 		Kernel => %i[block_given?],
@@ -41,7 +42,7 @@ module Phlex::Compiler::CoreCalls
 	COMPONENT_CALLS = %i[block_given? __phlex_equal__? format_object __implicit_output__ __yield_content__ __text__ flush].freeze
 
 	# Core methods implemented in C on CRuby, which a definition in Ruby replaced.
-	NATIVE = [String, Symbol, Integer, Float, Hash, String.singleton_class, Symbol.singleton_class, Integer.singleton_class, Float.singleton_class, Exception.singleton_class, TrueClass, NilClass, Encoding, Kernel, Kernel.singleton_class].freeze
+	NATIVE = [String, Symbol, Integer, Float, Hash, String.singleton_class, Symbol.singleton_class, Integer.singleton_class, Float.singleton_class, Exception.singleton_class, TrueClass, FalseClass, NilClass, Encoding, Kernel, Kernel.singleton_class].freeze
 
 	# Called unbound, so a refinement module can't hide what it refines.
 	REFINEMENTS = Module.instance_method(:refinements)

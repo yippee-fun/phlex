@@ -17,7 +17,7 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 	visit Refract::StatementsNode do |node|
 		body = []
 
-		flatten(node.body).each do |child|
+		expect(flatten(node.body)).each do |child|
 			case child
 			in Output::Append if Output::Append === body.last
 				body[-1] = Output::Append.new(parts: body.last.parts + child.parts)
@@ -60,6 +60,47 @@ class Phlex::Compiler::Emitter < Refract::MutationVisitor
 				end
 
 				[*leading, enclosed, *trailing]
+			else [statement]
+			end
+		end
+	end
+
+	# A run of output that runs nothing else, with expected values in it, is
+	# emitted twice: as static text for when every value is as expected, and
+	# as it would be otherwise. Nothing in the run can change a value between
+	# where it's tested and where it's rendered.
+	private def expect(statements)
+		statements.slice_when { |a, b| quiet?(a) != quiet?(b) }.flat_map do |run|
+			guards = quiet?(run.first) ? run.flat_map { |statement| guards(statement) } : []
+			next run if guards.empty?
+
+			predicate = guards.reduce { |left, right| Refract::AndNode.new(left:, operator: "&&", right:) }
+			[if_node(predicate, expected(run, true), else_body: expected(run, false))]
+		end
+	end
+
+	private def quiet?(statement)
+		case statement
+		in Output::Expected then true
+		in Output::Append then statement.static?
+		in Output::Enclosed then flatten(statement.body).all? { |child| quiet?(child) }
+		else false
+		end
+	end
+
+	private def guards(statement)
+		case statement
+		in Output::Expected then [statement.guard]
+		in Output::Enclosed then flatten(statement.body).flat_map { |child| guards(child) }
+		else []
+		end
+	end
+
+	private def expected(statements, holds)
+		statements.flat_map do |statement|
+			case statement
+			in Output::Expected then holds ? [Output::Append.new(parts: [Output::Literal.new(statement.text)])] : statement.otherwise
+			in Output::Enclosed then [statement.with(body: expected(flatten(statement.body), holds))]
 			else [statement]
 			end
 		end

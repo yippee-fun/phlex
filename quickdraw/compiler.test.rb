@@ -35,6 +35,103 @@ class CompilerTest < Quickdraw::Test
 		RUBY
 	end
 
+	test "a number an element's block returns is formatted at compile time" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				div { 42 }
+				span { -1.5 }
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					(if __phlex_state__.should_render?
+						__phlex_state__.buffer.<<("<div>42</div><span>-1.5</span>")
+					end
+					nil)
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
+	test "a number an element's block returns is formatted at runtime when format_object is overridden" do
+		component = Class.new(Phlex::HTML) { private def format_object(object) = "n#{object}" }
+		node = Refract::Converter.new.visit(Prism.parse("def a = div { 42 }").value).statements.body.first
+		environment = Phlex::Compiler::Environment.new(component)
+		compiled = Refract::Formatter.new.format_node(Phlex::Compiler::MethodCompiler.new(environment, "/components/test.rb").compile(node)).source
+
+		assert compiled.include?("format_object(")
+		refute environment.inlined.include?(:format_object)
+	end
+
+	test "a local only assigned a literal is expected to hold it, with the output around it emitted both ways" do
+		assert_equal compile(<<~RUBY), <<~RUBY
+			def a
+				count = 1
+				span { "s" }
+				div { count }
+			end
+		RUBY
+			def a
+				begin
+					__phlex_state__ = @_state
+					count = 1
+					if 1.equal?(count)
+						(if __phlex_state__.should_render?
+							__phlex_state__.buffer.<<("<span>s</span><div>1</div>")
+						end
+						nil)
+					else
+						(if __phlex_state__.should_render?
+							__phlex_state__.buffer.<<("<span>s</span><div>")
+						end
+						nil)
+						__phlex_done_2__ = false
+						begin
+							if __phlex_state__.should_render?
+								if ::Phlex::SGML::SafeObject.===(count)
+									__phlex_state__.append(count.to_s)
+								elsif ::String.===(count)
+									__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(count))
+								elsif ::Symbol.===(count)
+									__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(count.name))
+								elsif nil.===(count)
+									nil
+								else
+									if (__phlex_formatted_1__ = format_object(count))
+										__phlex_state__.buffer.<<(::Phlex::Escape.html_escape(__phlex_formatted_1__))
+									end
+								end
+							end
+							__phlex_done_2__ = true
+						ensure
+							unless __phlex_done_2__
+								(if __phlex_state__.should_render?
+									__phlex_state__.buffer.<<("</div>")
+								end
+								nil)
+							end
+						end
+						(if __phlex_state__.should_render?
+							__phlex_state__.buffer.<<("</div>")
+						end
+						nil)
+					end
+				rescue ::Exception => __phlex_exception__
+					::Kernel.raise(::Phlex.__map_exception__(__phlex_exception__))
+				end
+			end
+		RUBY
+	end
+
+	test "a local assigned more than once, or named another way, isn't expected to hold anything" do
+		["count += 1", "count = 2", "[1].each { |count| }", "count, _ = []", "-> { count ||= 2 }"].each do |other|
+			refute compile("def a\n\tcount = 1\n\t#{other}\n\tdiv { count }\nend").include?("equal?")
+		end
+	end
+
 	test "literal plain is escaped at compile time" do
 		assert_equal compile(<<~RUBY), <<~RUBY
 			def a

@@ -457,6 +457,31 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a component that formatted a number at compile time is recompiled when format_object changes" do
+		with_component_files(
+			"number.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleNumber < Phlex::HTML
+					def view_template = div { 42 }
+				end
+
+				class LifecycleNumberChild < LifecycleNumber
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleNumber)
+			assert LifecycleNumber.instance_variable_get(:@__phlex_inlined__).include?(:format_object)
+			assert_equal LifecycleNumber.new.call, "<div>42</div>"
+
+			LifecycleNumberChild.class_eval { private def format_object(object) = "child #{object}" }
+			assert_equal LifecycleNumberChild.new.call, "<div>child 42</div>"
+			assert_equal LifecycleNumber.new.call, "<div>42</div>"
+
+			LifecycleNumber.class_eval { private def format_object(object) = "parent #{object}" }
+			assert_equal LifecycleNumber.new.call, "<div>parent 42</div>"
+		end
+	end
+
 	test "a component that inlined an svg block is recompiled when Phlex::SVG changes" do
 		with_component_files(
 			"icon.rb" => <<~RUBY

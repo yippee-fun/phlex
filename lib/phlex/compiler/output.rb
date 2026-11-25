@@ -49,6 +49,14 @@ module Phlex::Compiler::Output
 		include Statement
 	end
 
+	# A value the compiler expects, compared by a guard that can't raise or
+	# have effects, so it can be tested before the text around it: the text
+	# the value renders as when it holds, the statements that render it when
+	# it doesn't.
+	Expected = Data.define(:guard, :text, :otherwise) do
+		include Statement
+	end
+
 	# Whether the statements can only append text that's known not to raise
 	# or jump, so they need no guard.
 	def self.static?(node)
