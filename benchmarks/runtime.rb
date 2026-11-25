@@ -98,7 +98,7 @@ module RuntimeBenchmark
 				render Kit::Card.new(title: item.title) do
 					render Kit::Badge.new(item.tag)
 					p { item.summary }
-					render Kit::Button.new(href: item.path) { "Open" }
+					render(Kit::Button.new(href: item.path)) { "Open" }
 				end
 			end
 		end
