@@ -1592,6 +1592,27 @@ class CompilerLifecycleTest < Quickdraw::Test
 		refute component.compile?
 	end
 
+	test "a class overriding instance variable reflection is still compiled on its first render" do
+		with_component_files(
+			"reflective.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReflective < Phlex::HTML
+					def self.instance_variable_get(*) = true
+					def self.instance_variable_set(*) = nil
+					def self.instance_variable_defined?(*) = false
+
+					def view_template = div { "reflective" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleReflective.new.call, "<div>reflective</div>"
+				assert compiled_method?(LifecycleReflective, :view_template)
+				assert Phlex::Compiler.compiled?(LifecycleReflective)
+			end
+		end
+	end
+
 	test "a namespace overriding constant reflection doesn't hide a loaded component" do
 		with_component_files(
 			"namespaced.rb" => <<~RUBY
