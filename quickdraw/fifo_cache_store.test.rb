@@ -184,15 +184,12 @@ class FIFOCacheStoreTest < Quickdraw::Test
 		assert hit.compare_by_identity?
 	end
 
-	test "deeply nested plain values are frozen without overflowing the stack" do
-		store = Phlex::FIFOCacheStore.new
+	test "deeply nested values are classified without overflowing the stack" do
+		# Deep enough to overflow a recursive walk, and checked directly because
+		# Marshal itself recurses on some Rubies.
+		deep = 100_000.times.reduce([]) { |inner, _| [inner] }
 
-		deep = 5_000.times.reduce([]) { |inner, _| [inner] }
-		store.fetch("deep") { deep }
-		hit = store.fetch("deep") { nil }
-
-		assert hit.frozen?
-		assert_equal hit, deep
+		assert Phlex::FIFOCacheStore.new.__send__(:plain?, deep)
 	end
 
 	test "values larger than the store aren't cached" do
