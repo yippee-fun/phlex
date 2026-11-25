@@ -1740,6 +1740,51 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a method_added that removes or freezes while rolling back leaves the compilation's error raised" do
+		[:remove, :freeze].each do |meddle|
+			name = "LifecycleMeddlingHook#{meddle.capitalize}"
+
+			with_component_files(
+				"#{meddle}_first.rb" => <<~RUBY,
+					# frozen_string_literal: true
+					class #{name} < Phlex::HTML
+						def self.method_added(name)
+							super
+							return unless @loaded && instance_method(name).source_location[0].end_with?("#{meddle}_first.rb")
+
+							#{(meddle == :remove) ? 'remove_method(name)' : 'freeze'}
+							raise "hook"
+						end
+
+						def view_template = div { heading }
+
+						def heading = h1 { "first" }
+					end
+				RUBY
+				"#{meddle}_second.rb" => <<~RUBY
+					# frozen_string_literal: true
+					class #{name}
+						ruby2_keywords def delegate(*args) = plain(*args)
+						private :delegate
+
+						@loaded = true
+					end
+				RUBY
+			) do
+				component = Object.const_get(name)
+				error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(component) }
+				assert error.message.include?("ruby2_keywords")
+
+				if meddle == :remove
+					assert_equal component.public_instance_methods(false), []
+				else
+					assert component.frozen?
+					assert component.instance_variable_get(:@__phlex_inlined__).include?(:h1)
+				end
+			end
+		end
+	end
+
 	test "compiling a subclass compiles the ancestors its first render left alone" do
 		with_component_files(
 			"left_alone_parent.rb" => <<~RUBY,

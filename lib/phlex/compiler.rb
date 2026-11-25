@@ -552,39 +552,54 @@ module Phlex::Compiler
 		[methods, INLINED.to_h { |name| [name, IVAR_GET.bind_call(component, name)] }]
 	end
 
-	# Puts back the methods a compilation that failed partway through replaced.
-	# Ruby defines each before calling `method_added`, so one that raises
-	# doesn't stop the rest, and the compilation's own error is the one raised.
+	# Puts back the methods a compilation that failed partway through replaced,
+	# and what they inlined. What couldn't be put back keeps its record too, so
+	# a change to what it inlined still recompiles it, or raises once frozen.
 	def self.restore(component, (methods, inlined))
-		without_redefinition_warnings do
-			methods.each do |name, method, visibility|
-				# Only what compiling installed, not what another thread defined or removed meanwhile.
-				current = begin
-					Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
-				rescue NameError
-					next
-				end
-
-				next if current == method || !Phlex.__compiled_source_maps__.key?(current.source_location&.first)
-
-				begin
-					DEFINE_METHOD.bind_call(component, name, method)
-				rescue StandardError, ScriptError, SystemStackError
-					# A class frozen meanwhile never defines it.
-					next unless Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name) == method
-				end
-
-				component.__send__(visibility, name)
-			end
+		restored = without_redefinition_warnings do
+			methods.map { |name, method, visibility| restore_method(component, name, method, visibility) }.all?
 		end
 
 		inlined.each do |name, value|
+			value = (IVAR_GET.bind_call(component, name) || Set.new) | (value || Set.new) unless restored
+
 			if value
-				IVAR_SET.bind_call(component, name, value)
+				IVAR_SET.bind_call(component, name, value.freeze)
 			elsif IVAR_DEFINED.bind_call(component, name)
 				REMOVE_IVAR.bind_call(component, name)
 			end
 		end
+	rescue FrozenError
+		nil
+	end
+
+	# Only what compiling installed is put back, not what another thread defined
+	# or removed meanwhile. Whatever goes wrong, such as a `method_added` that
+	# raises or a class frozen meanwhile, leaves the rest to restore and the
+	# compilation's own error the one raised. Ruby defines a method before
+	# calling `method_added`, so its visibility is restored even then.
+	def self.restore_method(component, name, method, visibility)
+		current = Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name)
+		return true if current == method || !Phlex.__compiled_source_maps__.key?(current.source_location&.first)
+
+		begin
+			DEFINE_METHOD.bind_call(component, name, method)
+		ensure
+			component.__send__(visibility, name) if Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name) == method
+		end
+
+		true
+	rescue NameError
+		# Removed meanwhile, so nothing compiled is left.
+		true
+	rescue StandardError, ScriptError, SystemStackError
+		restored?(component, name, method)
+	end
+
+	def self.restored?(component, name, method)
+		Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name) == method
+	rescue NameError
+		true
 	end
 
 	def self.forget_inlined(component)
