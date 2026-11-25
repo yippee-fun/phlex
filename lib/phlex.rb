@@ -107,6 +107,26 @@ module Phlex
 		end
 	end
 
+	# What a file was like when a class first had a method defined from it, so
+	# the compiler can tell the file has changed since and refuse to compile
+	# code the class isn't running. A compiled class having one defined means
+	# the file is being loaded again, which it may recompile from. Only the
+	# main Ractor compiles, so only it records them.
+	def self.__record_source_stamp__(component, path)
+		stamps = component.instance_variable_get(:@__phlex_source_stamps__) || component.instance_variable_set(:@__phlex_source_stamps__, {})
+		return if @compiled_source_maps.key?(path)
+		return if stamps.key?(path) && !component.instance_variable_get(:@__phlex_compiled__)
+
+		stamps[path] = __source_stamp__(path)
+	end
+
+	def self.__source_stamp__(path)
+		stat = File.stat(path)
+		[stat.size, stat.mtime, stat.ino].freeze
+	rescue SystemCallError
+		nil
+	end
+
 	if !defined?(::Ractor)
 		def self.__main_ractor__? = true
 	elsif ::Ractor.respond_to?(:main?)

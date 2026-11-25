@@ -1820,4 +1820,84 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert_equal LifecycleSuperOverridden.instance_method(:h1).source_location, location
 		end
 	end
+
+	test "a file edited since its class loaded isn't compiled from" do
+		with_component_files(
+			"edited.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleEdited < Phlex::HTML
+					def view_template = div { "loaded" }
+				end
+			RUBY
+		) do |(path)|
+			File.write(path, File.read(path).sub("loaded", "edited"))
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleEdited) }
+			assert error.message.include?("has changed since it was loaded")
+			refute compiled_method?(LifecycleEdited, :view_template)
+			without_lazy_compilation { assert_equal LifecycleEdited.new.call, "<div>loaded</div>" }
+		end
+	end
+
+	test "a file edited since its class loaded renders uncompiled on first render" do
+		with_component_files(
+			"edited_lazily.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleEditedLazily < Phlex::HTML
+					def view_template = div { "loaded" }
+				end
+			RUBY
+		) do |(path)|
+			File.write(path, File.read(path).sub("loaded", "edited"))
+			failures = []
+
+			with_lazy_compilation(on_failure: -> (component, error) { failures << [component, error.class] }) do
+				assert_equal LifecycleEditedLazily.new.call, "<div>loaded</div>"
+				assert_equal LifecycleEditedLazily.new.call, "<div>loaded</div>"
+			end
+
+			refute compiled_method?(LifecycleEditedLazily, :view_template)
+			assert_equal failures, [[LifecycleEditedLazily, Phlex::Compiler::Error]]
+		end
+	end
+
+	test "a class reloaded from an edited file compiles from it" do
+		with_component_files(
+			"reloaded.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReloaded < Phlex::HTML
+					def view_template = div { "before" }
+				end
+			RUBY
+		) do |(path)|
+			original = LifecycleReloaded
+			File.write(path, File.read(path).sub("before", "after"))
+			Object.__send__(:remove_const, :LifecycleReloaded)
+			load path
+			reloaded = Object.const_get(:LifecycleReloaded)
+
+			refute reloaded.equal?(original)
+			Phlex::Compiler.compile(reloaded)
+			assert compiled_method?(reloaded, :view_template)
+			assert_equal reloaded.new.call, "<div>after</div>"
+			Phlex::Compiler.forget(original)
+		end
+	end
+
+	test "a compiled class loaded again from its edited file renders the edit" do
+		with_component_files(
+			"loaded_again.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleLoadedAgain < Phlex::HTML
+					def view_template = div { "before" }
+				end
+			RUBY
+		) do |(path)|
+			Phlex::Compiler.compile(LifecycleLoadedAgain)
+			File.write(path, File.read(path).sub("before", "after").sub("end", "def div(**, &) = super(class: \"x\", &)\nend"))
+			load path
+
+			assert_equal LifecycleLoadedAgain.new.call, %(<div class="x">after</div>)
+		end
+	end
 end

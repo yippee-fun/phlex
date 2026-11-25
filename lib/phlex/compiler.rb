@@ -328,9 +328,12 @@ module Phlex::Compiler
 		end
 
 		parse_result = Prism.parse(without_byte_order_mark(File.read(path)), filepath: path)
-		file_compiler = FileCompiler.new(path, targets: targets(path, components, recompile:), recompile:, inline:)
+		file_targets = targets(path, components, recompile:)
+		file_compiler = FileCompiler.new(path, targets: file_targets, recompile:, inline:)
 		results = file_compiler.compile(Refract::Converter.new.visit(parse_result.value)).reject { |result| result.compiled_snippets.empty? }
 		return if results.empty?
+
+		unchanged!(path, file_targets.values.map(&:component).uniq)
 
 		program = Refract::StatementsNode.new(
 			body: [*file_compiler.usings, *results.map { |result| wrap_in_namespace(result.namespace, result.compiled_snippets) }]
@@ -376,6 +379,25 @@ module Phlex::Compiler
 		end
 
 		nil
+	end
+
+	# An edit that moves definitions is refused by the FileCompiler, with the
+	# line. This catches the rest, such as a changed method body. It's checked
+	# after the source is read, so an edit made while reading is caught too.
+	def self.unchanged!(path, components)
+		current = Phlex.__source_stamp__(path)
+
+		components.each do |component|
+			stamps = component.instance_variable_get(:@__phlex_source_stamps__) || {}
+
+			unless stamps.key?(path)
+				raise Error, "Can't compile #{path} for #{component} because Phlex didn't see its methods defined there, such as in another Ractor, so it can't tell whether the file has changed since."
+			end
+
+			unless current && stamps[path] == current
+				raise Error, "Can't compile #{path} for #{component} because the file has changed since it was loaded, so it no longer defines the methods #{component} is running."
+			end
+		end
 	end
 
 	# Called by Phlex::SGML when methods are defined on, removed from or mixed
