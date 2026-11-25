@@ -4,8 +4,8 @@ require "prism"
 require "refract"
 
 # Rewrites component methods ahead of time so that element calls become direct
-# buffer appends. Compilation is opt-in and safe to skip: an uncompiled
-# component renders exactly the same, just slower.
+# buffer appends. Compilation is safe to skip: an uncompiled component
+# renders exactly the same, just slower.
 #
 # Each class compiles on its first render unless it, or its nearest ancestor
 # that says, says `compile false`; `Phlex::Compiler.disable!` stops all of it.
@@ -204,22 +204,27 @@ module Phlex::Compiler
 		compile_on_first_render(component, on_failure:)
 	end
 
-	# Drops what compiling a component recorded once a code reloader has
-	# unloaded it: why it failed to compile, and the source maps of the
-	# generations its methods were compiled into.
-	def self.forget(component)
-		component!(component)
+	# Drops what compiling the components recorded once a code reloader has
+	# unloaded them: why they failed to compile, and the source maps of the
+	# generations their methods were compiled into, once nothing loaded still
+	# runs those methods. Pass every unloaded component at once.
+	def self.forget(*components)
+		components.each { |component| component!(component) }
 
-		if live?(component)
-			raise ArgumentError, "Can't forget #{component} because it's still loaded."
+		if (loaded = components.select { |component| live?(component) }).any?
+			raise ArgumentError, "Can't forget #{loaded.join(', ')} because #{loaded.one? ? "it's" : "they're"} still loaded."
 		end
 
 		MUTEX.synchronize do
-			FAILURES.delete(component)
+			in_use = Hash.new { |cache, component| cache[component] = in_use?(component) }.compare_by_identity
 
-			# A live subclass still runs the methods it inherits, so its ancestor keeps
-			# owning them until the subclass is forgotten too.
-			unless in_use?(component)
+			components.each do |component|
+				FAILURES.delete(component)
+
+				# A live subclass still runs the methods it inherits, so its ancestor keeps
+				# owning them until the subclass is forgotten too.
+				next if in_use[component]
+
 				GENERATION_COMPONENTS.each do |path, owners|
 					next unless owners.any? { |owner| owner.equal?(component) }
 
@@ -229,7 +234,7 @@ module Phlex::Compiler
 			end
 
 			compiled_paths = GENERATION_COMPONENTS.filter_map do |path, owners|
-				path if owners.none? { |owner| in_use?(owner) }
+				path if owners.none? { |owner| in_use[owner] }
 			end
 
 			compiled_paths.each { |path| GENERATION_COMPONENTS.delete(path) }
@@ -431,8 +436,15 @@ module Phlex::Compiler
 
 	# Whether the class is still the one its name refers to. After a reload the
 	# old class object lingers, and reopening its name would reach the new one.
+	# A constant waiting to be autoloaded isn't loaded, so it's never the class.
 	def self.live?(component)
-		(name = component.name) && Object.const_get(name).equal?(component)
+		return false unless (name = component.name)
+
+		name.split("::").reduce(Object) do |namespace, constant|
+			return false unless Module === namespace && namespace.const_defined?(constant, false) && !namespace.autoload?(constant, false)
+
+			namespace.const_get(constant, false)
+		end.equal?(component)
 	rescue NameError
 		false
 	end
