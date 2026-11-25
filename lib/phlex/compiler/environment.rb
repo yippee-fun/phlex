@@ -17,7 +17,7 @@ class Phlex::Compiler::Environment
 
 	# What Phlex::HTML#svg's Phlex::SVG runs around its block, which compiled
 	# code skips when it inlines the block.
-	SVG_RENDER = %i[render? before_template around_template after_template view_template internal_call __yield_content__ __implicit_output__].freeze
+	SVG_RENDER = %i[render? before_template around_template after_template view_template internal_call __render_with_content__ __yield_content__ __implicit_output__].freeze
 
 	# The core methods Phlex::SGML.new and render call on the Phlex::SVG, and
 	# block_given?, which its render methods and elements ask, by owner.
