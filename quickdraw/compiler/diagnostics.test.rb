@@ -310,6 +310,66 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
+	test "past the block depth limit, only its element and helper calls are reported" do
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "deep.rb")
+			File.write(path, <<~RUBY)
+				class DeepCase < Phlex::HTML
+					def initialize(periods) = @periods = periods
+
+					def view_template
+						render DeepCaseActivity.new do |activity|
+							@periods.each do |period|
+								activity.period(period[:title]) do |entries|
+									period[:events].each do |event|
+										entries.event { event }
+									end
+								end
+							end
+						end
+					end
+				end
+
+				class DeepCaseDeeper < Phlex::HTML
+					def view_template
+						[1].each { [2].each { [3].each { [4].each { |n|
+							div { [5].each { |m| span { m }; render(DeepCaseActivity.new) { nil }; plain "text"; entries(m) } }
+						} } } }
+					end
+
+					def entries(m) = m
+				end
+
+				class DeepCaseActivity < Phlex::HTML
+					def view_template = ul { yield self }
+					def period(title) = li { h2 { title }; yield self }
+					def event = li { yield }
+				end
+			RUBY
+			load path
+
+			assert_equal Phlex::Compiler.explain(DeepCase), []
+			assert_equal Phlex::Compiler.explain(DeepCaseDeeper).map { |diagnostic| "#{diagnostic.line}: #{diagnostic.message}" }, [
+				"20: span keeps its call because it's more than 4 blocks deep",
+				"20: plain keeps its call because it's more than 4 blocks deep",
+			]
+
+			periods = [{ title: "Today", events: ["a", "b"] }, { title: "Later", events: ["c"] }]
+			expected = [DeepCase.new(periods).call, DeepCaseDeeper.new.call]
+
+			Phlex::Compiler.compile(DeepCase)
+			Phlex::Compiler.compile(DeepCaseDeeper)
+
+			assert_equal [DeepCase.new(periods).call, DeepCaseDeeper.new.call], expected
+			assert_equal expected[1], "<div><span>5</span><ul></ul>text</div>"
+			assert_equal expected[0], "<ul><li><h2>Today</h2><li>a</li><li>b</li></li><li><h2>Later</h2><li>c</li></li></ul>"
+		ensure
+			Object.__send__(:remove_const, :DeepCase)
+			Object.__send__(:remove_const, :DeepCaseDeeper)
+			Object.__send__(:remove_const, :DeepCaseActivity)
+		end
+	end
+
 	test "explain lists every call and method left to the runtime, with a reason" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "component.rb")
