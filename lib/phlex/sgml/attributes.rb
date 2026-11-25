@@ -168,6 +168,13 @@ module Phlex::SGML::Attributes
 	def reference_attribute(k, name, v)
 		return "" unless v
 
+		# Plain Strings are the common case. A simple name is its own local name.
+		if String === v && !(Phlex::SGML::SafeObject === v) && name.match?(SIMPLE_ATTRIBUTE_NAME)
+			value = (v.include?('"') || v.include?("<") || v.include?(">")) ? v.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES) : v
+			return "" if REF_LIST_ATTRIBUTES.include?(name) ? unsafe_reference_list?(value) : unsafe_reference?(value)
+			return " #{name}=\"#{value}\""
+		end
+
 		buffer = +""
 		value = attribute_value(k, name, v, buffer)
 
@@ -357,6 +364,15 @@ module Phlex::SGML::Attributes
 	# Joined to its base, a nested name can spell an unsafe one, such as `http-equiv`.
 	private def checked_nested_name(base_name, name)
 		full_name = "#{base_name}#{name}"
+
+		# A simple name is already normalised and has no namespace prefix.
+		if full_name.match?(SIMPLE_ATTRIBUTE_NAME)
+			if UNSAFE_ATTRIBUTES.include?(full_name)
+				raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{full_name}.")
+			end
+
+			return full_name
+		end
 
 		if UNSAFE_ATTRIBUTES.include?(full_name.downcase.delete("^a-z-"))
 			raise Phlex::ArgumentError.new("Unsafe attribute name detected: #{full_name}.")

@@ -1695,6 +1695,25 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a component defined in a block renders beside a compiled one in the same file" do
+		with_component_files(
+			"block_defined.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleStatement < Phlex::HTML
+					def view_template = div { "statement" }
+				end
+
+				LifecycleBlockDefined = Class.new(Phlex::HTML) { def view_template = span { "block" } }
+			RUBY
+		) do
+			with_lazy_compilation do
+				assert_equal LifecycleStatement.new.call, "<div>statement</div>"
+				assert_equal LifecycleBlockDefined.new.call, "<span>block</span>"
+				assert compiled_method?(LifecycleStatement, :view_template)
+			end
+		end
+	end
+
 	test "a class overriding instance variable reflection doesn't change its compile setting" do
 		component = Class.new(Phlex::HTML) do
 			compile false
