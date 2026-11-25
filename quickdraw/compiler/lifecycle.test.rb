@@ -492,7 +492,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 			before = LifecycleIconNew.instance_method(:view_template).source_location
 
 			begin
-				Phlex::SVG.define_singleton_method(:new, Phlex::SGML.singleton_class.instance_method(:new))
+				replace_svg_new
 
 				refute_equal LifecycleIconNew.instance_method(:view_template).source_location, before
 				refute LifecycleIconNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:new)
@@ -519,9 +519,15 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	private def replace_svg_new
+		Phlex::SVG.define_singleton_method(:new) do |*args, **kwargs, &block|
+			allocate.tap { |svg| svg.__send__(:initialize, *args, **kwargs, &block) }
+		end
+	end
+
 	# Replacing an undefined method is the only way to remove it on CRuby.
 	private def restore_svg_new
-		Phlex::SVG.define_singleton_method(:new, Phlex::SGML.singleton_class.instance_method(:new))
+		replace_svg_new
 		Phlex::SVG.singleton_class.remove_method(:new)
 	end
 
@@ -563,11 +569,11 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert inlined.call
 
 			begin
-				Phlex::SVG.define_method(:instance_variable_set) { |*| raise "no blocks" }
+				Phlex::SVG.define_method(:initialize) { |*| raise "no svg" }
 				refute inlined.call
 				assert_raises(RuntimeError) { LifecycleIconSetup.new.call }
 			ensure
-				Phlex::SVG.remove_method(:instance_variable_set)
+				Phlex::SVG.remove_method(:initialize)
 			end
 
 			Phlex::Compiler.recompile(LifecycleIconSetup)
@@ -583,27 +589,27 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
-	test "an svg block isn't inlined while a core method building Phlex::SVG is replaced" do
+	test "an svg block isn't inlined while Class#new is replaced" do
 		with_component_files(
 			"icon.rb" => <<~RUBY
 				# frozen_string_literal: true
-				class LifecycleIconAllocate < Phlex::HTML
+				class LifecycleIconClassNew < Phlex::HTML
 					def view_template = svg { |s| s.circle(r: 1) }
 				end
 			RUBY
 		) do
 			Class.class_eval do
-				alias_method :__lifecycle_allocate__, :allocate
-				def allocate = __lifecycle_allocate__
+				alias_method :__lifecycle_new__, :new
+				def new(...) = __lifecycle_new__(...)
 			end
 
-			Phlex::Compiler.compile(LifecycleIconAllocate)
-			refute LifecycleIconAllocate.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:circle)
-			assert_equal LifecycleIconAllocate.new.call, %(<svg><circle r="1"></circle></svg>)
+			Phlex::Compiler.compile(LifecycleIconClassNew)
+			refute LifecycleIconClassNew.instance_variable_get(:@__phlex_inlined_svg__)&.include?(:circle)
+			assert_equal LifecycleIconClassNew.new.call, %(<svg><circle r="1"></circle></svg>)
 		ensure
 			Class.class_eval do
-				alias_method :allocate, :__lifecycle_allocate__
-				remove_method :__lifecycle_allocate__
+				alias_method :new, :__lifecycle_new__
+				remove_method :__lifecycle_new__
 			end
 		end
 	end

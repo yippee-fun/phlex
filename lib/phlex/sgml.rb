@@ -5,18 +5,14 @@ class Phlex::SGML
 	include Phlex::Helpers
 
 	class << self
-		# Render the view to a String. Arguments are delegated to {.new}.
-		def call(...)
-			new(...).call
+		# Render the view to a String. Arguments are delegated to {.new} and the block to {#view_template}.
+		def call(*, **, &)
+			new(*, **).call(&)
 		end
 
-		# Create a new instance of the component.
-		# @note The block will not be delegated to {#initialize}. Instead, it will be sent to {#view_template} when rendering.
-		def new(*, **, &block)
-			object = allocate
-			object.__send__(:initialize, *, **)
-			object.instance_variable_set(:@_content_block, block) if block
-			object
+		# Build a component that keeps its content block, e.g. `render Card.with_content(title:) { "Hi" }`. Arguments are delegated to {.new}.
+		def with_content(*, **, &)
+			new(*, **).with_content(&)
 		end
 
 		# Whether the class and its subclasses compile on their first render.
@@ -52,6 +48,14 @@ class Phlex::SGML
 		else
 			plain "Phlex Warning: Your `#{self.class.name}` class doesn't define a `view_template` method. If you are upgrading to Phlex 2.x make sure to rename your `template` method to `view_template`. See: https://beta.phlex.fun/guides/v2-upgrade.html"
 		end
+	end
+
+	# Store a content block to render with, so the component can be rendered later without one, e.g. `render Card.new.with_content { "Hi" }`. A block passed to `render` or {#call} takes precedence.
+	def with_content(&block)
+		raise Phlex::ArgumentError.new("with_content requires a block.") unless block
+
+		@_content_block = block
+		self
 	end
 
 	def to_proc
@@ -564,7 +568,7 @@ class Phlex::SGML
 	# Inlined svg blocks rely on the class methods that build a Phlex::SVG.
 	# Defined before the hooks below, which call it when it's defined.
 	private_class_method def self.__svg_class_changed__(method_name)
-		__inlining_changed__(self, [method_name]) if (method_name in :new | :allocate | :===) && Phlex::SVG <= self
+		__inlining_changed__(self, [method_name]) if (method_name in :new | :===) && Phlex::SVG <= self
 	end
 
 	private_class_method def self.singleton_method_added(method_name)

@@ -39,7 +39,7 @@ class LoadTest < Quickdraw::Test
 				end
 			end
 
-			print Greeting.new { "Hello" }.call
+			print Greeting.new.call { "Hello" }
 		RUBY
 
 		output = IO.popen([RbConfig.ruby, "-e", script], err: [:child, :out], &:read)

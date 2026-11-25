@@ -18,7 +18,7 @@ class SelectiveRenderingTest < Quickdraw::Test
 				comment { h1(id: "target") }
 				h1 { "Before" }
 				img(src: "before.jpg")
-				render ExampleComponent.new { "Should not render" }
+				render(ExampleComponent.new) { "Should not render" }
 				whitespace
 				comment { "This is a comment" }
 				fragment("target") do

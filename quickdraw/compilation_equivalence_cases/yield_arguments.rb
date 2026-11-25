@@ -13,7 +13,9 @@ module EquivalenceCases
 
 			def view_template(&block)
 				div { |el| el.span { "x" } }
-				render Other.new { |x, arg| x.b { arg } }
+				render Other.new do |x, arg|
+					x.b { arg }
+				end
 				render(Other.new) { |x, arg| x.i { arg } }
 				section { yield }
 				article { yield_block(&block) }
