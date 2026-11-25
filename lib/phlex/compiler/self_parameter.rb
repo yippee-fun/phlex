@@ -21,8 +21,8 @@ class Phlex::Compiler::SelfParameter < Refract::MutationVisitor
 	end
 
 	# An element yields to its block with self unchanged, but a block passed
-	# to anything else, or a lambda, could run with another self, where a bare
-	# call would reach a different object than the parameter.
+	# to anything else, `super` included, or a lambda, could run with another
+	# self, where a bare call would reach a different object than the parameter.
 	visit Refract::CallNode do |node|
 		throw :used if SCOPE_CALLS.include?(node.name)
 
@@ -34,6 +34,14 @@ class Phlex::Compiler::SelfParameter < Refract::MutationVisitor
 		else
 			node.copy(receiver: visit(node.receiver), arguments: visit(node.arguments), block: rebindable { visit(node.block) })
 		end
+	end
+
+	visit Refract::SuperNode do |node|
+		node.copy(arguments: visit(node.arguments), block: rebindable { visit(node.block) })
+	end
+
+	visit Refract::ForwardingSuperNode do |node|
+		node.copy(block: rebindable { visit(node.block) })
 	end
 
 	visit Refract::LambdaNode do |node|

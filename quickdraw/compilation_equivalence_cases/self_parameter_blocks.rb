@@ -56,6 +56,21 @@ module EquivalenceCases
 			def path(**) = "rebound"
 		end
 
+		class RebindingBase < Phlex::SVG
+			def draw(*, &) = Rebinder.new.instance_exec(&)
+			def sketch(&) = Rebinder.new.instance_exec(&)
+		end
+
+		class SuperBlock < RebindingBase
+			def view_template
+				draw
+				sketch
+			end
+
+			def draw = svg { |s| super(1) { s.path(d: "i") } }
+			def sketch = svg { |s| super { s.path(d: "j") } }
+		end
+
 		# Overrides an element no other test inlines, since a Phlex::SVG subclass
 		# that overrides one stops HTML components inlining it in svg blocks.
 		class PrivateElement < Phlex::SVG
