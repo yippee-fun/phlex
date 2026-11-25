@@ -255,7 +255,96 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 		end
 	end
 
-	class NestedDuplicateTest < Phlex::HTML
+	class NestedSameNameTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(cache_store:, outer_cache: false, inner_cache: false, nested: true)
+			@cache_store = cache_store
+			@outer_cache = outer_cache
+			@inner_cache = inner_cache
+			@nested = nested
+		end
+
+		def view_template
+			if @outer_cache
+				cache(@nested) { content }
+			else
+				content
+			end
+		end
+
+		def content
+			if @nested
+				fragment("target") { inner }
+			else
+				inner
+			end
+		end
+
+		def inner
+			if @inner_cache
+				cached_inner
+			else
+				fragment("target") { plain "B" }
+			end
+		end
+
+		def cached_inner
+			cache { fragment("target") { plain "B" } }
+		end
+	end
+
+	NESTED_SAME_NAME_MESSAGE = "The fragment `target` is nested inside another fragment named `target`. Nested fragments need different names."
+
+	test "a fragment nested in a fragment of the same name raises, cached or not" do
+		[nil, [], ["target"], ["other"]].each do |fragments|
+			[false, true].product([false, true]).each do |(outer_cache, inner_cache)|
+				cache_store = Phlex::FIFOCacheStore.new
+
+				2.times do
+					error = assert_raises(Phlex::ArgumentError) do
+						NestedSameNameTest.new(cache_store:, outer_cache:, inner_cache:).call(fragments:)
+					end
+
+					assert_equal error.message, NESTED_SAME_NAME_MESSAGE
+				end
+			end
+		end
+	end
+
+	test "a fragment from a warm cache raises inside an open fragment of the same name" do
+		[nil, [], ["target"], ["other"]].each do |fragments|
+			[false, true].each do |outer_cache|
+				cache_store = Phlex::FIFOCacheStore.new
+
+				assert_equal NestedSameNameTest.new(cache_store:, inner_cache: true, nested: false).call, "B"
+
+				error = assert_raises(Phlex::ArgumentError) do
+					NestedSameNameTest.new(cache_store:, outer_cache:, inner_cache: true).call(fragments:)
+				end
+
+				assert_equal error.message, NESTED_SAME_NAME_MESSAGE
+			end
+		end
+	end
+
+	test "a fragment can be rendered again after a nested fragment of the same name raised" do
+		component = Class.new(Phlex::HTML) do
+			def view_template
+				begin
+					fragment("target") { fragment("target") { plain "nested" } }
+				rescue Phlex::ArgumentError
+					plain "rescued"
+				end
+
+				fragment("target") { plain "again" }
+			end
+		end
+
+		assert_equal component.new.call, "rescuedagain"
+	end
+
+	class ImportedFragmentsTest < Phlex::HTML
 		attr_reader :cache_store
 
 		def initialize(key, cache_store:)
@@ -265,50 +354,9 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 
 		def view_template
 			if @key
-				cache(@key) { content { cache { inner } } }
+				cache(@key) { parent { cache { child } } }
 			else
-				content { inner }
-			end
-		end
-
-		def inner
-			fragment("target") { plain "B" }
-		end
-
-		def content
-			fragment("target") do
-				plain "é"
-				yield
-				plain "C"
-			end
-		end
-	end
-
-	test "a fragment nested in a fragment of the same name ends the selection, cached or not" do
-		cache_store = Phlex::FIFOCacheStore.new
-
-		assert_equal NestedDuplicateTest.new(nil, cache_store:).call(fragments: ["target"]), "éB"
-
-		# Both caches cold, then only the inner cache warm, then both warm.
-		[1, 2, 2].each do |key|
-			assert_equal NestedDuplicateTest.new(key, cache_store:).call(fragments: ["target"]), "éB"
-		end
-	end
-
-	class ImportedFragmentsTest < Phlex::HTML
-		attr_reader :cache_store
-
-		def initialize(key, cache_store:, same_name:)
-			@key = key
-			@cache_store = cache_store
-			@same_name = same_name
-		end
-
-		def view_template
-			if @key
-				cache(@key, @same_name) { parent { cache(@same_name) { inner } } }
-			else
-				parent { inner }
+				parent { child }
 			end
 		end
 
@@ -317,14 +365,6 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 				plain "A"
 				yield
 				plain "C"
-			end
-		end
-
-		def inner
-			if @same_name
-				fragment("parent") { child }
-			else
-				child
 			end
 		end
 
@@ -338,8 +378,7 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 
 		# Uncached, then both caches cold, then only the inner cache warm, then both warm.
 		[nil, 1, 2, 2].each do |key|
-			assert_equal ImportedFragmentsTest.new(key, cache_store:, same_name: false).call(fragments: ["parent", "child"]), "ABC"
-			assert_equal ImportedFragmentsTest.new(key, cache_store:, same_name: true).call(fragments: ["parent", "child"]), "AB"
+			assert_equal ImportedFragmentsTest.new(key, cache_store:).call(fragments: ["parent", "child"]), "ABC"
 		end
 	end
 
@@ -384,88 +423,6 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 
 		2.times do
 			assert_equal DuplicateTest.new(cache_store:, cached: true).call(fragments: ["wrapper"]), "<h1>Second</h1>"
-		end
-	end
-
-	class OverlappingTest < Phlex::HTML
-		attr_reader :cache_store
-
-		def initialize(key, cache_store:, inner_cache:)
-			@key = key
-			@cache_store = cache_store
-			@inner_cache = inner_cache
-		end
-
-		def view_template
-			if @key
-				cache(@key, @inner_cache) { content }
-			else
-				content
-			end
-		end
-
-		def content
-			fragment("target") do
-				fragment("other") do
-					plain "A"
-					if @key && @inner_cache
-						cache { inner }
-					else
-						inner
-					end
-					plain "C"
-				end
-			end
-		end
-
-		def inner
-			fragment("target") { plain "B" }
-		end
-	end
-
-	test "a fragment that outlives a same-name fragment closing its parent isn't nested in it" do
-		[false, true].each do |inner_cache|
-			cache_store = Phlex::FIFOCacheStore.new
-
-			# Uncached, then cold, then warm (with an inner cache: only the inner cache warm, then both warm).
-			[nil, 1, 2, 2].each do |key|
-				component = OverlappingTest.new(key, cache_store:, inner_cache:)
-				assert_equal component.call(fragments: ["target", "other"]), "ABC"
-			end
-		end
-	end
-
-	class InnerCacheEndsSelectionTest < Phlex::HTML
-		attr_reader :cache_store
-
-		def initialize(cached, cache_store:)
-			@cached = cached
-			@cache_store = cache_store
-		end
-
-		def view_template
-			fragment("target") do
-				plain "A"
-				@cached ? cache { inner } : inner
-				plain "C"
-			end
-
-			fragment("other") { plain "D" }
-		end
-
-		def inner
-			fragment("target") { plain "B" }
-			plain "E"
-		end
-	end
-
-	test "a same-name fragment in an inner cache ends an open selected fragment" do
-		cache_store = Phlex::FIFOCacheStore.new
-
-		# Uncached, then cold, then warm.
-		[false, true, true].each do |cached|
-			assert_equal InnerCacheEndsSelectionTest.new(cached, cache_store:).call(fragments: ["target"]), "AB"
-			assert_equal InnerCacheEndsSelectionTest.new(cached, cache_store:).call(fragments: ["target", "other"]), "ABD"
 		end
 	end
 end

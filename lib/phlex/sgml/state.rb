@@ -8,7 +8,7 @@ class Phlex::SGML::State
 		@user_context = user_context
 		@fragments = fragments
 		@fragment_depth = 0
-		@rendering_fragments = nil
+		@open_fragments = nil
 		@should_render = !fragments
 		@cache_stack = []
 		@halt_signal = nil
@@ -35,8 +35,9 @@ class Phlex::SGML::State
 	end
 
 	def begin_fragment(id)
-		# A selected fragment ends at the first end of its name, so count it once however deeply the name is nested.
-		if @fragments&.include?(id) && (@rendering_fragments ||= Set.new).add?(id)
+		refuse_nested_fragment(id) unless (@open_fragments ||= Set.new).add?(id)
+
+		if @fragments&.include?(id)
 			@fragment_depth += 1
 			@should_render = true
 		end
@@ -49,7 +50,6 @@ class Phlex::SGML::State
 				fragment_map[id] = [current_byte_offset, nil, []]     		# Record the byte offset, length, and store a list of the nested fragments
 
 				# Visit only open ancestors; allocate descendant sets on their first child.
-				open_fragments.delete(id)
 				open_fragments.each_key { |name| (open_fragments[name] ||= Set.new) << id }
 				open_fragments[id] = nil
 			end
@@ -57,6 +57,8 @@ class Phlex::SGML::State
 	end
 
 	def end_fragment(id, halt: true)
+		@open_fragments.delete(id)
+
 		if caching?
 			current_byte_offset = 0
 			cache_stack.reverse_each do |(cache_buffer, fragment_map, open_fragments)| # We'll iterate deepest to shallowest
@@ -65,8 +67,7 @@ class Phlex::SGML::State
 				next if fragment[1]                                         # An earlier fragment with this name has already ended
 				fragment[1] = current_byte_offset - fragment[0]             # The byte length is the difference between the current byte offset and the byte offset of the fragment
 				if (descendants = open_fragments.delete(id))
-					# A descendant that's still open ends after this fragment, so it isn't nested in it.
-					fragment[2] = descendants.to_a.reject { |name| open_fragments.key?(name) }
+					fragment[2] = descendants.to_a
 				end
 			end
 		end
@@ -80,42 +81,13 @@ class Phlex::SGML::State
 		halt_if_all_fragments_found if halt
 	end
 
-	# Appends what a selective render outputs from a cached buffer. That's the union of the selected
-	# fragments in it, plus everything up to where each open selected fragment ends, since a selected
-	# fragment ends at the first end of its name. An open one that doesn't end in it covers all of it.
-	def select_from_cache(cached_buffer, fragment_map)
-		fragments = @fragments
-		ranges = []
-		found = false
+	# A cached fragment is nested in the fragments open where its cache is rendered.
+	def refuse_cached_fragment_nested_in_its_own_name(id)
+		refuse_nested_fragment(id) if @open_fragments&.include?(id)
+	end
 
-		fragment_map.each do |id, (offset, length, nested_fragments)|
-			next unless fragments.include?(id)
-
-			found = true
-			fragments.delete(id)
-
-			if @rendering_fragments&.include?(id)
-				@fragment_depth -= 1
-				ranges << [0, offset + length]
-			else
-				fragments.subtract(nested_fragments)
-				ranges << [offset, offset + length]
-			end
-		end
-
-		ranges << [0, cached_buffer.bytesize] if @fragment_depth > 0
-		@should_render = @fragment_depth > 0
-
-		selected_end = 0
-		ranges.sort_by!(&:first).each do |(range_start, range_end)|
-			next if range_end <= selected_end
-
-			range_start = selected_end if range_start < selected_end
-			@buffer << cached_buffer.byteslice(range_start, range_end - range_start)
-			selected_end = range_end
-		end
-
-		halt_if_all_fragments_found if found
+	private def refuse_nested_fragment(id)
+		raise Phlex::ArgumentError.new("The fragment `#{id}` is nested inside another fragment named `#{id}`. Nested fragments need different names.")
 	end
 
 	def halt_if_all_fragments_found
@@ -127,22 +99,9 @@ class Phlex::SGML::State
 
 		cache_stack.reverse_each do |(cache_buffer, fragment_map, open_fragments)|
 			offset += cache_buffer.bytesize
-
-			if (fragment = fragment_map[id])
-				# An open fragment with this name ends where the recorded one does.
-				unless fragment[1]
-					fragment[1] = offset + length - fragment[0]
-					descendants = open_fragments.delete(id)
-					# A descendant that's still open ends after this fragment, so it isn't nested in it.
-					fragment[2] = descendants ? descendants.to_a.reject { |name| open_fragments.key?(name) } | nested_fragments : nested_fragments
-				end
-
-				next
-			end
-
+			next if fragment_map.key?(id)
 			fragment_map[id] = [offset, length, nested_fragments]
 
-			open_fragments.delete(id)
 			open_fragments.each_key { |name| (open_fragments[name] ||= Set.new) << id }
 		end
 	end
