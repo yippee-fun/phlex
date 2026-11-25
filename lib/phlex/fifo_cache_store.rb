@@ -10,10 +10,6 @@
 class Phlex::FIFOCacheStore
 	# What the FIFO stores, whether it's still serialised, and the size of its serialised form.
 	Entry = Data.define(:value, :serialized, :bytesize)
-
-	# Freezes each loaded object. Unlike `freeze: true`, it doesn't deduplicate equal Strings, so the copy keeps the value's shape.
-	FREEZE = :freeze.to_proc
-
 	def initialize(max_bytesize: 2 ** 20)
 		@max_bytesize = max_bytesize
 		@fifo = Phlex::FIFO.new(
@@ -33,9 +29,11 @@ class Phlex::FIFOCacheStore
 			result = yield
 			dump = Marshal.dump(result)
 
-			# The FIFO won't keep a value larger than the store.
+			# The FIFO won't keep a value larger than the store. A plain value is
+			# frozen as it loads, not with `freeze: true`, which would deduplicate
+			# equal Strings. The proc is made here because other Ractors can't share one.
 			if dump.bytesize <= @max_bytesize
-				fifo[key] = plain?(result) ? Entry.new(Marshal.load(dump, FREEZE), false, dump.bytesize) : Entry.new(dump, true, dump.bytesize)
+				fifo[key] = plain?(result) ? Entry.new(Marshal.load(dump, proc(&:freeze)), false, dump.bytesize) : Entry.new(dump, true, dump.bytesize)
 			end
 
 			result
