@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
 require "ruby_lsp/addon"
+require_relative "kit"
 
 module RubyLsp
 	module Phlex
 		class Addon < ::RubyLsp::Addon
 			def activate(global_state, message_queue)
+				@global_state = global_state
 			end
 
 			def deactivate
@@ -17,6 +19,19 @@ module RubyLsp
 
 			def version
 				"0.1.0"
+			end
+
+			# Kit calls need RubyIndexer, which ruby-lsp 0.27 replaced with Rubydex.
+			def create_definition_listener(response_builder, uri, node_context, dispatcher)
+				return unless defined?(::RubyIndexer::Index)
+
+				KitDefinition.new(response_builder, @global_state.index, node_context, dispatcher)
+			end
+
+			def create_hover_listener(response_builder, node_context, dispatcher)
+				return unless defined?(::RubyIndexer::Index)
+
+				KitHover.new(response_builder, @global_state.index, node_context, dispatcher)
 			end
 		end
 
