@@ -13,11 +13,16 @@ class Phlex::Compiler::Environment
 		Phlex::HTML.instance_method(:doctype).source_location[0],
 	].freeze
 
+	METHOD = Kernel.instance_method(:method)
+	INSTANCE_VARIABLE_GET = Kernel.instance_method(:instance_variable_get)
+	CONST_GET = Module.instance_method(:const_get)
+	KIT_SOURCE_PATH = Phlex::Kit.instance_method(:const_added).source_location[0]
+
 	Element = Data.define(:tag, :void)
 
 	# What Phlex::HTML#svg's Phlex::SVG runs around its block, which compiled
 	# code skips when it inlines the block.
-	SVG_RENDER = %i[render? before_template around_template after_template view_template internal_call __yield_content__ __implicit_output__].freeze
+	SVG_RENDER = %i[render? before_template around_template after_template view_template internal_call __render_with_content__ __yield_content__ __implicit_output__].freeze
 
 	# The core methods Phlex::SGML.new and render call on the Phlex::SVG, and
 	# block_given?, which its render methods and elements ask, by owner.
@@ -51,13 +56,15 @@ class Phlex::Compiler::Environment
 
 	# With `inline: false` nothing is recognised, so every method compiles to
 	# its original definition. Used to restore a class before it's frozen.
-	def initialize(component, standard_set: standard_set_on?(component), method_resolver: Phlex::UNBOUND_INSTANCE_METHOD_METHOD.method(:bind_call), inline: true)
+	def initialize(component, standard_set: standard_set_on?(component), method_resolver: Phlex::UNBOUND_INSTANCE_METHOD_METHOD.method(:bind_call), refinements: [], inline: true)
 		@component = component
+		@refinements = refinements
 		@standard_set = standard_set
 		@method_resolver = method_resolver
 		@inline = inline
 		@elements = {}
 		@helpers = {}
+		@kit_components = {}
 		@super_elements = {}
 		@inlined = Set.new
 		@inlined_svg = Set.new
@@ -92,6 +99,16 @@ class Phlex::Compiler::Environment
 		return @helpers[name] if @helpers.key?(name)
 
 		@helpers[name] = resolve_helper(name)
+	end
+
+	# The path of the constant a bare call to the method renders, if it's the
+	# method Phlex::Kit defined for a component in a kit, and no loaded
+	# descendant overrides it.
+	def kit_component(name)
+		return unless @inline
+		return @kit_components[name] if @kit_components.key?(name)
+
+		@kit_components[name] = resolve_kit_component(name)
 	end
 
 	# An environment for the Phlex::SVG that `svg` renders around its block,
@@ -190,6 +207,39 @@ class Phlex::Compiler::Environment
 		return unless (tag = registry.elements[name])
 
 		Element.new(tag:, void: registry.void_elements.key?(name))
+	end
+
+	# A kit names `BEGIN` and `END` another way, since they can't be written as
+	# constants. The kit's method calls `new` and `render` from its own file,
+	# where no refinement applies, so a file with refinements keeps the call.
+	# It finds the component through the kit's name if the kit had one when
+	# the method was made, which compiled code does with the same calls.
+	private def resolve_kit_component(name)
+		return if name in :BEGIN | :END
+		return if @refinements.any?
+		return unless (method = instance_method(name))
+
+		kit = method.owner
+		return unless Phlex::Kit === kit && method.source_location&.first == KIT_SOURCE_PATH && method.original_name == name
+		return if overridden_by_descendant?(name, kit)
+
+		return unless (path = INSTANCE_VARIABLE_GET.bind_call(kit, :@__phlex_component_paths__)&.[](name))
+
+		path if own_const_get?(path)
+	end
+
+	# A `const_get` of the module's own could have effects, and arguments are
+	# only evaluated first when they could have effects of their own.
+	private def own_const_get?(path)
+		path.reduce(Object) do |namespace, name|
+			return false unless Module === namespace && METHOD.bind_call(namespace, :const_get).owner.equal?(Module)
+
+			CONST_GET.bind_call(namespace, name, false)
+		end
+
+		true
+	rescue NameError
+		false
 	end
 
 	private def resolve_helper(name)
