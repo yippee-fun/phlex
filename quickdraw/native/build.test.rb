@@ -1,27 +1,20 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "tmpdir"
 
 class NativeBuildTest < Quickdraw::Test
-	EXTCONF = File.expand_path("../../ext/phlex_native/extconf.rb", __dir__)
+	EXT = File.expand_path("../../ext/phlex_native", __dir__)
 	BUILDABLE = RUBY_ENGINE == "ruby" && Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("4.0")
 
-	# Runs the same steps as `gem install`, returning whether each succeeded and what it installed.
-	def self.install(*args, env: {})
+	# Runs the extension's Rakefile as `gem install` does, returning whether it succeeded and what it installed.
+	def self.install(env: {})
 		Dir.mktmpdir do |dir|
+			FileUtils.cp_r("#{EXT}/.", dir)
 			out = File.join(dir, "out")
-			steps = [
-				[RbConfig.ruby, EXTCONF, *args],
-				["make"],
-				["make", "install", "sitearchdir=#{out}", "sitelibdir=#{out}"],
-			]
+			IO.popen(env, [RbConfig.ruby, Gem.bin_path("rake", "rake"), "RUBYARCHDIR=#{out}"], chdir: dir, err: [:child, :out], &:read)
 
-			statuses = steps.map do |command|
-				IO.popen(env, command, chdir: dir, err: [:child, :out], &:read)
-				$?.success?
-			end
-
-			yield statuses, Dir.glob("**/*.{so,bundle,dll}", base: out)
+			yield $?.success?, Dir.glob("**/*.{so,bundle,dll}", base: out)
 		end
 	end
 
@@ -36,29 +29,36 @@ class NativeBuildTest < Quickdraw::Test
 	end
 
 	test "builds the extension only on CRuby 4.0 or later" do
-		NativeBuildTest.install do |statuses, built|
-			assert_equal statuses, [true, true, true]
+		NativeBuildTest.install do |success, built|
+			assert success
 			assert_equal built, (BUILDABLE ? ["phlex_native/phlex_native.#{RbConfig::CONFIG['DLEXT']}"] : [])
 		end
 	end
 
 	test "installs without the extension when there's no C compiler" do
-		NativeBuildTest.install(env: NativeBuildTest.without_compilers) do |statuses, built|
-			assert_equal statuses, [true, true, true]
+		NativeBuildTest.install(env: NativeBuildTest.without_compilers) do |success, built|
+			assert success
 			assert_equal built, []
 		end
 	end
 
 	test "installs without the extension when it doesn't compile" do
-		NativeBuildTest.install("--with-cflags=-include /phlex/does/not/exist.h") do |statuses, built|
-			assert_equal statuses, [true, true, true]
+		NativeBuildTest.install(env: { "CONFIGURE_ARGS" => "--with-cflags=-include/phlex/does/not/exist.h" }) do |success, built|
+			assert success
+			assert_equal built, []
+		end
+	end
+
+	test "installs without the extension when there's no make" do
+		NativeBuildTest.install(env: { "MAKE" => "/phlex/does/not/exist/make" }) do |success, built|
+			assert success
 			assert_equal built, []
 		end
 	end
 
 	test "installs without the extension when PHLEX_NATIVE is false" do
-		NativeBuildTest.install(env: { "PHLEX_NATIVE" => "false" }) do |statuses, built|
-			assert_equal statuses, [true, true, true]
+		NativeBuildTest.install(env: { "PHLEX_NATIVE" => "false" }) do |success, built|
+			assert success
 			assert_equal built, []
 		end
 	end

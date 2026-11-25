@@ -110,7 +110,7 @@ jobs:
       matrix:
         include:
           - { ruby-version: "4.0", native: true }
-          - { ruby-version: "4.0", native: false, hide-compiler: true }
+          - { ruby-version: "4.0", native: false, hide-build-tools: true }
           - { ruby-version: "3.3", native: false }
           - { ruby-version: "jruby", native: false }
           - { ruby-version: "truffleruby", native: false }
@@ -129,16 +129,16 @@ jobs:
         run: gem build phlex.gemspec --output phlex.gem
 
       # Phlex's dependencies have C extensions too, so they're installed first.
-      - name: Hide the C compiler
-        if: matrix.hide-compiler
+      - name: Hide the C compiler and make
+        if: matrix.hide-build-tools
         run: |
           gem install ./phlex.gem && gem uninstall phlex --executables
-          mkdir "$RUNNER_TEMP/no-compiler"
-          for name in gcc cc clang; do
-            printf '#!/bin/sh\nexit 1\n' > "$RUNNER_TEMP/no-compiler/$name"
-            chmod +x "$RUNNER_TEMP/no-compiler/$name"
+          mkdir "$RUNNER_TEMP/no-build-tools"
+          for name in gcc cc clang make; do
+            printf '#!/bin/sh\nexit 1\n' > "$RUNNER_TEMP/no-build-tools/$name"
+            chmod +x "$RUNNER_TEMP/no-build-tools/$name"
           done
-          echo "$RUNNER_TEMP/no-compiler" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/no-build-tools" >> "$GITHUB_PATH"
 
       - name: Install the gem
         run: gem install ./phlex.gem --verbose

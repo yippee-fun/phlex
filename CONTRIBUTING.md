@@ -23,7 +23,7 @@ bundle exec qd
 
 `ext/phlex_native` serialises attributes in C. It must produce exactly the same output, and raise exactly the same errors, as the Ruby in `lib/phlex/sgml/attributes.rb`, handing anything uncommon back to Ruby. It assumes core methods such as `String#gsub` and `Hash#each` haven’t been redefined globally, and that `Phlex::SGML::Attributes` hasn’t been overridden.
 
-`gem install phlex` builds it on CRuby 4.0 or later when a C compiler is available. Everywhere else, including JRuby, TruffleRuby and failed builds, the install still succeeds and Phlex uses Ruby. Setting `PHLEX_NATIVE=false` while installing skips it.
+`gem install phlex` builds it on CRuby 4.0 or later when a C compiler is available. Everywhere else, including JRuby, TruffleRuby, machines without a compiler or `make`, and failed builds, the install still succeeds and Phlex uses Ruby. RubyGems runs `ext/phlex_native/Rakefile` rather than `make`, so that a missing `make` can’t fail the install. Setting `PHLEX_NATIVE=false` while installing skips it.
 
 To run the tests with it loaded:
 
