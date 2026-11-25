@@ -36,7 +36,7 @@ class CallbacksTest < Quickdraw::Test
 		assert_equal klass.call { "ignored" }, "<span>hello</span>"
 	end
 
-	test "hooks receive the content block given to render" do
+	test "hooks receive the content block given to render or with_content" do
 		received = []
 
 		child = Class.new(Phlex::HTML) do
@@ -51,12 +51,14 @@ class CallbacksTest < Quickdraw::Test
 				render child.new do
 					"from do"
 				end
+				render(child.new.with_content { "stored" })
+				render(child.new.with_content { "ignored" }) { "render wins" }
 				render(child.new)
 			end
 		end
 
-		assert_equal parent.call, "<div>from render</div><div>from do</div><div></div>"
-		assert_equal received, ["from render", "from render", "from do", "from do", nil, nil]
+		assert_equal parent.call, "<div>from render</div><div>from do</div><div>stored</div><div>render wins</div><div></div>"
+		assert_equal received, ["from render", "from render", "from do", "from do", "stored", "stored", "render wins", "render wins", nil, nil]
 	end
 
 	test "a block given to new isn't a content block" do
