@@ -1647,7 +1647,41 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			compiling.join unless paused.pop(timeout: 5)
 			reading = Thread.new { Phlex::Compiler.source(LifecycleRaceSource) }
-			Thread.pass until !reading.alive? || reading.backtrace&.any? { |line| line.include?("synchronize") }
+			Thread.pass until !reading.alive? || reading.backtrace&.first&.include?("synchronize")
+			resume << true
+			compiling.join
+
+			assert reading.value.include?("private(:header)")
+		end
+	end
+
+	test "source waits for a direct compile_file restoring visibility" do
+		with_component_files(
+			"race_file_source.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRaceFileSource < Phlex::HTML
+					def view_template = header
+
+					private
+
+					def header = h1 { "x" }
+				end
+			RUBY
+		) do |(path)|
+			paused = Queue.new
+			resume = Queue.new
+			compiling = Thread.new do
+				Thread.current[:lifecycle_installed_gate] = -> {
+					Thread.current[:lifecycle_installed_gate] = nil
+					paused << true
+					resume.pop
+				}
+				Phlex::Compiler.compile_file(path, components: [LifecycleRaceFileSource])
+			end
+
+			compiling.join unless paused.pop(timeout: 5)
+			reading = Thread.new { Phlex::Compiler.source(LifecycleRaceFileSource) }
+			Thread.pass until !reading.alive? || reading.backtrace&.first&.include?("synchronize")
 			resume << true
 			compiling.join
 
