@@ -209,7 +209,7 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 
 		def compile(node, **)
-			raise "sabotaged" if Sabotage.active
+			raise((Class === Sabotage.active) ? Sabotage.active : RuntimeError, "sabotaged") if Sabotage.active
 
 			super
 		end
@@ -1298,6 +1298,139 @@ class CompilerLifecycleTest < Quickdraw::Test
 		ensure
 			Object.__send__(:remove_const, :LifecycleAutoloadedGone) if Object.autoload?(:LifecycleAutoloadedGone)
 			Object.__send__(:remove_const, :LifecycleAutoloadedOther) if Object.autoload?(:LifecycleAutoloadedOther)
+		end
+	end
+
+	test "forgetting a component keeps the source maps of another unloaded component that isn't forgotten yet" do
+		with_component_files(
+			"first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleFirstGone < Phlex::HTML
+					def view_template = div { "first" }
+				end
+			RUBY
+			"second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSecondGone < Phlex::HTML
+					def view_template = div { "second" }
+				end
+			RUBY
+		) do
+			first = LifecycleFirstGone
+			second = LifecycleSecondGone
+			Phlex::Compiler.compile(first)
+			Phlex::Compiler.compile(second)
+			compiled_path = second.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleFirstGone)
+			Object.__send__(:remove_const, :LifecycleSecondGone)
+			Phlex::Compiler.forget(first)
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+
+			Phlex::Compiler.forget(second)
+			refute Phlex.__compiled_source_maps__.key?(compiled_path)
+		end
+	end
+
+	test "forgetting a component keeps the source maps an anonymous subclass inherits" do
+		with_component_files(
+			"anonymous_parent.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleAnonymousParent < Phlex::HTML
+					def view_template = div { "inherited" }
+				end
+			RUBY
+		) do
+			parent = LifecycleAnonymousParent
+			child = Class.new(parent)
+			Phlex::Compiler.compile(parent)
+			compiled_path = parent.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleAnonymousParent)
+			Phlex::Compiler.forget(parent)
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+
+			Phlex::Compiler.forget(child)
+			refute Phlex.__compiled_source_maps__.key?(compiled_path)
+		end
+	end
+
+	test "an ancestor that can't be compiled is reported once, not again for each subclass" do
+		with_component_files(
+			"failing_parent.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFailingParent < Phlex::HTML
+					def view_template = delegate("parent")
+
+					ruby2_keywords def delegate(*args) = div { plain(*args) }
+				end
+
+				class LifecycleFailingFirst < LifecycleFailingParent
+					def view_template = span { "first" }
+				end
+
+				class LifecycleFailingSecond < LifecycleFailingParent
+					def view_template = span { "second" }
+				end
+			RUBY
+		) do
+			reports = []
+			on_failure = -> (component, _error) { reports << component }
+
+			with_lazy_compilation do
+				Phlex::Compiler.precompile(LifecycleFailingFirst, on_failure:)
+				Phlex::Compiler.precompile(LifecycleFailingSecond, on_failure:)
+				3.times { Phlex::Compiler.precompile(Class.new(LifecycleFailingParent), on_failure:) }
+			end
+
+			assert_equal reports, [LifecycleFailingFirst]
+			assert compiled_method?(LifecycleFailingSecond, :view_template)
+			assert_equal LifecycleFailingSecond.new.call, "<span>second</span>"
+			assert_equal Phlex::Compiler.explain(LifecycleFailingFirst).map(&:message).grep(/\Acompiling/), ["compiling LifecycleFailingParent raised Phlex::Compiler::Error: #{Phlex::Compiler::FAILURES[LifecycleFailingParent].message}"]
+		end
+	end
+
+	test "running out of stack while compiling is reported, and the component renders uncompiled" do
+		with_component_files(
+			"stack.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleStack < Phlex::HTML
+					def view_template = div { "stack" }
+				end
+			RUBY
+		) do
+			failures = []
+
+			with_lazy_compilation do
+				Sabotage.active = SystemStackError
+				Phlex::Compiler.precompile(LifecycleStack, on_failure: -> (component, error) { failures << [component, error.class] })
+			ensure
+				Sabotage.active = false
+			end
+
+			assert_equal failures, [[LifecycleStack, SystemStackError]]
+			assert_equal LifecycleStack.new.call, "<div>stack</div>"
+		end
+	end
+
+	test "a class overriding name doesn't change which component the compiler compiles" do
+		with_component_files(
+			"named.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleNamedBase < Phlex::HTML
+					def self.name = "LifecycleNamedBase"
+
+					def view_template = div { "base" }
+				end
+
+				class LifecycleNamedSub < LifecycleNamedBase
+					def view_template = span { "sub" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleNamedSub)
+
+			assert compiled_method?(LifecycleNamedSub, :view_template)
 		end
 	end
 
