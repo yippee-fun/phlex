@@ -203,11 +203,14 @@ module Phlex::Compiler
 		on_failure.call(component, error) if error
 	end
 
+	# Phlex's own setting, even where a class defines a compile? of its own.
+	COMPILE = Phlex::SGML.singleton_class.instance_method(:compile?)
+
 	# An ancestor whose file failed isn't tried again for each of its subclasses.
-	COMPILES_ON_FIRST_RENDER = -> (ancestor) { ancestor.compile? && !FAILURES.key?(ancestor) }
+	COMPILES_ON_FIRST_RENDER = -> (ancestor) { COMPILE.bind_call(ancestor) && !FAILURES.key?(ancestor) }
 
 	def self.settled?(component)
-		compiled?(component) || FAILURES.key?(component) || component.frozen? || !component.compile?
+		compiled?(component) || FAILURES.key?(component) || component.frozen? || !COMPILE.bind_call(component)
 	end
 
 	# Compiles the component as its first render would: unless it says

@@ -1614,6 +1614,23 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a component defining its own compile? still compiles as its setting says" do
+		with_component_files(
+			"own_compile.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleOwnCompile < Phlex::HTML
+					def self.compile? = raise("not Phlex's")
+
+					def view_template = div { "own" }
+				end
+			RUBY
+		) do
+			with_lazy_compilation { assert_equal LifecycleOwnCompile.new.call, "<div>own</div>" }
+
+			assert compiled_method?(LifecycleOwnCompile, :view_template)
+		end
+	end
+
 	test "a live component can't be forgotten" do
 		with_component_files(
 			"remembered.rb" => <<~RUBY
