@@ -74,7 +74,12 @@ module Phlex::SGML::Attributes
 				v.to_s.gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES)
 			else
 				if v.respond_to?(:to_h)
-					generate_nested_attributes(v.to_h, "#{name}-", buffer)
+					case k
+					when :style
+						generate_styles(v.to_h).gsub(UNSAFE_VALUE_CHARS, VALUE_ESCAPES)
+					else
+						generate_nested_attributes(v.to_h, "#{name}-", buffer)
+					end
 				else
 					raise Phlex::ArgumentError.new("Invalid attribute value for #{k}: #{v.inspect}.")
 				end
@@ -264,37 +269,37 @@ module Phlex::SGML::Attributes
 			case token
 			when String
 				token = token.gsub(gsub_from, gsub_to) if gsub_from
-				if i > 0
-					buffer << sep << token
-				else
+				if buffer.empty?
 					buffer << token
+				else
+					buffer << sep << token
 				end
 			when Symbol
-				if i > 0
-					buffer << sep << token.name.tr("_", "-")
-				else
+				if buffer.empty?
 					buffer << token.name.tr("_", "-")
+				else
+					buffer << sep << token.name.tr("_", "-")
 				end
 			when Integer, Float, Phlex::SGML::SafeObject
-				if i > 0
-					buffer << sep << token.to_s
-				else
+				if buffer.empty?
 					buffer << token.to_s
+				else
+					buffer << sep << token.to_s
 				end
 			when Array
 				if token.length > 0 && (value = generate_nested_tokens(token, sep, gsub_from, gsub_to))
-					if i > 0
-						buffer << sep << value
-					else
+					if buffer.empty?
 						buffer << value
+					else
+						buffer << sep << value
 					end
 				end
 			when Set
 				if token.length > 0 && (value = generate_nested_tokens(token.to_a, sep, gsub_from, gsub_to))
-					if i > 0
-						buffer << sep << value
-					else
+					if buffer.empty?
 						buffer << value
+					else
+						buffer << sep << value
 					end
 				end
 			when nil

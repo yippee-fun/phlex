@@ -60,30 +60,32 @@ class Phlex::SGML
 
 		block ||= @_content_block
 
-		previous_phlex_component = Thread.current[:__phlex_component__]
-		Thread.current[:__phlex_component__] = self
+		begin
+			previous_phlex_component = Thread.current[:__phlex_component__]
+			Thread.current[:__phlex_component__] = self
 
-		state.around_render(self) do
-			before_template(&block)
+			state.around_render(self) do
+				before_template(&block)
 
-			around_template do
-				if block
-					view_template do |*args|
-						if args.length > 0
-							__yield_content_with_args__(*args, &block)
-						else
-							__yield_content__(&block)
+				around_template do
+					if block
+						view_template do |*args|
+							if args.length > 0
+								__yield_content_with_args__(*args, &block)
+							else
+								__yield_content__(&block)
+							end
 						end
+					else
+						view_template
 					end
-				else
-					view_template
 				end
-			end
 
-			after_template(&block)
+				after_template(&block)
+			end
+		ensure
+			Thread.current[:__phlex_component__] = previous_phlex_component
 		end
-	ensure
-		Thread.current[:__phlex_component__] = previous_phlex_component
 	end
 
 	def context
@@ -164,10 +166,14 @@ class Phlex::SGML
 	def capture(*args, &block)
 		return "" unless block
 
-		if args.length > 0
-			@_state.capture { __yield_content_with_args__(*args, &block) }
-		else
-			@_state.capture { __yield_content__(&block) }
+		state = @_state
+
+		state.suspend_caching do
+			if args.length > 0
+				state.capture { __yield_content_with_args__(*args, &block) }
+			else
+				state.capture { __yield_content__(&block) }
+			end
 		end
 	end
 
@@ -273,12 +279,30 @@ class Phlex::SGML
 			end
 			state.buffer << cached_buffer
 		else
-			fragment_map.each do |fragment_name, (offset, length, nested_fragments)|
-				if state.fragments.include?(fragment_name)
-					state.fragments.delete(fragment_name)
-					state.fragments.subtract(nested_fragments)
-					state.buffer << cached_buffer.byteslice(offset, length)
+			ranges = []
+
+			fragment_map.each do |fragment_name, (offset, length, _nested_fragments)|
+				if state.fragments.delete?(fragment_name)
+					ranges << [offset, offset + length]
 				end
+			end
+
+			unless ranges.empty?
+				# Selected fragments can nest or overlap, so render the union of their ranges in order, as uncached rendering would.
+				ranges.sort!
+				start, finish = ranges.shift
+
+				ranges.each do |(next_start, next_finish)|
+					if next_start > finish
+						state.buffer << cached_buffer.byteslice(start, finish - start)
+						start, finish = next_start, next_finish
+					elsif next_finish > finish
+						finish = next_finish
+					end
+				end
+
+				state.buffer << cached_buffer.byteslice(start, finish - start)
+				state.halt_if_all_fragments_found
 			end
 		end
 
@@ -286,7 +310,16 @@ class Phlex::SGML
 	end
 
 	def json_escape(string)
-		ERB::Util.json_escape(string)
+		# Active Support's version keeps an `html_safe` string `html_safe`.
+		return ERB::Util.json_escape(string) if ERB::Util.respond_to?(:json_escape)
+
+		string.gsub(/[&<>\u2028\u2029]/, {
+			"&" => '\u0026',
+			"<" => '\u003c',
+			">" => '\u003e',
+			"\u2028" => '\u2028',
+			"\u2029" => '\u2029',
+		})
 	end
 
 	# Override this method to use a different deployment key.

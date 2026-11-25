@@ -64,7 +64,7 @@ class Phlex::HTML < Phlex::SGML
 			raise Phlex::ArgumentError.new("`tag` can't render <#{unsafe_tag}>. Call `#{unsafe_tag}` directly instead.")
 		end
 
-			if (tag = StandardElements.__registered_elements__[name]) || ((tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z0-9-]+\z/))
+		if (tag = StandardElements.__registered_elements__[name]) || ((tag = name.name.tr("_", "-")).include?("-") && tag.match?(/\A[a-z0-9-]+\z/))
 			if attributes.length > 0 # with attributes
 				if block_given # with content block
 					buffer << "<#{tag}"

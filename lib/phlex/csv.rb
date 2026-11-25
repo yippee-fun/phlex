@@ -34,9 +34,9 @@ class Phlex::CSV
 		end
 
 		if strip_whitespace
-			escape_regex = /[\n"#{delimiter}]/
+			escape_regex = /[\r\n"#{Regexp.escape(delimiter)}]/
 		else
-			escape_regex = /^\s|\s$|[\n"#{delimiter}]/
+			escape_regex = /^\s|\s$|[\r\n"#{Regexp.escape(delimiter)}]/
 		end
 
 		if has_yielder
@@ -55,6 +55,7 @@ class Phlex::CSV
 
 			if first_row
 				first_row = false
+				headers.clear
 
 				i = 0
 				number_of_columns = row.length
@@ -82,6 +83,11 @@ class Phlex::CSV
 			i = 0
 			number_of_columns = row.length
 			first_col = true
+
+			unless number_of_columns == headers.length
+				row_buffer.clear
+				raise Phlex::RuntimeError.new("Column count mismatch: expected #{headers.length}, got #{number_of_columns}.")
+			end
 
 			while i < number_of_columns
 				header, value = row[i]
@@ -188,7 +194,11 @@ class Phlex::CSV
 					buffer << value
 				end
 			else # not escaping CSV injection
-				buffer << value
+				if value.match?(escape_regex)
+					buffer << '"' << value.gsub('"', '""') << '"'
+				else
+					buffer << value
+				end
 			end
 		else # not stripping whitespace
 			if escape_csv_injection

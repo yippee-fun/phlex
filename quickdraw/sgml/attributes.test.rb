@@ -607,6 +607,24 @@ class AttributesTest < Quickdraw::Test
 		assert_equal output, %(<div style="font-weight: bold;"></div>)
 	end
 
+	test "_, Array with leading nil or empty tokens" do
+		output = phlex { div(class: [nil, "a", nil, "b"]) }
+		assert_equal output, %(<div class="a b"></div>)
+
+		output = phlex { div(class: [[], :a, Set[], ["b"]]) }
+		assert_equal output, %(<div class="a b"></div>)
+
+		output = phlex { div(data: { controller: [nil, "a"] }) }
+		assert_equal output, %(<div data-controller="a"></div>)
+	end
+
+	test ":style, *responds to to_h*" do
+		styles = Struct.new(:color, :font_weight, keyword_init: true).new(color: "blue", font_weight: "bold")
+
+		output = phlex { div(style: styles) }
+		assert_equal output, %(<div style="color: blue; font-weight: bold;"></div>)
+	end
+
 	test ":style, Array(Hash)" do
 		output = phlex { div(style: [{ color: "blue" }, { font_weight: "bold", line_height: 1.5 }]) }
 		assert_equal output, %(<div style="color: blue; font-weight: bold; line-height: 1.5;"></div>)
@@ -741,6 +759,7 @@ class AttributesTest < Quickdraw::Test
 		assert_equal phlex { div(data: { x: "<y>", z: :"<w>" }) }, %(<div data-x="&lt;y&gt;" data-z="&lt;w&gt;"></div>)
 		assert_equal phlex { div(style: { content: "'<x>'" }) }, %(<div style="content: '&lt;x&gt;';"></div>)
 		assert_equal phlex { div(style: ["content: '<x>'"]) }, %(<div style="content: '&lt;x&gt;';"></div>)
+		assert_equal phlex { div(style: Struct.new(:content).new("'<x>'")) }, %(<div style="content: '&lt;x&gt;';"></div>)
 		assert_equal phlex { div(title: safe("<x>")) }, %(<div title="&lt;x&gt;"></div>)
 		assert_equal phlex { a(href: "/search?q=<x>") }, %(<a href="/search?q=&lt;x&gt;"></a>)
 	end
