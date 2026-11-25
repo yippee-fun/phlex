@@ -24,12 +24,19 @@ Gem::Specification.new do |spec|
 	spec.files = Dir[
 		"README.md",
 		"LICENSE.txt",
-		"lib/**/*.rb"
+		"lib/**/*.rb",
+		"ext/**/*.{c,rb}",
+		"ext/**/Rakefile"
 	]
 
 	spec.require_paths = ["lib"]
 
+	# Optional: skipped wherever it can’t be built, leaving Phlex in Ruby.
+	# A Rakefile builds it, so installing doesn’t need make either.
+	spec.extensions = ["ext/phlex_native/Rakefile"]
+
 	spec.add_dependency "zeitwerk", "~>2.7"
 	spec.add_dependency "refract", "~> 2.0.0"
+	spec.add_dependency "rake", ">= 13.0" # builds the C extension
 	spec.add_dependency "erb", ">= 5.0.2" # ERB::Escape is Ractor-safe from here
 end

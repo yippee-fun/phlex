@@ -10,6 +10,7 @@ module Phlex
 	# `Phlex::Loader.eager_load` before rendering in one.
 	Loader = Zeitwerk::Loader.for_gem.tap do |loader|
 		loader.ignore("#{__dir__}/ruby_lsp")
+		loader.ignore("#{__dir__}/phlex_native")
 		loader.ignore("#{__dir__}/phlex/compiler/scope.rb")
 
 		loader.inflector.inflect(
@@ -34,8 +35,9 @@ module Phlex
 	ATTRIBUTE_CACHE = AttributeCache.new(max_bytesize: 2 ** 20)
 	@attribute_cache_max_bytesize = ATTRIBUTE_CACHE.max_bytesize
 
+	# The C extension isn’t built where it can’t be, such as on JRuby or without a compiler.
 	begin
-		require "phlex_native"
+		require "phlex_native/phlex_native"
 	rescue LoadError
 		nil
 	end
@@ -108,7 +110,7 @@ module Phlex
 
 	# __attribute_cache__ is called once per render, so the check is written out in each.
 	if defined?(Native)
-		# phlex-native serialises attributes faster than a cache can look them up, on any Ractor.
+		# The C extension serialises attributes faster than a cache can look them up, on any Ractor.
 		def self.__attribute_cache__ = Native::SerializedAttributes
 	elsif !defined?(::Ractor)
 		def self.__attribute_cache__ = ATTRIBUTE_CACHE

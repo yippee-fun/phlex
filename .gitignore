@@ -16,3 +16,4 @@ Gemfile.lock
 .gem
 /base-*.yml
 /tabs-*.yml
+/lib/phlex_native/
