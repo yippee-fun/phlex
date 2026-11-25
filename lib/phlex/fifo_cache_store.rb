@@ -43,23 +43,33 @@ class Phlex::FIFOCacheStore
 		@fifo.clear
 	end
 
-	# Shared or cyclic containers, and core objects carrying instance variables,
-	# aren't plain, so the walk is linear and nothing but the copy is frozen.
-	private def plain?(value, seen = {}.compare_by_identity)
-		case value
-		when Symbol, Integer, Float, true, false, nil
-			true
-		when String
-			String.equal?(value.class) && value.instance_variables.empty?
-		when Array
-			Array.equal?(value.class) && value.instance_variables.empty? && !seen.key?(value) && (seen[value] = true) &&
-				value.all? { |item| plain?(item, seen) }
-		when Hash
-			Hash.equal?(value.class) && value.instance_variables.empty? && value.default.nil? && !seen.key?(value) && (seen[value] = true) &&
-				value.all? { |k, v| plain?(k, seen) && plain?(v, seen) }
-		else
-			false
+	# Shared or cyclic containers, identity hashes and core objects carrying
+	# instance variables aren't plain, so the walk is linear and nothing but the
+	# copy is frozen. It uses its own stack so deep values can't overflow Ruby's.
+	private def plain?(value)
+		seen = {}.compare_by_identity
+		stack = [value]
+
+		while (stack.length > 0)
+			case (item = stack.pop)
+			when Symbol, Integer, Float, true, false, nil
+				next
+			when String
+				return false unless String.equal?(item.class) && item.instance_variables.empty?
+			when Array
+				return false unless Array.equal?(item.class) && item.instance_variables.empty? && !seen.key?(item)
+				seen[item] = true
+				stack.concat(item)
+			when Hash
+				return false unless Hash.equal?(item.class) && item.instance_variables.empty? && item.default.nil? && !item.compare_by_identity? && !seen.key?(item)
+				seen[item] = true
+				item.each { |k, v| stack << k << v }
+			else
+				return false
+			end
 		end
+
+		true
 	end
 
 	private def map_key(value)

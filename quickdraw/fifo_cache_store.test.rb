@@ -159,6 +159,30 @@ class FIFOCacheStoreTest < Quickdraw::Test
 		refute hit[0].instance_variable_get(:@tag).frozen?
 	end
 
+	test "identity hashes keep their distinct keys on each hit" do
+		store = Phlex::FIFOCacheStore.new
+
+		identity = {}.compare_by_identity
+		identity[+"a"] = 1
+		identity[+"a"] = 2
+		store.fetch("identity") { identity }
+		hit = store.fetch("identity") { nil }
+
+		assert_equal hit.size, 2
+		assert hit.compare_by_identity?
+	end
+
+	test "deeply nested plain values are frozen without overflowing the stack" do
+		store = Phlex::FIFOCacheStore.new
+
+		deep = 5_000.times.reduce([]) { |inner, _| [inner] }
+		store.fetch("deep") { deep }
+		hit = store.fetch("deep") { nil }
+
+		assert hit.frozen?
+		assert_equal hit, deep
+	end
+
 	test "values larger than the store aren't cached" do
 		store = Phlex::FIFOCacheStore.new(max_bytesize: 10)
 
