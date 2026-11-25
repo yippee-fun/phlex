@@ -1785,6 +1785,104 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a rollback puts back a method reloaded while the compilation ran" do
+		with_component_files(
+			"reloading_parent.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleReloadingParent < Phlex::HTML
+					singleton_class.attr_accessor :reloaded
+
+					def heading = h1 { "parent" }
+				end
+			RUBY
+			"reloading_parent_failing.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleReloadingParent
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+			"reloading_child.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleReloadingChild < LifecycleReloadingParent
+					def self.method_added(name)
+						super
+						return if @reloading || !instance_method(name).source_location[0].include?("(compiled")
+
+						@reloading = true
+						load File.join(__dir__, "reloading_parent.rb")
+						LifecycleReloadingParent.reloaded = LifecycleReloadingParent.instance_method(:heading)
+					end
+
+					def view_template = div { heading }
+				end
+			RUBY
+		) do
+			assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleReloadingChild) }
+			assert Phlex::Compiler.compiled?(LifecycleReloadingChild)
+			refute Phlex::Compiler.compiled?(LifecycleReloadingParent)
+			assert_equal LifecycleReloadingParent.instance_method(:heading), LifecycleReloadingParent.reloaded
+		end
+	end
+
+	test "a rollback drops the source maps of what it put back" do
+		with_component_files(
+			"retried_first.rb" => <<~RUBY,
+				# frozen_string_literal: true
+				class LifecycleRetried < Phlex::HTML
+					def view_template = div { "first" }
+				end
+			RUBY
+			"retried_second.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRetried
+					ruby2_keywords def delegate(*args) = plain(*args)
+					private :delegate
+				end
+			RUBY
+		) do
+			maps = Phlex.__compiled_source_maps__.size
+
+			3.times do
+				assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(LifecycleRetried) }
+			end
+
+			assert_equal Phlex.__compiled_source_maps__.size, maps
+			refute Phlex::Compiler::GENERATION_COMPONENTS.any? { |_path, owners| owners.key?(LifecycleRetried) }
+		end
+	end
+
+	test "a class frozen while its file is evaluated keeps the record of what it inlined" do
+		with_component_files(
+			"frozen_midway.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFrozenMidwayParent < Phlex::HTML
+				end
+
+				class LifecycleFrozenMidway < LifecycleFrozenMidwayParent
+					def self.method_added(name)
+						super
+						return unless instance_method(name).source_location[0].include?("(compiled")
+
+						freeze
+						raise "hook"
+					end
+
+					def view_template = div { "first" }
+				end
+			RUBY
+		) do
+			assert_raises(RuntimeError) { Phlex::Compiler.compile(LifecycleFrozenMidway) }
+			assert LifecycleFrozenMidway.frozen?
+			assert compiled_method?(LifecycleFrozenMidway, :view_template)
+			assert LifecycleFrozenMidway.instance_variable_get(:@__phlex_inlined__).include?(:div)
+
+			assert_raises(Phlex::Compiler::Error) do
+				LifecycleFrozenMidwayParent.class_eval { def div(**, &) = plain("parent div") }
+			end
+		end
+	end
+
 	test "compiling a subclass compiles the ancestors its first render left alone" do
 		with_component_files(
 			"left_alone_parent.rb" => <<~RUBY,

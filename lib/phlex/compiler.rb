@@ -88,6 +88,11 @@ module Phlex::Compiler
 	# one so exceptions from an old generation still map correctly.
 	Generation = Data.define(:path, :lines)
 
+	# What a compilation replaced, so one that fails partway through can put it
+	# back: component => { name => [method, visibility] }, what each component
+	# had inlined before it started, and the generations it made.
+	Rollback = Data.define(:methods, :inlined, :generations)
+
 	# A live method and the line in the file being compiled that defines it.
 	Target = Data.define(:component, :name, :line, :compiled, :replaced)
 
@@ -291,24 +296,31 @@ module Phlex::Compiler
 		components = ancestors.select { |ancestor| live?(ancestor) }
 
 		files = components.to_h { |ancestor| [ancestor, defining_files(ancestor)] }.compare_by_identity
-		definitions = components.to_h { |ancestor| [ancestor, definitions(ancestor)] }.compare_by_identity
+		rollback = Rollback.new(
+			methods: {}.compare_by_identity,
+			inlined: components.to_h { |ancestor| [ancestor, INLINED.to_h { |name| [name, IVAR_GET.bind_call(ancestor, name)] }] }.compare_by_identity,
+			generations: []
+		)
 		compiled_paths = []
 
 		files.values.flatten.uniq.each do |path|
-			compile_file(path, components:)
+			compile_file(path, components:, rollback:)
 			compiled_paths << path
 		rescue StandardError, ScriptError, SystemStackError
 			failed.concat(components.select { |ancestor| files[ancestor].include?(path) })
 
 			# One whose files all compiled is marked compiled. The rest get back the
 			# methods they had, so none is left compiled in some files.
-			ancestors.each do |ancestor|
+			restored = ancestors.select do |ancestor|
 				if !failed.include?(ancestor) && (files[ancestor] || []).all? { |file| compiled_paths.include?(file) }
 					IVAR_SET.bind_call(ancestor, :@__phlex_compiled__, true)
-				elsif definitions.key?(ancestor)
-					restore(ancestor, definitions[ancestor])
+					false
+				elsif rollback.inlined.key?(ancestor)
+					restore(ancestor, rollback)
 				end
 			end
+
+			discard_generations(rollback.generations, restored)
 
 			raise
 		end
@@ -397,8 +409,8 @@ module Phlex::Compiler
 
 	# Compiles the methods that the given components, by default every loaded
 	# one, define in an already-loaded file.
-	def self.compile_file(path, components: loaded_components, recompile: false, inline: true)
-		return MUTEX.synchronize { compile_file(path, components:, recompile:, inline:) } unless MUTEX.owned?
+	def self.compile_file(path, components: loaded_components, recompile: false, inline: true, rollback: nil)
+		return MUTEX.synchronize { compile_file(path, components:, recompile:, inline:, rollback:) } unless MUTEX.owned?
 
 		unless File.exist?(path)
 			raise ArgumentError, "Can’t compile #{path} because it doesn’t exist."
@@ -420,6 +432,27 @@ module Phlex::Compiler
 
 		# Added before the methods exist, so nothing running them finds a line unmapped.
 		Phlex.__add_compiled_source_map__(compiled_path, Generation.new(path: -path, lines: lines.freeze))
+		rollback.generations << compiled_path if rollback
+
+		# Recorded before the methods exist too, so an evaluation that fails
+		# partway through leaves nothing compiled that isn't.
+		results.each do |result|
+			if rollback
+				replaced = (rollback.methods[result.component] ||= {})
+				result.visibilities.each do |name, visibility|
+					replaced[name] ||= [Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(result.component, name), visibility]
+				end
+			end
+
+			inlined = IVAR_GET.bind_call(result.component, :@__phlex_inlined__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined__, (inlined | result.inlined).freeze)
+
+			inlined_svg = IVAR_GET.bind_call(result.component, :@__phlex_inlined_svg__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
+
+			inlined_super = IVAR_GET.bind_call(result.component, :@__phlex_inlined_super__) || Set.new
+			IVAR_SET.bind_call(result.component, :@__phlex_inlined_super__, (inlined_super | result.inlined_super).freeze)
+		end
 
 		without_redefinition_warnings do
 			eval(
@@ -434,15 +467,6 @@ module Phlex::Compiler
 			result.visibilities.each do |name, visibility|
 				result.component.__send__(visibility, name) unless visibility == :public
 			end
-
-			inlined = IVAR_GET.bind_call(result.component, :@__phlex_inlined__) || Set.new
-			IVAR_SET.bind_call(result.component, :@__phlex_inlined__, (inlined | result.inlined).freeze)
-
-			inlined_svg = IVAR_GET.bind_call(result.component, :@__phlex_inlined_svg__) || Set.new
-			IVAR_SET.bind_call(result.component, :@__phlex_inlined_svg__, (inlined_svg | result.inlined_svg).freeze)
-
-			inlined_super = IVAR_GET.bind_call(result.component, :@__phlex_inlined_super__) || Set.new
-			IVAR_SET.bind_call(result.component, :@__phlex_inlined_super__, (inlined_super | result.inlined_super).freeze)
 		end
 
 		nil
@@ -535,32 +559,20 @@ module Phlex::Compiler
 		end
 	end
 
-	VISIBILITIES = { public: Module.instance_method(:public_instance_methods), private: Module.instance_method(:private_instance_methods), protected: Module.instance_method(:protected_instance_methods) }.freeze
 	DEFINE_METHOD = Module.instance_method(:define_method)
 
 	INLINED = [:@__phlex_inlined__, :@__phlex_inlined_svg__, :@__phlex_inlined_super__].freeze
 
-	# The component's own methods as they are, with their visibility, and what
-	# those inline.
-	def self.definitions(component)
-		methods = VISIBILITIES.flat_map do |visibility, list|
-			list.bind_call(component, false).filter_map do |name|
-				[name, Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind_call(component, name), visibility] unless revisibilised?(component, name)
-			end
-		end
-
-		[methods, INLINED.to_h { |name| [name, IVAR_GET.bind_call(component, name)] }]
-	end
-
 	# Puts back the methods a compilation that failed partway through replaced,
-	# and what they inlined. What couldn't be put back keeps its record too, so
-	# a change to what it inlined still recompiles it, or raises once frozen.
-	def self.restore(component, (methods, inlined))
+	# and what they inlined, returning whether all of it went back. What
+	# couldn't keeps its record too, so a change to what it inlined still
+	# recompiles it, or raises once frozen.
+	def self.restore(component, rollback)
 		restored = without_redefinition_warnings do
-			methods.map { |name, method, visibility| restore_method(component, name, method, visibility) }.all?
+			(rollback.methods[component] || {}).map { |name, (method, visibility)| restore_method(component, name, method, visibility) }.all?
 		end
 
-		inlined.each do |name, value|
+		rollback.inlined[component].each do |name, value|
 			value = (IVAR_GET.bind_call(component, name) || Set.new) | (value || Set.new) unless restored
 
 			if value
@@ -569,8 +581,24 @@ module Phlex::Compiler
 				REMOVE_IVAR.bind_call(component, name)
 			end
 		end
+
+		restored
 	rescue FrozenError
-		nil
+		false
+	end
+
+	# The source maps of a failed compilation's generations are kept only for
+	# the classes still running their methods.
+	def self.discard_generations(paths, components)
+		discarded = paths.select do |path|
+			next false unless (owners = GENERATION_COMPONENTS[path])
+
+			components.each { |component| owners.delete(component) }
+			owners.keys.empty?
+		end
+
+		discarded.each { |path| GENERATION_COMPONENTS.delete(path) }
+		Phlex.__remove_compiled_source_maps__(discarded) if discarded.any?
 	end
 
 	# Only what compiling installed is put back, not what another thread defined
