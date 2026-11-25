@@ -1207,6 +1207,64 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "forgetting the last subclass releases the source maps its forgotten parent kept" do
+		with_component_files(
+			"deferred.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleDeferredParent < Phlex::HTML
+					def view_template = div { "deferred" }
+				end
+
+				class LifecycleDeferredChild < LifecycleDeferredParent
+				end
+			RUBY
+		) do
+			parent = LifecycleDeferredParent
+			child = LifecycleDeferredChild
+			Phlex::Compiler.compile(parent)
+			compiled_path = parent.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleDeferredParent)
+			Phlex::Compiler.forget(parent)
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+
+			Object.__send__(:remove_const, :LifecycleDeferredChild)
+			Phlex::Compiler.forget(child)
+			refute Phlex.__compiled_source_maps__.key?(compiled_path)
+			refute Phlex::Compiler::GENERATION_COMPONENTS.key?(compiled_path)
+		end
+	end
+
+	test "forgetting a component keeps a shared generation another owner's live subclass inherits" do
+		with_component_files(
+			"shared_inherited.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSharedForgotten < Phlex::HTML
+					def view_template = div { "forgotten" }
+				end
+
+				class LifecycleSharedParent < Phlex::HTML
+					def view_template = div { "parent" }
+				end
+
+				class LifecycleSharedChild < LifecycleSharedParent
+				end
+			RUBY
+		) do
+			forgotten = LifecycleSharedForgotten
+			parent = LifecycleSharedParent
+			Phlex::Compiler.compile_file(parent.instance_method(:view_template).source_location[0], components: [forgotten, parent])
+			compiled_path = parent.instance_method(:view_template).source_location[0]
+
+			Object.__send__(:remove_const, :LifecycleSharedParent)
+			Object.__send__(:remove_const, :LifecycleSharedForgotten)
+			Phlex::Compiler.forget(forgotten)
+
+			assert Phlex.__compiled_source_maps__.key?(compiled_path)
+			assert_equal Phlex::Compiler::GENERATION_COMPONENTS[compiled_path], [parent]
+		end
+	end
+
 	test "a live component can't be forgotten" do
 		with_component_files(
 			"remembered.rb" => <<~RUBY

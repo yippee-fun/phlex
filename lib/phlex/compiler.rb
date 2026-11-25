@@ -217,27 +217,28 @@ module Phlex::Compiler
 		MUTEX.synchronize do
 			FAILURES.delete(component)
 
-			# A live subclass still runs the methods it inherits.
-			next if descendants_of(component).any? { |descendant| live?(descendant) }
+			# A live subclass still runs the methods it inherits, so its ancestor keeps
+			# owning them until the subclass is forgotten too.
+			unless in_use?(component)
+				GENERATION_COMPONENTS.each do |path, owners|
+					next unless owners.any? { |owner| owner.equal?(component) }
 
-			compiled_paths = []
-
-			GENERATION_COMPONENTS.each do |path, components|
-				next unless components.any? { |owner| owner.equal?(component) }
-
-				others = components.reject { |owner| owner.equal?(component) }
-
-				# A generation another live component's methods came from is still needed.
-				if others.any? { |other| live?(other) }
-					GENERATION_COMPONENTS[path] = others.freeze
-				else
-					compiled_paths << path
+					others = owners.reject { |owner| owner.equal?(component) }
+					GENERATION_COMPONENTS[path] = others.freeze if others.any?
 				end
+			end
+
+			compiled_paths = GENERATION_COMPONENTS.filter_map do |path, owners|
+				path if owners.none? { |owner| in_use?(owner) }
 			end
 
 			compiled_paths.each { |path| GENERATION_COMPONENTS.delete(path) }
 			Phlex.__remove_compiled_source_maps__(compiled_paths) if compiled_paths.any?
 		end
+	end
+
+	def self.in_use?(component)
+		live?(component) || descendants_of(component).any? { |descendant| live?(descendant) }
 	end
 
 	# Compiles the methods of the component and its Phlex ancestors wherever
