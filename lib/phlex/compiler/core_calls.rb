@@ -13,7 +13,7 @@ module Phlex::Compiler::CoreCalls
 		Symbol => %i[name],
 		Integer => %i[== > to_s],
 		Float => %i[to_s],
-		Hash => %i[length],
+		Hash => %i[length []],
 		String.singleton_class => %i[===],
 		Symbol.singleton_class => %i[===],
 		Integer.singleton_class => %i[===],
