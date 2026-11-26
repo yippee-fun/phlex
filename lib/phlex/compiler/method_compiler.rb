@@ -38,6 +38,7 @@ module Phlex::Compiler
 			@guarded_blocks = 0
 			@compiling_calls = true
 			@method_locals = Set.new
+			@literal_locals = {}
 		end
 
 		# Returns nil when there's nothing to compile, unless the method is being
@@ -93,6 +94,7 @@ module Phlex::Compiler
 			return node unless @stack.size == 1
 
 			@method_locals = LocalsScanner.names(node)
+			@literal_locals = LiteralLocalsScanner.literals(node)
 
 			if (reserved = (@method_locals | BareCallScanner.names(node)).find { |name| name.start_with?("__phlex_") })
 				@diagnostics.refuse(node, "#{reserved} is a name the compiler reserves for locals; names starting with __phlex_ can't be used")
@@ -349,10 +351,12 @@ module Phlex::Compiler
 
 			@environment.inlined << :block_given?
 
+			opening = append(literal("<#{tag}"), *attributes.parts, literal(">"))
+
 			statements([
 				*attributes.hoisted,
-				append(literal("<#{tag}"), *attributes.parts, literal(">")),
-				Output::Enclosed.new(body: compile_content(node, element: true), closing: "</#{tag}>"),
+				opening,
+				Output::Enclosed.new(body: compile_content(node, element: true), closing: "</#{tag}>", opened: opening.static?),
 				raw("</#{tag}>"),
 				*(flush_after_head if tag == "head"),
 			])
@@ -529,6 +533,12 @@ module Phlex::Compiler
 					[visit(block.body)]
 				in Refract::StatementsNode[body: [statement]] if (content = compile_literal_content(statement))
 					[content]
+				in Refract::StatementsNode[body: [Refract::IntegerNode | Refract::FloatNode => number]] if element && (value = numeric(number)) && formats_objects?
+					[plain(value.to_s)]
+				in Refract::StatementsNode[body: [Refract::LocalVariableReadNode => variable]] if element && (expected = expected(variable) { [content_output(variable, element:)] })
+					[expected]
+				in Refract::StatementsNode[body: [Refract::ConstantReadNode | Refract::ConstantPathNode => constant]] if element && (expected = expected_constant(constant) { |value| [content_output(value, element:)] })
+					[expected]
 				in Refract::StatementsNode[body: [Refract::LocalVariableReadNode | Refract::InstanceVariableReadNode => variable]] if element
 					[content_output(variable, element:)]
 				in Refract::StatementsNode[body: [statement]] if pure?(statement) && element
@@ -549,6 +559,127 @@ module Phlex::Compiler
 					[yield_content(block)]
 				end
 			end
+		end
+
+		# A local only ever assigned a literal that's the same object each time
+		# is expected to hold it, and so to render as the literal would. True
+		# and false aren't, since either can be extended with SafeObject.
+		private def expected(variable)
+			return unless (node = @literal_locals[variable.name])
+
+			value = literal_value(node)
+			return unless String === value || same_as_literal?(value)
+
+			expectation(value, variable) { yield }
+		end
+
+		# A constant is expected to hold what it held when compiling, if that's
+		# a literal Ruby would make the same object of, read into a local before
+		# the output around it.
+		private def expected_constant(constant)
+			return unless (names, root = constant_names(constant)) && (found = @environment.constant_value(names, root:))
+			return unless same_as_literal?(found[0])
+
+			local = @locals.fresh(:expected)
+			expectation(found[0], read(local), [write(local, constant)]) { yield read(local) }
+		end
+
+		private def expectation(value, reader, reads = [])
+			return unless (text = rendered_text(value)) && (literal = expected_literal(value))
+
+			@appends += 1
+			state_local
+			Output::Expected.new(guard: call(literal, :equal?, reader), text:, otherwise: yield, reads:)
+		end
+
+		private def constant_names(node)
+			case node
+			in Refract::ConstantReadNode then [[node.name], false]
+			in Refract::ConstantPathNode[parent: nil] then [[node.name], true]
+			in Refract::ConstantPathNode[parent: Refract::ConstantReadNode | Refract::ConstantPathNode => parent]
+				(names, root = constant_names(parent)) && [[*names, node.name], root]
+			else nil
+			end
+		end
+
+		private def literal_value(node)
+			case node
+			in Refract::StringNode then node.unescaped
+			in Refract::SymbolNode then node.unescaped.to_sym
+			in Refract::IntegerNode | Refract::FloatNode then numeric(node)
+			in Refract::NilNode then nil
+			in Refract::TrueNode then true
+			in Refract::FalseNode then false
+			end
+		end
+
+		VALUE_CLASS = Kernel.instance_method(:class)
+		FROZEN = Kernel.instance_method(:frozen?)
+		INTERNED = String.instance_method(:-@)
+		UNFROZEN = String.instance_method(:+@)
+		INTEGER_TEXT = Integer.instance_method(:to_s)
+		FLOAT_TEXT = Float.instance_method(:to_s)
+		FINITE = Float.instance_method(:finite?)
+		ZERO = Float.instance_method(:zero?)
+		PARSE_INTEGER = Kernel.instance_method(:Integer)
+		PARSE_FLOAT = Kernel.instance_method(:Float)
+
+		# Whether a literal written in the compiled code would evaluate to the
+		# very same object, which is only so for a few immediates and for a
+		# String that's the interned copy of its text. The guard compares with
+		# the interned copy, which never has a singleton class or instance
+		# variables, so this only rules out a guard that could never hold.
+		# Interning a frozen String that can be makes it the interned copy. A
+		# Float zero is left out, since an engine comparing Floats by value
+		# would take -0.0 for 0.0. Only core methods as Ruby loaded them run.
+		private def same_as_literal?(value)
+			klass = VALUE_CLASS.bind_call(value)
+
+			if klass.equal?(String)
+				FROZEN.bind_call(value) && INTERNED.bind_call(value).equal?(value) && INTERNED.bind_call(UNFROZEN.bind_call(value)).equal?(value)
+			elsif klass.equal?(Integer)
+				PARSE_INTEGER.bind_call(self, INTEGER_TEXT.bind_call(value)).equal?(value)
+			elsif klass.equal?(Float)
+				FINITE.bind_call(value) && !ZERO.bind_call(value) && PARSE_FLOAT.bind_call(self, FLOAT_TEXT.bind_call(value)).equal?(value)
+			else
+				klass.equal?(Symbol) || klass.equal?(NilClass)
+			end
+		end
+
+		private def rendered_text(value)
+			case value
+			in String then Phlex::Escape.html_escape(value)
+			in Symbol then Phlex::Escape.html_escape(value.name)
+			in nil then ""
+			in Integer | Float then value.to_s if formats_objects?
+			else nil
+			end
+		end
+
+		private def expected_literal(value)
+			case value
+			in String then call(string(value), :-@)
+			in Symbol then Refract::SymbolNode.new(unescaped: value.name, quoted: true)
+			in Integer then Refract::IntegerNode.new(value:)
+			in Float then Refract::FloatNode.new(value: value.to_s)
+			in nil then Refract::NilNode.new
+			end
+		end
+
+		# A FloatNode holds its literal's source, such as `1e3`.
+		private def numeric(node)
+			case node
+			in Refract::IntegerNode then node.value
+			in Refract::FloatNode then node.prism_node&.value
+			end
+		end
+
+		# An element formats a number its block returns with format_object.
+		private def formats_objects?
+			return false unless @environment.helper?(:format_object)
+
+			@environment.inlined << :format_object
+			true
 		end
 
 		# The runtime outputs a block's value only if the block wrote nothing.
@@ -1173,7 +1304,7 @@ module Phlex::Compiler
 			case node
 			in Refract::StringNode then node.unescaped
 			in Refract::SymbolNode then node.unescaped.to_sym
-			in Refract::IntegerNode | Refract::FloatNode then node.value
+			in Refract::IntegerNode | Refract::FloatNode then numeric(node) || throw(:dynamic)
 			in Refract::TrueNode then true
 			in Refract::FalseNode then false
 			in Refract::NilNode then nil
@@ -1277,6 +1408,10 @@ module Phlex::Compiler
 					text = @locals.fresh(:text)
 					statements([write(text, visit(interpolated)), append(expression(escaped(read(text))))])
 				in [Refract::NilNode] then Refract::NilNode.new
+				in [Refract::IntegerNode | Refract::FloatNode => number] if (value = numeric(number)) && formats_objects? then plain(value.to_s)
+				in [Refract::LocalVariableReadNode => variable] if (expected = expected(variable) { [node] }) then expected
+				in [Refract::ConstantReadNode | Refract::ConstantPathNode => constant] if (expected = expected_constant(constant) { |value| [node.copy(arguments: node.arguments.copy(arguments: [value]))] })
+					expected
 				else return keep_call(node, "its argument isn't a literal or an interpolation")
 			end
 

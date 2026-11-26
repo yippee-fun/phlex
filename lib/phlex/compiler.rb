@@ -39,7 +39,7 @@ require "refract"
 # Redefining one on a class or by including a module recompiles whatever
 # inlined it.
 #
-# Eight differences remain, all deliberate:
+# Nine differences remain, all deliberate:
 # - Changing what an inlined element or helper resolves to through a module
 #   already mixed into a compiled component, or into Phlex::SVG for an inlined
 #   svg block, isn't seen: defining, removing or undefining it on that module,
@@ -80,6 +80,11 @@ require "refract"
 #   range, is a different object in each copy.
 # - Compiling, recompiling or decompiling a class defines its methods again,
 #   so its own `method_added` runs again for each of them.
+# - A constant whose value an element or `plain` renders is read where the
+#   run of output around it starts, so the run can be appended as static text
+#   while the constant holds what it held when compiling. When reading it
+#   raises, as for a constant since removed, or runs code, as an autoload or
+#   `const_missing` does, the text before it in the run isn't appended yet.
 #
 # Methods a component gains from mixins aren't compiled, which only costs speed.
 module Phlex::Compiler
@@ -98,7 +103,7 @@ module Phlex::Compiler
 	Target = Data.define(:component, :name, :line, :compiled, :replaced)
 
 	# What reopening a definition's class and module statements reached.
-	Probe = Data.define(:component, :set, :method_resolver, :refinements)
+	Probe = Data.define(:component, :set, :method_resolver, :refinements, :nesting)
 
 	MUTEX = Mutex.new
 
@@ -689,7 +694,7 @@ module Phlex::Compiler
 		report = parse(<<~RUBY, PROBE_PATH).statements.body.first
 			::Phlex::Compiler.__probe__(self, defined?(Set) && Set, ->(component, name) {
 				::Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind(component).call(name)
-			}, ::Module.used_modules)
+			}, ::Module.used_modules, ::Module.nesting)
 		RUBY
 		program = Refract::StatementsNode.new(body: [*usings, wrap_in_namespace(namespace, [report])])
 		source = Refract::Formatter.new.format_node(program).source
@@ -707,8 +712,8 @@ module Phlex::Compiler
 		SCOPES.pop
 	end
 
-	def self.__probe__(component, set, method_resolver, refinements)
-		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, set:, method_resolver:, refinements:)
+	def self.__probe__(component, set, method_resolver, refinements, nesting)
+		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, set:, method_resolver:, refinements:, nesting:)
 	end
 
 	# Whether the class is still the one its name refers to. After a reload the

@@ -457,6 +457,77 @@ class CompilerLifecycleTest < Quickdraw::Test
 		end
 	end
 
+	test "a component that formatted a number at compile time is recompiled when format_object changes" do
+		with_component_files(
+			"number.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleNumber < Phlex::HTML
+					def view_template = div { 42 }
+				end
+
+				class LifecycleNumberChild < LifecycleNumber
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleNumber)
+			assert LifecycleNumber.instance_variable_get(:@__phlex_inlined__).include?(:format_object)
+			assert_equal LifecycleNumber.new.call, "<div>42</div>"
+
+			LifecycleNumberChild.class_eval { private def format_object(object) = "child #{object}" }
+			assert_equal LifecycleNumberChild.new.call, "<div>child 42</div>"
+			assert_equal LifecycleNumber.new.call, "<div>42</div>"
+
+			LifecycleNumber.class_eval { private def format_object(object) = "parent #{object}" }
+			assert_equal LifecycleNumber.new.call, "<div>parent 42</div>"
+		end
+	end
+
+	test "a constant that raises when read leaves out the text before it in its run" do
+		with_component_files(
+			"gone.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleGoneConstant < Phlex::HTML
+					GONE = "gone"
+
+					def view_template
+						span { "a" }
+						div { GONE }
+					rescue NameError
+						plain "rescued"
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleGoneConstant)
+			assert_equal LifecycleGoneConstant.new.call, "<span>a</span><div>gone</div>"
+
+			LifecycleGoneConstant.__send__(:remove_const, :GONE)
+			assert_equal LifecycleGoneConstant.new.call, "rescued"
+		end
+	end
+
+	test "a constant that raises when read inside an element with dynamic attributes still closes it" do
+		with_component_files(
+			"gone.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleGoneInside < Phlex::HTML
+					GONE = "gone"
+
+					def view_template
+						div(class: @class) { span { GONE } }
+					rescue NameError
+						plain "rescued"
+					end
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleGoneInside)
+			LifecycleGoneInside.__send__(:remove_const, :GONE)
+
+			assert_equal LifecycleGoneInside.new.call, "<div><span></span></div>rescued"
+		end
+	end
+
 	test "a component that inlined an svg block is recompiled when Phlex::SVG changes" do
 		with_component_files(
 			"icon.rb" => <<~RUBY
