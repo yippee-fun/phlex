@@ -77,6 +77,7 @@ class CachingTest < Quickdraw::Test
 	class KeyedCacheTest < Phlex::HTML
 		def initialize(store) = @store = store
 
+		CACHE_LINE = __LINE__ + 2
 		def view_template
 			cache(:a, expires_in: 1) { span }
 			cache(:a) { em }
@@ -90,11 +91,9 @@ class CachingTest < Quickdraw::Test
 
 		assert_equal KeyedCacheTest.new(store).call, "<span></span><em></em>"
 
-		line = KeyedCacheTest.instance_method(:view_template).source_location[1]
-
 		assert_equal store.fetches, [
-			[[Phlex::DEPLOYED_AT, KeyedCacheTest.name, nil, "view_template", line + 1, [:a]], { expires_in: 1 }],
-			[[Phlex::DEPLOYED_AT, KeyedCacheTest.name, nil, "view_template", line + 2, [:a]], {}],
+			[[Phlex::DEPLOYED_AT, KeyedCacheTest.name, nil, "view_template", KeyedCacheTest::CACHE_LINE, [:a]], { expires_in: 1 }],
+			[[Phlex::DEPLOYED_AT, KeyedCacheTest.name, nil, "view_template", KeyedCacheTest::CACHE_LINE + 1, [:a]], {}],
 		]
 	end
 

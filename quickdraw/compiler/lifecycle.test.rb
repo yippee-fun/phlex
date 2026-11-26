@@ -2874,7 +2874,8 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			LifecycleUndefined.undef_method(:span)
 
-			assert_raises(NoMethodError) { LifecycleUndefined.new.call }
+			error = assert_raises(NoMethodError) { LifecycleUndefined.new.call }
+			assert_equal error.name, :span
 		end
 	end
 
@@ -3034,15 +3035,17 @@ class CompilerLifecycleTest < Quickdraw::Test
 		with_component_files(
 			"frozen_raw.rb" => <<~RUBY
 				# frozen_string_literal: true
+				# Its own element, since the frozen classes refuse every later redefinition of what they inlined.
 				class LifecycleFrozenRawBase < Phlex::HTML
+					register_element :lifecycle_frozen_raw
 				end
 
 				class LifecycleFrozenRaw < LifecycleFrozenRawBase
-					def view_template = span { "x" }
+					def view_template = lifecycle_frozen_raw { "x" }
 				end
 
 				class LifecycleFrozenRawSibling < LifecycleFrozenRawBase
-					def view_template = span { "y" }
+					def view_template = lifecycle_frozen_raw { "y" }
 				end
 			RUBY
 		) do
@@ -3052,13 +3055,13 @@ class CompilerLifecycleTest < Quickdraw::Test
 			Module.instance_method(:freeze).bind_call(LifecycleFrozenRawSibling)
 
 			error = assert_raises(Phlex::Compiler::Error) do
-				LifecycleFrozenRawBase.include(Module.new { def helper_beside = nil; def span(**, &) = nil })
+				LifecycleFrozenRawBase.include(Module.new { def helper_beside = nil; def lifecycle_frozen_raw(**, &) = nil })
 			end
 
 			# Neither the module's methods nor subclasses come in any particular order.
 			names, frozen = error.message.match(/\A(.*) can't be redefined: (.*) compiled/).captures
 			assert_equal error.message, "#{names} can't be redefined: #{frozen} compiled it inline and was frozen without Phlex::SGML.freeze restoring it."
-			assert_equal names.split(", ").sort, %w[helper_beside span]
+			assert_equal names.split(", ").sort, %w[helper_beside lifecycle_frozen_raw]
 			assert_equal frozen.split(", ").sort, %w[LifecycleFrozenRaw LifecycleFrozenRawSibling]
 		end
 	end

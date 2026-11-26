@@ -287,7 +287,8 @@ class KitTest < Quickdraw::Test
 		kit.const_set(:Badge, Class.new(Phlex::HTML))
 
 		assert_equal Phlex::Kit.named_path(kit), [:KitTestNamedKit]
-		assert_equal Phlex::Kit.named_path(KitTest), nil
+		assert_nil Phlex::Kit.named_path(Module.new)
+		assert_nil Phlex::Kit.named_path(Module.new.const_set(:Inner, Module.new))
 		assert_equal kit.instance_variable_get(:@__phlex_component_paths__), { Card: [:KitTestNamedKit, :Card], Badge: [:KitTestNamedKit, :Badge] }
 
 		Object.__send__(:remove_const, :KitTestNamedKit)
