@@ -26,6 +26,7 @@ module Phlex::Compiler
 
 		UNINLINABLE_BLOCK = "it has parameters or contains a return, break, next or local assignment"
 		GUARDED_BLOCK_DEPTH_LIMIT = 4
+		COMPILED_HELPERS = Set[:plain, :raw, :whitespace, :doctype, :comment, :svg].freeze
 
 		def initialize(environment, path, diagnostics: Diagnostics.new(path))
 			super()
@@ -116,7 +117,7 @@ module Phlex::Compiler
 				if statement?(node) && node.receiver.nil? && (compiled = compile_call(node))
 					return compiled
 				end
-			elsif @uncompiled_because && node.receiver.nil? && (@environment.element(node.name) || @environment.helper?(node.name))
+			elsif @uncompiled_because && statement?(node) && node.receiver.nil? && compilable?(node.name)
 				keep_call(node, @uncompiled_because)
 			end
 
@@ -127,8 +128,12 @@ module Phlex::Compiler
 		# renders it, as a call to the element would.
 		[Refract::SuperNode, Refract::ForwardingSuperNode].each do |super_node|
 			visit super_node do |node|
-				if @compiling_calls && statement?(node) && (compiled = compile_super(node))
-					return compiled
+				if @compiling_calls
+					if statement?(node) && (compiled = compile_super(node))
+						return compiled
+					end
+				elsif @uncompiled_because && statement?(node) && @definition&.name && @environment.super_element(@definition.name)
+					@diagnostics.report(node, "super keeps its call because #{@uncompiled_because}")
 				end
 
 				super(node)
@@ -150,8 +155,12 @@ module Phlex::Compiler
 			return without_compiling_calls { super(node) } unless node.body
 
 			if @guarded_blocks == GUARDED_BLOCK_DEPTH_LIMIT
-				@diagnostics.report(node, "calls in this block are left to the runtime because it's nested #{GUARDED_BLOCK_DEPTH_LIMIT} blocks deep")
-				return mapping_block_exceptions(without_compiling_calls { super(node) })
+				return mapping_block_exceptions(
+					node.copy(
+						parameters: without_compiling_calls(because: "it's in a parameter default") { visit(node.parameters) },
+						body: without_compiling_calls(because: "it's more than #{GUARDED_BLOCK_DEPTH_LIMIT} blocks deep") { visit(node.body) }
+					)
+				)
 			end
 
 			if (conflict = ReparseScanner.conflict(node))
@@ -194,6 +203,10 @@ module Phlex::Compiler
 					[call(constant("Kernel"), :raise, call(constant("Phlex"), :__map_exception__, read(Locals::EXCEPTION)))]
 				)
 			)
+		end
+
+		private def compilable?(name)
+			@environment.element(name) || (COMPILED_HELPERS.include?(name) && @environment.helper?(name)) || @environment.kit_component(name)
 		end
 
 		private def statement?(node)
