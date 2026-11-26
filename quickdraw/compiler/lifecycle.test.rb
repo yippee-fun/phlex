@@ -2848,4 +2848,110 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert_equal LifecycleLoadedAgain.new.call, %(<div class="x">after</div>)
 		end
 	end
+
+	test "undefining an element a compiled class inlined makes it undefined" do
+		with_component_files(
+			"undefined.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleUndefined < Phlex::HTML
+					def view_template = span { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleUndefined)
+			assert_equal LifecycleUndefined.new.call, "<span>x</span>"
+
+			LifecycleUndefined.undef_method(:span)
+
+			assert_raises(NoMethodError) { LifecycleUndefined.new.call }
+		end
+	end
+
+	test "removing an override a compiled class called inlines the element again" do
+		with_component_files(
+			"removed.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRemoved < Phlex::HTML
+					def view_template = span { "x" }
+
+					def span(**, &) = super(class: "a", &)
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleRemoved)
+			assert_equal LifecycleRemoved.new.call, %(<span class="a">x</span>)
+			refute LifecycleRemoved.instance_variable_get(:@__phlex_inlined__).include?(:span)
+
+			LifecycleRemoved.remove_method(:span)
+
+			assert_equal LifecycleRemoved.new.call, "<span>x</span>"
+			assert LifecycleRemoved.instance_variable_get(:@__phlex_inlined__).include?(:span)
+		end
+	end
+
+	test "including or prepending a module with a private override of an inlined element recompiles" do
+		with_component_files(
+			"private_overrides.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleIncluded < Phlex::HTML
+					def view_template = span { "x" }
+				end
+
+				class LifecyclePrepended < Phlex::HTML
+					def view_template = span { "x" }
+				end
+			RUBY
+		) do
+			override = Module.new do
+				private def span(**, &) = plain("override")
+			end
+
+			Phlex::Compiler.compile(LifecycleIncluded)
+			Phlex::Compiler.compile(LifecyclePrepended)
+
+			LifecycleIncluded.include(override)
+			LifecyclePrepended.prepend(override)
+
+			assert_equal LifecycleIncluded.new.call, "override"
+			assert_equal LifecyclePrepended.new.call, "override"
+			assert LifecyclePrepended.ancestors.first.equal?(override)
+		end
+	end
+
+	test "extending a compiled instance with a private override of an inlined element is refused" do
+		with_component_files(
+			"private_extension.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleExtended < Phlex::HTML
+					def view_template = span { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleExtended)
+
+			assert_raises(Phlex::Compiler::Error) do
+				LifecycleExtended.new.extend(Module.new { private def span(**, &) = plain("override") })
+			end
+		end
+	end
+
+	test "freezing a compiled class stops it inlining, and freezing it again does nothing" do
+		with_component_files(
+			"frozen_twice.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFrozenTwice < Phlex::HTML
+					def view_template = span { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenTwice)
+			assert LifecycleFrozenTwice.instance_variable_get(:@__phlex_inlined__).include?(:span)
+
+			LifecycleFrozenTwice.freeze
+			refute LifecycleFrozenTwice.instance_variable_get(:@__phlex_inlined__)&.include?(:span)
+
+			refute_raises { LifecycleFrozenTwice.freeze }
+			assert_equal LifecycleFrozenTwice.new.call, "<span>x</span>"
+		end
+	end
 end

@@ -31,9 +31,11 @@ class PlainTest < Quickdraw::Test
 	end
 
 	test "with invalid arguments" do
-		assert_raises(Phlex::ArgumentError) do
+		error = assert_raises(Phlex::ArgumentError) do
 			phlex { plain [] }
 		end
+
+		assert_equal error.message, "You've passed an object to plain that is not handled by format_object. See https://rubydoc.info/gems/phlex/Phlex/SGML#format_object-instance_method for more information"
 	end
 
 	test "rejects a block without yielding or outputting the content" do

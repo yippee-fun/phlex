@@ -27,4 +27,15 @@ class RawTest < Quickdraw::Test
 		output = phlex { div { raw "" } }
 		assert_equal output, "<div></div>"
 	end
+
+	test "outputs nothing outside a selected fragment" do
+		component = Class.new(Phlex::HTML) do
+			def view_template
+				raw safe("<hr>")
+				fragment("a") { raw safe("<br>") }
+			end
+		end
+
+		assert_equal component.new.call(fragments: ["a"]), "<br>"
+	end
 end
