@@ -493,4 +493,27 @@ class SelectiveRenderingFromCacheTest < Quickdraw::Test
 			assert_equal component.events, []
 		end
 	end
+
+	class CapturedDuplicateTest < Phlex::HTML
+		attr_reader :cache_store
+
+		def initialize(cache_store:)
+			@cache_store = cache_store
+		end
+
+		def view_template
+			low_level_cache("outer") do
+				fragment("target") { h1 { "First" } }
+				raw safe(capture { fragment("target") { h2 { "Second" } } })
+			end
+		end
+	end
+
+	test "a fragment in captured content doesn't replace an earlier one with its name" do
+		cache_store = Phlex::FIFOCacheStore.new
+
+		2.times do
+			assert_equal CapturedDuplicateTest.new(cache_store:).call(fragments: ["target"]), "<h1>First</h1>"
+		end
+	end
 end

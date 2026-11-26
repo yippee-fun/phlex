@@ -251,4 +251,46 @@ class FIFOCacheStoreTest < Quickdraw::Test
 
 		assert_equal store.fetch("a") { "missed" }, "missed"
 	end
+
+	private def frozen_hit?(value)
+		store = Phlex::FIFOCacheStore.new
+		store.fetch("key") { value }
+		hit = store.fetch("key") { failure! { "This block should not have been called." } }
+
+		assert_equal hit, value
+		hit.frozen? && store.fetch("key") { nil }.equal?(hit)
+	end
+
+	test "a value made of plain objects, true and false included, is a frozen hit" do
+		assert frozen_hit?([true, false, nil, :a, 1, 1.5, "a", { "a" => [true] }])
+	end
+
+	test "a value holding a subclass, a hash with a default, or a shared container is loaded on each hit" do
+		stub_const("FIFOCacheStoreTestArray", Class.new(Array))
+		stub_const("FIFOCacheStoreTestHash", Class.new(Hash))
+		stub_const("FIFOCacheStoreTestString", Class.new(String))
+
+		shared_hash = { "a" => 1 }
+		shared_array = [1]
+
+		refute frozen_hit?([FIFOCacheStoreTestArray.new([1])])
+		refute frozen_hit?([FIFOCacheStoreTestHash[1, 2]])
+		refute frozen_hit?({ "a" => FIFOCacheStoreTestString.new("b") })
+		refute frozen_hit?([FIFOCacheStoreTestString.new("b")])
+		refute frozen_hit?([Hash.new(0).merge!("a" => 1)])
+		refute frozen_hit?([{}.compare_by_identity])
+		refute frozen_hit?([shared_hash, shared_hash])
+		refute frozen_hit?([shared_array, shared_array])
+	end
+
+	test "keys made of objects with cache keys hit for another object with the same cache key" do
+		record = Struct.new(:cache_key)
+		store = Phlex::FIFOCacheStore.new
+
+		store.fetch([record.new("a"), { b: record.new("b") }]) { "value" }
+		store.fetch(false) { "false" }
+
+		assert_equal store.fetch([record.new("a"), { b: record.new("b") }]) { "miss" }, "value"
+		assert_equal store.fetch(false) { "miss" }, "false"
+	end
 end

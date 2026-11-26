@@ -65,4 +65,30 @@ class SVGTest < Quickdraw::Test
 		component.call
 		assert_equal returned, [nil, nil]
 	end
+
+	test "cdata outputs nothing outside a selected fragment" do
+		component = Class.new(Phlex::SVG) do
+			def view_template
+				cdata("a")
+				cdata { "b" }
+				fragment("x") { cdata("c") }
+			end
+		end
+
+		assert_equal component.new.call(fragments: ["x"]), "<![CDATA[c]]>"
+	end
+
+	test "cdata takes a String or a block, not both or neither" do
+		[-> (c) { c.cdata("a") { "b" } }, lambda(&:cdata), -> (c) { c.cdata(:a) }, -> (c) { c.cdata(:a) { "b" } }].each do |call|
+			error = assert_raises(Phlex::ArgumentError) { Phlex::SVG.call { |c| call.(c) } }
+			assert_equal error.message, "Expected a String or block."
+		end
+	end
+
+	test "Phlex.svg copies the caller's instance variables, but not over the component's own" do
+		@title = "x"
+		@_state = :not_a_state
+
+		assert_equal Phlex.svg { text { @title } }, "<text>x</text>"
+	end
 end

@@ -22,4 +22,8 @@ class HTMLSVGTest < Quickdraw::Test
 	test "rendering SVG inside HTML components" do
 		assert_equal %(<svg><path d="321"></path></svg>), Example.call
 	end
+
+	test "rendering SVG with attributes and without content" do
+		assert_equal Phlex.html { svg(class: "icon") }, %(<svg class="icon"></svg>)
+	end
 end

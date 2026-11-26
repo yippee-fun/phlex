@@ -115,4 +115,28 @@ class FIFOTest < Quickdraw::Test
 
 		assert_equal fifo.max_bytesize, 25
 	end
+
+	Colliding = Struct.new(:name) do
+		def hash = 1
+
+		def eql?(other) = Colliding === other && name == other.name
+	end
+
+	test "keys whose hashes collide don't read each other's values" do
+		fifo = Phlex::FIFO.new
+		fifo[Colliding.new("a")] = "A"
+
+		assert_nil fifo[Colliding.new("b")]
+		assert_equal fifo.fetch(Colliding.new("b")) { "B" }, "B"
+		assert_equal fifo[Colliding.new("a")], "A"
+	end
+
+	test "storing a key again counts it once" do
+		fifo = Phlex::FIFO.new
+		fifo[:a] = "abc"
+		fifo[:a] = "abc"
+
+		assert_equal fifo.bytesize, 3
+		assert_equal fifo.size, 1
+	end
 end

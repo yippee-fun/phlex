@@ -900,6 +900,29 @@ class AttributesTest < Quickdraw::Test
 		sneaky = Class.new(String) { def downcase(*) = "https://example.com" }
 
 		assert_equal phlex { a(href: sneaky.new("javascript:alert('sneaky')")) }, %(<a></a>)
+		assert_equal phlex(Phlex::SVG) { animate(attributeName: "href", values: sneaky.new("#a;javascript:alert('sneaky')")) }, %(<animate attributeName="href"></animate>)
+	end
+
+	test "a script URL hidden by character references and whitespace is dropped" do
+		assert_equal phlex { a(href: "&#106;ava&#9;script:alert(1)") }, %(<a></a>)
+		assert_equal phlex(Phlex::SVG) { animate(attributeName: "href", values: "#a;&#106;avascript:alert(1)") }, %(<animate attributeName="href"></animate>)
+		assert_equal phlex(Phlex::SVG) { animate(attributeName: "href", values: "#a;&#106;ava&#9;script:alert(1)") }, %(<animate attributeName="href"></animate>)
+		assert_equal phlex(Phlex::SVG) { animate(attributeName: "href", values: "#a;JAVASCRIPT:alert(1)") }, %(<animate attributeName="href"></animate>)
+	end
+
+	test "a values list with a j and a colon that isn't a script URL is kept" do
+		assert_equal phlex(Phlex::SVG) { animate(attributeName: "href", values: "#jump;b:c") }, %(<animate attributeName="href" values="#jump;b:c"></animate>)
+	end
+
+	test "a Time that has iso8601 is serialised with it" do
+		time = Time.utc(2024, 1, 2, 3, 4, 5)
+		def time.iso8601 = "2024-01-02T03:04:05Z"
+
+		assert_equal phlex { div(datetime: time, data: { at: time }) }, %(<div datetime="2024-01-02T03:04:05Z" data-at="2024-01-02T03:04:05Z"></div>)
+	end
+
+	test "a style object that converts to an empty Hash renders no style" do
+		assert_equal phlex { div(style: Data.define.new) }, %(<div></div>)
 	end
 
 	test "checked names are cached up to a limit, in shareable hashes" do
@@ -1202,5 +1225,10 @@ class AttributesTest < Quickdraw::Test
 		assert_equal phlex { div(data: []) }, %(<div></div>)
 		assert_equal Phlex::SGML::Attributes.reference_attribute(:data, "data", { controller: "x" }), %( data-controller="x")
 		assert_equal phlex { object(data: safe("javascript:alert(1)")) }, %(<object data="javascript:alert(1)"></object>)
+	end
+
+	test "commas inside list tokens are escaped so they don't split the list" do
+		assert_equal phlex { link(media: ["a,b", "c"], sizes: ["1,2", "3"]) }, %(<link media="a%2Cb, c" sizes="1%2C2, 3">)
+		assert_equal phlex { input(type: "file", accept: ["a,b", "c"]) }, %(<input type="file" accept="a%2Cb, c">)
 	end
 end

@@ -55,6 +55,13 @@ class SafeTest < Quickdraw::Test
 		assert_equal Phlex::SGML::SafeValue.new("x").hash, Phlex::SGML::SafeValue.new("x").hash
 	end
 
+	test "safe values with different strings are different" do
+		refute_equal Phlex::SGML::SafeValue.new("x"), Phlex::SGML::SafeValue.new("y")
+		refute Phlex::SGML::SafeValue.new("x").eql?(Phlex::SGML::SafeValue.new("y"))
+		refute_equal Phlex::SGML::SafeValue.new("x").hash, Phlex::SGML::SafeValue.new("y").hash
+		refute_equal Phlex::SGML::SafeValue.new("x").hash, Class.new(Phlex::SGML::SafeValue).new("x").hash
+	end
+
 	test "cached unsafe and safe reference attributes stay distinct" do
 		2.times do
 			assert_equal phlex { a(href: "javascript:alert(1)") }, %(<a></a>)
