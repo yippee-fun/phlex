@@ -245,8 +245,9 @@ class KitTest < Quickdraw::Test
 
 		assert_equal page.call, "<h1>Card</h1>"
 		assert_equal Phlex.html { KitTestAutoloadKit::Badge() }, "<h1>Badge</h1>"
-		assert kit.respond_to?(:Panel)
 		assert page.new.respond_to?(:Panel)
+		refute page.new.respond_to?(:Missing)
+		refute page.new.respond_to?(:panel)
 	end
 
 	test "a kit only answers for its components" do

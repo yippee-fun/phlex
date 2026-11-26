@@ -446,11 +446,14 @@ HTML
 
 	[[HTMLComponent, :div], [SVGComponent, :g]].each do |component, name|
 		test "#{component.name} yields the component outside a selected fragment" do
-			output = component.new(name).call(fragments: ["a"]) do |c|
-				c.fragment("a") { c.tag(name, id: "inner") }
+			outside = Class.new(component.superclass) do
+				define_method(:view_template) do
+					tag(name)
+					tag(name) { |c| c.fragment("a") { c.tag(name, id: "inner") } }
+				end
 			end
 
-			assert_equal output, %(<#{name} id="inner"></#{name}>)
+			assert_equal outside.new.call(fragments: ["a"]), %(<#{name} id="inner"></#{name}>)
 		end
 
 		test "#{component.name} refuses a String tag name" do

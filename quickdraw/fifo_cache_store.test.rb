@@ -284,13 +284,24 @@ class FIFOCacheStoreTest < Quickdraw::Test
 	end
 
 	test "keys made of objects with cache keys hit for another object with the same cache key" do
-		record = Struct.new(:cache_key)
+		record = Class.new do
+			define_method(:initialize) { |key| @key = key }
+			define_method(:cache_key) { @key }
+		end
+
+		versioned = Class.new(record) do
+			define_method(:cache_key_with_version) { "#{@key}-v1" }
+		end
+
 		store = Phlex::FIFOCacheStore.new
 
 		store.fetch([record.new("a"), { b: record.new("b") }]) { "value" }
+		store.fetch(versioned.new("c")) { "versioned" }
 		store.fetch(false) { "false" }
 
 		assert_equal store.fetch([record.new("a"), { b: record.new("b") }]) { "miss" }, "value"
+		assert_equal store.fetch(versioned.new("c")) { "miss" }, "versioned"
+		assert_equal store.fetch("c-v1") { "miss" }, "versioned"
 		assert_equal store.fetch(false) { "miss" }, "false"
 	end
 end
