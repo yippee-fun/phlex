@@ -91,6 +91,57 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		end
 	end
 
+	# Only CRuby can tell an attr_reader from a def, so elsewhere one counts as a def with no definition at its line.
+	test "a method that's live in another class of the file doesn't count as edited" do
+		stub(Phlex::Compiler, :defined_by_def?) { |_method| true }
+
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "elsewhere.rb")
+			File.write(path, <<~RUBY)
+				class ElsewhereDefined < Phlex::HTML
+					def store = "defined"
+					def view_template = div { store }
+				end
+
+				class ElsewhereRead < Phlex::HTML
+					attr_reader :store
+					def view_template = span { "read" }
+				end
+			RUBY
+			load path
+
+			refute_raises { Phlex::Compiler.compile(ElsewhereRead) }
+			refute_raises { Phlex::Compiler.compile(ElsewhereDefined) }
+
+			assert Phlex.__compiled_source_maps__.key?(ElsewhereDefined.instance_method(:view_template).source_location[0])
+			assert_equal ElsewhereDefined.new.call, "<div>defined</div>"
+		ensure
+			Object.__send__(:remove_const, :ElsewhereDefined)
+			Object.__send__(:remove_const, :ElsewhereRead)
+		end
+	end
+
+	test "a def replaced by a method that looks like a def in the same class still counts as edited" do
+		stub(Phlex::Compiler, :defined_by_def?) { |_method| true }
+
+		Dir.mktmpdir do |dir|
+			path = File.join(dir, "replaced.rb")
+			File.write(path, <<~RUBY)
+				class ReplacedDefinition < Phlex::HTML
+					def store = "defined"
+					attr_reader :store
+					def view_template = div { "x" }
+				end
+			RUBY
+			load path
+
+			error = assert_raises(Phlex::Compiler::Error) { Phlex::Compiler.compile(ReplacedDefinition) }
+			assert_equal error.message, "#{path}:2: no live method is defined at this line, so the file has changed since it was loaded"
+		ensure
+			Object.__send__(:remove_const, :ReplacedDefinition)
+		end
+	end
+
 	test "a compiled method is explained from its source, as it was before compiling" do
 		Dir.mktmpdir do |dir|
 			path = File.join(dir, "clean.rb")

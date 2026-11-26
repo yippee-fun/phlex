@@ -133,7 +133,8 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 	# from `attr_reader` or `define_method`, is never a target. It means the
 	# file has changed since it was loaded when a live method of the same name
 	# has no definition at its own line, in which case compiling from this
-	# file would install the wrong code. A compiled method was always made by
+	# file would install the wrong code, unless the definition is plainly in
+	# another class than the live method. A compiled method was always made by
 	# `def`, so its line having no definition of it means the same, and
 	# recompiling would leave the compiled method in place.
 	private def definitions_by_namespace
@@ -155,13 +156,36 @@ class Phlex::Compiler::FileCompiler < Refract::Visitor
 			compiled.each { |definition| @diagnostics.report(definition.node, "#{definition.node.name} is already compiled") }
 
 			unmatched.each do |definition|
-				next unless orphaned.any? { |target| target.name == definition.node.name }
+				next unless orphaned.any? { |target| target.name == definition.node.name && !elsewhere?(target.component, namespace) }
 
 				@diagnostics.refuse(definition.node, "no live method is defined at this line, so the file has changed since it was loaded")
 			end
 
 			[namespace, targeted] unless targeted.empty?
 		end.to_h
+	end
+
+	# Whether the namespace's constant path names a loaded module other than
+	# the component. One that can't be read without evaluating anything, such
+	# as a path from `::`, may be the component.
+	private def elsewhere?(component, namespace)
+		names = namespace.flat_map { |scope| constant_names(scope.constant_path) or return false }
+
+		owner = names.reduce(Object) do |found, name|
+			return false unless Module === found && Phlex::Compiler::CONST_DEFINED.bind_call(found, name, false) && !Phlex::Compiler::AUTOLOAD.bind_call(found, name, false)
+
+			Phlex::Compiler::CONST_GET.bind_call(found, name, false)
+		end
+
+		Module === owner && !owner.equal?(component)
+	end
+
+	private def constant_names(path)
+		case path
+		in Refract::ConstantReadNode then [path.name]
+		in Refract::ConstantPathNode[parent: Refract::ConstantReadNode | Refract::ConstantPathNode => parent] then (names = constant_names(parent)) && [*names, path.name]
+		else nil
+		end
 	end
 
 	# Two definitions on one line share a source location, so a live method
