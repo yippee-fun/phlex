@@ -474,4 +474,70 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 			Object.__send__(:remove_const, :DiagnosticsCase)
 		end
 	end
+
+	# bson includes a module defining == into NilClass. Compiled code and the
+	# runtime both reach it only through ===, so they still agree.
+	test "a == defined in Ruby on nil and true doesn't stop compiling" do
+		output = in_ruby(<<~RUBY)
+			module Specialized
+				def ==(other) = self.class == other.class
+			end
+
+			NilClass.include(Specialized)
+			TrueClass.include(Specialized)
+		RUBY
+
+		compiled, before, after = output.lines(chomp: true)
+		assert_equal compiled, "true"
+		assert_equal after, before
+	end
+
+	test "a === defined in Ruby on nil stops compiling" do
+		output = in_ruby(<<~RUBY)
+			NilClass.prepend(Module.new { def ===(other) = super })
+		RUBY
+
+		assert output.include?("NilClass#=== is redefined, and compiled code calls it where the runtime calls the original")
+	end
+
+	private def in_ruby(setup)
+		Dir.mktmpdir do |dir|
+			component_path = File.join(dir, "component.rb")
+			script_path = File.join(dir, "script.rb")
+
+			File.write(component_path, <<~RUBY)
+				# frozen_string_literal: true
+				class RedefinedCore < Phlex::HTML
+					def initialize(truthy, impostor)
+						@truthy = truthy
+						@impostor = impostor
+					end
+
+					def view_template
+						div(hidden: @truthy)
+						div { @impostor }
+					end
+				end
+			RUBY
+
+			File.write(script_path, <<~RUBY)
+				require "phlex"
+				require "phlex/compiler"
+				#{setup}
+				load #{component_path.inspect}
+
+				impostor = Object.new
+				def impostor.class = NilClass
+				truthy = Object.new
+				def truthy.class = TrueClass
+
+				render = -> { RedefinedCore.new(truthy, impostor).call rescue $!.class.name }
+				before = render.()
+				Phlex::Compiler.compile(RedefinedCore)
+				puts Phlex::Compiler.compiled?(RedefinedCore), before, render.()
+			RUBY
+
+			IO.popen([RbConfig.ruby, "-I", File.expand_path("../../lib", __dir__), script_path], err: [:child, :out], &:read)
+		end
+	end
 end
