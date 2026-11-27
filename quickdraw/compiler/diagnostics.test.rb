@@ -492,8 +492,11 @@ class CompilerDiagnosticsTest < Quickdraw::Test
 		assert_equal after, before
 	end
 
-	test "a === defined in Ruby on nil stops compiling" do
+	# Only CRuby can tell a core method was replaced before the compiler loaded,
+	# so this replaces it after.
+	test "a === redefined on nil stops compiling" do
 		output = in_ruby(<<~RUBY)
+			Phlex::Compiler::CoreCalls
 			NilClass.prepend(Module.new { def ===(other) = super })
 		RUBY
 
