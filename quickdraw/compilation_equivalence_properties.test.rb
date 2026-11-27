@@ -6,7 +6,7 @@ require "attribute_shapes"
 class CompilationEquivalencePropertiesTest < Quickdraw::Test
 	include AttributeGenerators
 
-	Interpreted = AttributeShapes.dup
+	Interpreted = AttributeShapes.dup.tap { |klass| klass.compile false }
 
 	def setup
 		Phlex::Compiler.compile(AttributeShapes)

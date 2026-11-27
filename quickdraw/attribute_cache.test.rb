@@ -178,4 +178,35 @@ class AttributeCacheTest < Quickdraw::Test
 		assert cache.bytesize <= 200
 		assert cache.size < 20
 	end
+
+	test "caches attributes whose snapshot and output exactly fill a value's budget, and no more" do
+		[["abc", %( title="abc")], [Phlex::SGML::SafeValue.new("abc"), %( title="abc")]].each do |title, output|
+			cost = output.bytesize + (3 * Cache::SLOT_BYTESIZE) + 3
+
+			exact = Cache.new(max_value_bytesize: cost)
+			exact.fetch({ title: }) { output }
+			exact[{ id: title }] = output
+			assert_equal exact.size, 2
+
+			short = Cache.new(max_value_bytesize: cost - 1)
+			short.fetch({ title: }) { output }
+			short[{ id: title }] = output
+			assert_equal short.size, 0
+		end
+	end
+
+	test "[]= doesn't cache a value larger than a value may be" do
+		cache = Cache.new(max_value_bytesize: 5)
+		cache[{ id: :a }] = "123456"
+
+		assert_equal cache.size, 0
+	end
+
+	test "doesn't freeze the attributes it snapshots" do
+		classes = ["a", ["b"]]
+		fetch({ class: classes })
+
+		refute classes.frozen?
+		refute classes[1].frozen?
+	end
 end

@@ -543,6 +543,8 @@ class CompilerLifecycleTest < Quickdraw::Test
 
 			# Aliasing a method to itself redefines it without changing it.
 			Phlex::SVG.class_eval { alias_method :path, :path }
+			# Otherwise path is Phlex::SVG's own copy, which the compiler no longer inlines.
+			defer { Phlex::SVG.remove_method(:path) }
 
 			refute_equal LifecycleIcon.instance_method(:view_template).source_location, before
 			assert_equal LifecycleIcon.new.call, %(<svg><path d="M0"></path></svg>)
@@ -2468,12 +2470,19 @@ class CompilerLifecycleTest < Quickdraw::Test
 				class LifecycleRemembered < Phlex::HTML
 					def view_template = div { "x" }
 				end
+
+				class LifecycleRememberedToo < Phlex::HTML
+					def view_template = div { "y" }
+				end
 			RUBY
 		) do
 			Phlex::Compiler.compile(LifecycleRemembered)
 
 			error = assert_raises(ArgumentError) { Phlex::Compiler.forget(LifecycleRemembered) }
 			assert_equal error.message, "Can't forget LifecycleRemembered because it's still loaded."
+
+			error = assert_raises(ArgumentError) { Phlex::Compiler.forget(LifecycleRemembered, LifecycleRememberedToo) }
+			assert_equal error.message, "Can't forget LifecycleRemembered, LifecycleRememberedToo because they're still loaded."
 		end
 	end
 
@@ -2538,7 +2547,9 @@ class CompilerLifecycleTest < Quickdraw::Test
 			RUBY
 		) do
 			with_lazy_compilation do
+				assert_equal Phlex::Compiler.enabled?, true
 				Phlex::Compiler.disable!
+				assert_equal Phlex::Compiler.enabled?, false
 				assert_equal LifecycleDisabled.call, "<div>disabled</div>"
 				Phlex::Compiler.precompile(LifecycleDisabled)
 			end
@@ -2846,6 +2857,272 @@ class CompilerLifecycleTest < Quickdraw::Test
 			load path
 
 			assert_equal LifecycleLoadedAgain.new.call, %(<div class="x">after</div>)
+		end
+	end
+
+	test "undefining an element a compiled class inlined makes it undefined" do
+		with_component_files(
+			"undefined.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleUndefined < Phlex::HTML
+					def view_template = span { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleUndefined)
+			assert_equal LifecycleUndefined.new.call, "<span>x</span>"
+
+			LifecycleUndefined.undef_method(:span)
+
+			error = assert_raises(NoMethodError) { LifecycleUndefined.new.call }
+			assert_equal error.name, :span
+		end
+	end
+
+	test "removing an override a compiled class called inlines the element again" do
+		with_component_files(
+			"removed.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRemoved < Phlex::HTML
+					def view_template = span { "x" }
+
+					def span(**, &) = super(class: "a", &)
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleRemoved)
+			assert_equal LifecycleRemoved.new.call, %(<span class="a">x</span>)
+			refute LifecycleRemoved.instance_variable_get(:@__phlex_inlined__).include?(:span)
+
+			LifecycleRemoved.remove_method(:span)
+
+			assert_equal LifecycleRemoved.new.call, "<span>x</span>"
+			assert LifecycleRemoved.instance_variable_get(:@__phlex_inlined__).include?(:span)
+		end
+	end
+
+	test "including or prepending a module with a private override of an inlined element recompiles" do
+		with_component_files(
+			"private_overrides.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleIncluded < Phlex::HTML
+					def view_template = span { "x" }
+				end
+
+				class LifecyclePrepended < Phlex::HTML
+					def view_template = span { "x" }
+				end
+			RUBY
+		) do
+			override = Module.new do
+				private def span(**, &) = plain("override")
+			end
+
+			Phlex::Compiler.compile(LifecycleIncluded)
+			Phlex::Compiler.compile(LifecyclePrepended)
+
+			LifecycleIncluded.include(override)
+			LifecyclePrepended.prepend(override)
+
+			assert_equal LifecycleIncluded.new.call, "override"
+			assert_equal LifecyclePrepended.new.call, "override"
+			assert LifecyclePrepended.ancestors.first.equal?(override)
+		end
+	end
+
+	test "extending a compiled instance with a private override of an inlined element is refused" do
+		with_component_files(
+			"private_extension.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleExtended < Phlex::HTML
+					def view_template = span { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleExtended)
+
+			assert_raises(Phlex::Compiler::Error) do
+				LifecycleExtended.new.extend(Module.new { private def span(**, &) = plain("override") })
+			end
+		end
+	end
+
+	test "freezing a compiled class stops it inlining, and freezing it again does nothing" do
+		with_component_files(
+			"frozen_twice.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleFrozenTwice < Phlex::HTML
+					def view_template = span { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenTwice)
+			assert LifecycleFrozenTwice.instance_variable_get(:@__phlex_inlined__).include?(:span)
+
+			LifecycleFrozenTwice.freeze
+			refute LifecycleFrozenTwice.instance_variable_get(:@__phlex_inlined__)&.include?(:span)
+
+			refute_raises { LifecycleFrozenTwice.freeze }
+			assert_equal LifecycleFrozenTwice.new.call, "<span>x</span>"
+		end
+	end
+
+	test "a module that redefines an inlined element among other methods recompiles what inlined it" do
+		with_component_files(
+			"mixed_module.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleMixedModule < Phlex::HTML
+					def view_template = span { "x" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleMixedModule)
+			LifecycleMixedModule.include(Module.new { def helper_beside = nil; def span(**, &) = plain("included span") })
+
+			assert_equal LifecycleMixedModule.new.call, "included span"
+		end
+	end
+
+	test "redefining an element on a parent recompiles a subclass whose override's super was compiled" do
+		with_component_files(
+			"super_parent.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleSuperParent < Phlex::HTML
+				end
+
+				class LifecycleSuperChild < LifecycleSuperParent
+					def view_template = h1 { "Hello" }
+					def h1(**, &) = super
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleSuperChild)
+			assert_equal LifecycleSuperChild.instance_variable_get(:@__phlex_inlined_super__), Set[:h1]
+
+			LifecycleSuperParent.include(Module.new { def helper_beside = nil; def h1(**, &) = plain("parent h1") })
+			assert_equal LifecycleSuperChild.new.call, "parent h1"
+		end
+	end
+
+	test "a refused instance override names every method and every component that inlined them" do
+		with_component_files(
+			"refused.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleRefusedParent < Phlex::HTML
+					def view_template = div { span { "parent" } }
+				end
+
+				class LifecycleRefusedChild < LifecycleRefusedParent
+					def view_template = div { span { "child" } }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleRefusedParent)
+			Phlex::Compiler.compile(LifecycleRefusedChild)
+
+			error = assert_raises(Phlex::Compiler::Error) do
+				LifecycleRefusedChild.new.extend(Module.new { def div(**, &) = nil; def span(**, &) = nil })
+			end
+
+			# The module's methods come in no particular order.
+			names = error.message[/\A(.*) can't/, 1]
+			assert_equal error.message, "#{names} can't be redefined on a single instance: LifecycleRefusedChild, LifecycleRefusedParent compiled it inline. Redefine it on the class, before compiling."
+			assert_equal names.split(", ").sort, %w[div span]
+		end
+	end
+
+	test "redefining what a class frozen past Phlex::SGML.freeze inlined is refused" do
+		with_component_files(
+			"frozen_raw.rb" => <<~RUBY
+				# frozen_string_literal: true
+				# Its own element, since the frozen classes refuse every later redefinition of what they inlined.
+				class LifecycleFrozenRawBase < Phlex::HTML
+					register_element :lifecycle_frozen_raw
+				end
+
+				class LifecycleFrozenRaw < LifecycleFrozenRawBase
+					def view_template = lifecycle_frozen_raw { "x" }
+				end
+
+				class LifecycleFrozenRawSibling < LifecycleFrozenRawBase
+					def view_template = lifecycle_frozen_raw { "y" }
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleFrozenRaw)
+			Phlex::Compiler.compile(LifecycleFrozenRawSibling)
+			Module.instance_method(:freeze).bind_call(LifecycleFrozenRaw)
+			Module.instance_method(:freeze).bind_call(LifecycleFrozenRawSibling)
+
+			error = assert_raises(Phlex::Compiler::Error) do
+				LifecycleFrozenRawBase.include(Module.new { def helper_beside = nil; def lifecycle_frozen_raw(**, &) = nil })
+			end
+
+			# Neither the module's methods nor subclasses come in any particular order.
+			names, frozen = error.message.match(/\A(.*) can't be redefined: (.*) compiled/).captures
+			assert_equal error.message, "#{names} can't be redefined: #{frozen} compiled it inline and was frozen without Phlex::SGML.freeze restoring it."
+			assert_equal names.split(", ").sort, %w[helper_beside lifecycle_frozen_raw]
+			assert_equal frozen.split(", ").sort, %w[LifecycleFrozenRaw LifecycleFrozenRawSibling]
+		end
+	end
+
+	test "compile_file only compiles the components it's given" do
+		with_component_files(
+			"chosen.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleChosen < Phlex::HTML
+					def view_template = div { "chosen" }
+				end
+
+				class LifecycleNotChosen < Phlex::HTML
+					def view_template = div { "not chosen" }
+				end
+			RUBY
+		) do |(path)|
+			Phlex::Compiler.compile_file(path, components: [LifecycleChosen])
+
+			assert compiled_method?(LifecycleChosen, :view_template)
+			refute compiled_method?(LifecycleNotChosen, :view_template)
+		end
+	end
+
+	test "compile_file refuses a file that doesn't exist" do
+		path = File.join(Dir.tmpdir, "phlex-missing-#{Process.pid}.rb")
+		error = assert_raises(ArgumentError) { Phlex::Compiler.compile_file(path) }
+		assert_equal error.message, "Can’t compile #{path} because it doesn’t exist."
+	end
+
+	test "forget only takes components" do
+		error = assert_raises(ArgumentError) { Phlex::Compiler.forget(Object) }
+		assert_equal error.message, "Expected a Phlex::SGML subclass, got Object."
+	end
+
+	test "compile_file can leave elements uninlined, and recompile what's already compiled" do
+		with_component_files(
+			"options.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleOptions < Phlex::HTML
+					def view_template = div { "options" }
+				end
+
+				class LifecycleOptionsUninlined < Phlex::HTML
+					def view_template = div { "uninlined" }
+				end
+			RUBY
+		) do |(path)|
+			Phlex::Compiler.compile_file(path, components: [LifecycleOptionsUninlined], inline: false)
+			refute compiled_method?(LifecycleOptionsUninlined, :view_template)
+
+			Phlex::Compiler.compile_file(path, components: [LifecycleOptions])
+			first = LifecycleOptions.instance_method(:view_template).source_location
+			assert compiled_method?(LifecycleOptions, :view_template)
+
+			Phlex::Compiler.compile_file(path, components: [LifecycleOptions])
+			assert_equal LifecycleOptions.instance_method(:view_template).source_location, first
+
+			Phlex::Compiler.compile_file(path, components: [LifecycleOptions], recompile: true)
+			refute_equal LifecycleOptions.instance_method(:view_template).source_location, first
+			assert_equal LifecycleOptions.new.call, "<div>options</div>"
 		end
 	end
 end

@@ -62,4 +62,65 @@ class CachingTest < Quickdraw::Test
 			end
 		end
 	end
+
+	class RecordingStore
+		def initialize = @fetches = []
+
+		attr_reader :fetches
+
+		def fetch(key, **options)
+			@fetches << [key, options]
+			yield
+		end
+	end
+
+	class KeyedCacheTest < Phlex::HTML
+		def initialize(store) = @store = store
+
+		CACHE_LINE = __LINE__ + 2
+		def view_template
+			cache(:a, expires_in: 1) { span }
+			cache(:a) { em }
+		end
+
+		private def cache_store = @store
+	end
+
+	test "the cache key names the deploy, class, method and line, and options reach the store" do
+		store = RecordingStore.new
+
+		assert_equal KeyedCacheTest.new(store).call, "<span></span><em></em>"
+
+		assert_equal store.fetches, [
+			[[Phlex::DEPLOYED_AT, KeyedCacheTest.name, nil, "view_template", KeyedCacheTest::CACHE_LINE, [:a]], { expires_in: 1 }],
+			[[Phlex::DEPLOYED_AT, KeyedCacheTest.name, nil, "view_template", KeyedCacheTest::CACHE_LINE + 1, [:a]], {}],
+		]
+	end
+
+	test "the cache key includes the class's identity when cache reloading is enabled" do
+		store = RecordingStore.new
+
+		component = Class.new(KeyedCacheTest) do
+			private def enable_cache_reloading? = true
+
+			private def app_version_key = "v2"
+		end
+
+		component.new(store).call
+
+		assert_equal store.fetches.map { |key, _| key.first(3) }, [["v2", nil, component.object_id]] * 2
+	end
+
+	test "low_level_cache passes options to the store" do
+		store = RecordingStore.new
+
+		component = Class.new(Phlex::HTML) do
+			define_method(:cache_store) { store }
+
+			def view_template = low_level_cache([:key], expires_in: 2) { hr }
+		end
+
+		assert_equal component.call, "<hr>"
+		assert_equal store.fetches, [[[:key], { expires_in: 2 }]]
+	end
 end

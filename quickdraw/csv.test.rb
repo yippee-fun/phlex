@@ -436,4 +436,51 @@ CSV
 
 		assert_includes error.message, "escape_csv_injection?"
 	end
+
+	test "quotes in formula values are doubled, whether or not whitespace is trimmed" do
+		[true, false].each do |trim|
+			example = Class.new(Base) do
+				define_method(:escape_csv_injection?) { true }
+				define_method(:trim_whitespace?) { trim }
+			end
+
+			assert_equal example.new([Product.new(%(=A"B), %(+"x"))]).call, <<~CSV
+				name,price
+				"'=A""B","'+""x"""
+			CSV
+		end
+	end
+
+	test "rows with three or more columns are checked header by header" do
+		example = Class.new(Phlex::CSV) do
+			def escape_csv_injection? = false
+
+			def row_template(row)
+				column("A", row[0])
+				column("B", row[1])
+				column(row[2], row[3])
+			end
+		end
+
+		assert_equal example.new([[1, 2, "C", 3], [4, 5, "C", 6]]).call, <<~CSV
+			A,B,C
+			1,2,3
+			4,5,6
+		CSV
+
+		error = assert_raises(Phlex::RuntimeError) { example.new([[1, 2, "C", 3], [4, 5, "D", 6]]).call }
+		assert_equal error.message, "Header mismatch at index 2: expected C, got D."
+	end
+
+	test "a private custom yielder raises" do
+		example = Class.new(Phlex::CSV) do
+			def escape_csv_injection? = true
+
+			def row_template(name) = column("Name", name)
+
+			private def yielder(item) = yield(item)
+		end
+
+		assert_raises(Phlex::ArgumentError) { example.new(["a"]).call }
+	end
 end

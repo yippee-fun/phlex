@@ -34,3 +34,18 @@ if ENV["PHLEX_COMPILER"] == "false"
 else
 	Phlex::Compiler.enable!(on_failure: -> (component, error) { raise error })
 end
+
+# Quickdraw loads each test file into an anonymous module, but the compiler
+# compiles a component by reopening its class from the top level, as it would
+# be in an app. Loading test files at the top level lets components defined in
+# them compile.
+module QuickdrawTopLevelLoad
+	TEST_ROOT = File.expand_path("../quickdraw", __dir__)
+
+	def load(path, wrap = false)
+		wrap = false if Module === wrap && File.expand_path(path).start_with?("#{TEST_ROOT}/")
+		super
+	end
+end
+
+Kernel.singleton_class.prepend(QuickdrawTopLevelLoad)

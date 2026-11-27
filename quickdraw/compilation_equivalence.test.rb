@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "compiler_helper"
 
 # Every file in compilation_equivalence_cases defines one or more Phlex::SGML
 # subclasses. Each class is rendered in several ways before and after its file
@@ -9,6 +10,8 @@ require "json"
 # A class can add its own renders by defining
 # `def self.equivalence_scenarios = { "name" => ->(klass) { ... } }`.
 class CompilationEquivalenceTest < Quickdraw::Test
+	include CompilerHelper
+
 	CASES_DIR = File.expand_path("compilation_equivalence_cases", __dir__)
 
 	# Cases that can't pass until an upstream fix lands, with the reason.
@@ -104,7 +107,12 @@ class CompilationEquivalenceTest < Quickdraw::Test
 
 	# Returns a description of every observation that changed, or of the compile error.
 	private def compile_and_compare(components, file)
-		before = observe(components, file)
+		# Otherwise the first render compiles them, and compiled output is compared with itself.
+		before = without_lazy_compilation { observe(components, file) }
+
+		if (compiled = components.select { |klass| Phlex::Compiler.compiled?(klass) }).any?
+			return ["#{compiled.join(', ')} compiled before compile_file, so there's nothing to compare with"]
+		end
 
 		begin
 			Phlex::Compiler.compile_file(file)

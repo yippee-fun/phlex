@@ -6,6 +6,10 @@ class ReservedMethodsTest < Quickdraw::Test
 	Identity = Module.new { def __phlex_equal__?(_) = true }
 
 	test "a component can't define __phlex_equal__?" do
+		component = Class.new(Phlex::HTML)
+		error = assert_raises(Phlex::NameError) { component.define_method(:__phlex_equal__?) { |_| true } }
+		assert_equal error.message, "__phlex_equal__? is reserved for compiled blocks, so it can't be defined on #{component.inspect}."
+
 		assert_raises(Phlex::NameError) { Class.new(Phlex::HTML) { def __phlex_equal__?(_) = true } }
 		assert_raises(Phlex::NameError) { Class.new(Phlex::HTML) { define_method(:__phlex_equal__?) { |_| true } } }
 	end

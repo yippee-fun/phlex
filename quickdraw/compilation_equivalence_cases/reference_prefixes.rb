@@ -6,6 +6,7 @@ module EquivalenceCases
 			VALUES = [
 				"1",
 				"javascript:alert(1)",
+				"script:alert(1)",
 				"&#106;avascript:x",
 				%(say "hi"),
 				"café&#233;",
@@ -33,6 +34,8 @@ module EquivalenceCases
 				img(src: "https://example.com/#{@value}.png")
 				a(href: "java#{@value}")
 				a(href: "javascript:#{@value}")
+				a(href: "javascript:void#{@value}")
+				a(href: "#{@value}/page")
 				a(href: "/#{@value}")
 				a(href: "JaVa&#115;cript:#{@value}")
 				a(href: "  Java Script:#{@value}")

@@ -36,7 +36,8 @@ class SGMLTest < Quickdraw::Test
 		instance = component.new
 		instance.call
 
-		assert_raises(Phlex::DoubleRenderError) { instance.call }
+		error = assert_raises(Phlex::DoubleRenderError) { instance.call }
+		assert_equal error.message, "You can't render a #{component.name} more than once. To render a component more than once, pass `rerenderable: true` to `call` each time you render it."
 	end
 
 	test "can render a component again after rendering it with rerenderable: true" do
@@ -120,5 +121,83 @@ class SGMLTest < Quickdraw::Test
 		end
 
 		assert_equal error.message, "You can't render a String."
+	end
+
+	test "can't render Phlex::SGML itself" do
+		error = assert_raises(Phlex::ArgumentError) do
+			Phlex.html { render Phlex::SGML }
+		end
+
+		assert_equal error.message, "You can't render a Phlex::SGML."
+	end
+
+	test "renders a string as text" do
+		assert_equal Phlex.html { render "<b>" }, "&lt;b&gt;"
+	end
+
+	test "renders each item of an enumerable with the block" do
+		item = Class.new(Phlex::HTML) do
+			def initialize(name) = @name = name
+
+			def view_template(&) = li(id: @name, &)
+		end
+
+		output = Phlex.html do
+			render([item.new("a"), item.new("b")]) { "x" }
+		end
+
+		assert_equal output, %(<li id="a">x</li><li id="b">x</li>)
+	end
+
+	test "renders a proc or method with the component unless it takes no arguments" do
+		component = Class.new(Phlex::HTML) do
+			def view_template
+				render -> { span }
+				render proc { |c| c.em(class: "x") }
+				render method(:strong_tag)
+				render method(:bold)
+			end
+
+			def strong_tag = strong
+
+			def bold(c) = c.b
+		end
+
+		assert_equal component.call, %(<span></span><em class="x"></em><strong></strong><b></b>)
+	end
+
+	test "renders nothing for nil without a block" do
+		assert_equal Phlex.html { render nil }, ""
+		assert_equal Phlex.html { render(nil) { "x" } }, "x"
+	end
+
+	test "doesn't render when render? is false" do
+		component = Class.new(Phlex::HTML) do
+			def view_template = span
+
+			private def render? = false
+		end
+
+		instance = component.new
+
+		assert_equal instance.internal_call(state: Phlex::SGML::State.new(user_context: {}, output_buffer: +"", fragments: nil)), ""
+		assert_equal component.call, ""
+	end
+
+	test "the component being rendered is reset once a render ends" do
+		require "components"
+
+		inner = Class.new(Phlex::HTML) do
+			def view_template = span
+		end
+
+		outer = Class.new(Phlex::HTML) do
+			define_method(:view_template) { render inner.new }
+		end
+
+		outer.call
+
+		error = assert_raises(RuntimeError) { Components::SayHi("Joel") }
+		assert_equal error.message, "You can't call `SayHi' outside of a Phlex rendering context."
 	end
 end

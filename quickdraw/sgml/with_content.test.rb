@@ -56,11 +56,21 @@ class WithContentTest < Quickdraw::Test
 	end
 
 	test "with_content requires a block" do
-		assert_raises(Phlex::ArgumentError) { Card.new.with_content }
-		assert_raises(Phlex::ArgumentError) { Card.with_content }
+		assert_equal assert_raises(Phlex::ArgumentError) { Card.new.with_content }.message, "with_content requires a block."
+		assert_equal assert_raises(Phlex::ArgumentError) { Card.with_content }.message, "with_content requires a block."
 	end
 
 	test "new does not capture a block" do
 		assert_equal Card.new { "ignored" }.call, %(<article></article>)
+	end
+
+	test "the class method passes keyword arguments to new" do
+		component = Class.new(Phlex::HTML) do
+			def initialize(title:) = @title = title
+
+			def view_template(&) = h1(title: @title, &)
+		end
+
+		assert_equal component.with_content(title: "a") { "b" }.call, %(<h1 title="a">b</h1>)
 	end
 end

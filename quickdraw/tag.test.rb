@@ -426,7 +426,10 @@ HTML
 		assert_raises(Phlex::ArgumentError) { HTMLComponent.call(:base, href: "/") }
 
 		svg = Class.new(Phlex::SVG) { define_method(:initialize) { |name| @name = name }; define_method(:view_template) { tag(@name) { "alert(1)" } } }
-		%i[script style].each { |name| assert_raises(Phlex::ArgumentError) { svg.new(name).call } }
+		%i[script style].each do |name|
+			error = assert_raises(Phlex::ArgumentError) { svg.new(name).call }
+			assert_equal error.message, "`tag` can't render <#{name}>. Call `#{name}` directly instead."
+		end
 
 		# Calling the element directly still works.
 		assert_equal Class.new(Phlex::HTML) { define_method(:view_template) { script { "" } } }.call, "<script></script>"
@@ -439,5 +442,83 @@ HTML
 		end
 
 		assert_raises(Phlex::ArgumentError) { component.call }
+	end
+
+	[[HTMLComponent, :div], [SVGComponent, :g]].each do |component, name|
+		test "#{component.name} yields the component outside a selected fragment" do
+			outside = Class.new(component.superclass) do
+				define_method(:view_template) do
+					tag(name)
+					tag(name) { |c| c.fragment("a") { c.tag(name, id: "inner") } }
+				end
+			end
+
+			assert_equal outside.new.call(fragments: ["a"]), %(<#{name} id="inner"></#{name}>)
+		end
+
+		test "#{component.name} refuses a String tag name" do
+			error = assert_raises(Phlex::ArgumentError) { component.call(name.name) }
+			assert_equal error.message, "Expected the tag name to be a Symbol."
+		end
+
+		test "#{component.name} flushes only after a head" do
+			chunks = []
+			component.new(name).call(chunks) { |c| c.tag(name) }
+
+			assert_equal chunks, ["<#{name}><#{name}></#{name}></#{name}>"]
+		end
+	end
+
+	test "an HTML element's content block is given the component, not an SVG" do
+		component = Class.new(Phlex::HTML) do
+			def view_template
+				tag(:section) { |c| c.span(class: "x") }
+				tag(:section, id: "a") { |c| c.span(class: "x") }
+			end
+		end
+
+		assert_equal component.call, %(<section><span class="x"></span></section><section id="a"><span class="x"></span></section>)
+	end
+
+	test "an SVG element registered as head flushes" do
+		elements = Module.new do
+			extend Phlex::SGML::Elements
+			register_element :stream_head, tag: "head"
+		end
+
+		component = Class.new(Phlex::SVG) do
+			include elements
+
+			def view_template
+				tag(:stream_head)
+				g
+			end
+		end
+
+		chunks = []
+		component.new.call(chunks)
+
+		assert_equal chunks, ["<head></head>", "<g></g>"]
+	end
+
+	test "a void element registered on an SVG renders new attributes and is normalised" do
+		elements = Module.new do
+			extend Phlex::SGML::Elements
+			__register_void_element__ :point
+			__register_void_element__ :img
+		end
+
+		component = Class.new(Phlex::SVG) do
+			include elements
+
+			define_method(:view_template) do
+				tag(:point, id: "p#{object_id}")
+				tag(:img, srcset: ["a,b", "c"])
+			end
+		end
+
+		instance = component.new
+
+		assert_equal instance.call, %(<point id="p#{instance.object_id}"><img srcset="a%2Cb, c">)
 	end
 end

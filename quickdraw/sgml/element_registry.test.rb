@@ -70,9 +70,10 @@ class ElementRegistryTest < Quickdraw::Test
 
 		elements.register_element(:my_tag, tag:)
 		elements.register_element :other_tag, tag: :"other-tag"
+		elements.__register_void_element__ :void_tag, tag: :"void-tag"
 
 		refute tag.frozen?
-		assert_equal elements.__registered_elements__, { my_tag: "my-tag", other_tag: "other-tag" }
+		assert_equal elements.__registered_elements__, { my_tag: "my-tag", other_tag: "other-tag", void_tag: "void-tag" }
 	end
 
 	test "registrations racing each other are all recorded" do

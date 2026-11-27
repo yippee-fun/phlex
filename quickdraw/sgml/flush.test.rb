@@ -61,4 +61,20 @@ class FlushTest < Quickdraw::Test
 
 		assert_equal chunks, ["<div>", "", "hello</div>"]
 	end
+
+	test "flushing works again once a capture has ended" do
+		component = Class.new(Phlex::HTML) do
+			def view_template
+				capture { flush; span }
+				div
+				flush
+				hr
+			end
+		end
+
+		chunks = []
+		component.new.call(chunks)
+
+		assert_equal chunks, ["<div></div>", "<hr>"]
+	end
 end

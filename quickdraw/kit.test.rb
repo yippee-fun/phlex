@@ -219,4 +219,89 @@ class KitTest < Quickdraw::Test
 			assert_equal run_in_ractor { RactorNamespacedExample.call }, %(<section><hr><br></section>)
 		end
 	end
+
+	test "extending a class with Phlex::Kit raises" do
+		error = assert_raises(Phlex::ArgumentError) { Class.new.extend(Phlex::Kit) }
+		assert_match error.message, /You should only extend modules with `Phlex::Kit`/
+	end
+
+	test "an autoloaded component isn't loaded until it's called, from the kit or a component" do
+		kit = Module.new { extend Phlex::Kit }
+		stub_const("KitTestAutoloadKit", kit)
+		dir = tmpdir
+
+		%w[Card Badge Panel].each do |name|
+			File.write(File.join(dir, "#{name}.rb"), "class KitTestAutoloadKit::#{name} < Phlex::HTML; def view_template = h1 { #{name.inspect} }; end\n")
+			kit.autoload(name.to_sym, File.join(dir, "#{name}.rb"))
+		end
+
+		assert kit.autoload?(:Card)
+		refute kit.method_defined?(:Card)
+
+		page = Class.new(Phlex::HTML) do
+			include kit
+			def view_template = Card()
+		end
+
+		assert_equal page.call, "<h1>Card</h1>"
+		assert_equal Phlex.html { KitTestAutoloadKit::Badge() }, "<h1>Badge</h1>"
+		assert page.new.respond_to?(:Panel)
+		refute page.new.respond_to?(:Missing)
+		refute page.new.respond_to?(:panel)
+	end
+
+	test "a kit only answers for its components" do
+		kit = Module.new { extend Phlex::Kit }
+		kit.const_set(:Card, Class.new(Phlex::HTML) { def view_template = hr })
+		kit.const_set(:Helper, Class.new)
+		kit.const_set(:VERSION, "1")
+		page = Class.new(Phlex::HTML) { include kit }
+
+		[kit, page.new].each do |receiver|
+			assert receiver.respond_to?(:Card)
+			refute receiver.respond_to?(:Helper)
+			refute receiver.respond_to?(:VERSION)
+			refute receiver.respond_to?(:Missing)
+			refute receiver.respond_to?(:card)
+			assert_raises(NoMethodError) { receiver.Helper }
+			assert_raises(NoMethodError) { receiver.Missing }
+		end
+
+		refute Phlex::SGML === kit::Helper.allocate
+		refute kit::Helper.include?(kit)
+	end
+
+	test "a module defined in a kit is a kit" do
+		kit = Module.new { extend Phlex::Kit }
+		nested = kit.const_set(:Nested, Module.new)
+		nested.const_set(:Card, Class.new(Phlex::HTML) { def view_template = hr })
+
+		assert Phlex::Kit === nested
+		assert_equal Phlex.html { nested.Card() }, "<hr>"
+	end
+
+	test "a kit's component paths are found by name" do
+		kit = Module.new { extend Phlex::Kit }
+		stub_const("KitTestNamedKit", kit)
+		kit.const_set(:Card, Class.new(Phlex::HTML))
+		kit.const_set(:Badge, Class.new(Phlex::HTML))
+
+		assert_equal Phlex::Kit.named_path(kit), [:KitTestNamedKit]
+		assert_nil Phlex::Kit.named_path(Module.new)
+		assert_nil Phlex::Kit.named_path(Module.new.const_set(:Inner, Module.new))
+		assert_equal kit.instance_variable_get(:@__phlex_component_paths__), { Card: [:KitTestNamedKit, :Card], Badge: [:KitTestNamedKit, :Badge] }
+
+		Object.__send__(:remove_const, :KitTestNamedKit)
+		Object.const_set(:KitTestNamedKit, Module.new)
+
+		assert_nil Phlex::Kit.named_path(kit)
+	end
+
+	test "an anonymous kit's BEGIN and END components get methods" do
+		kit = Module.new { extend Phlex::Kit }
+		kit.const_set(:BEGIN, Class.new(Phlex::HTML) { def view_template = hr })
+		kit.const_set(:END, Class.new(Phlex::HTML) { def view_template = br })
+
+		assert_equal Phlex.html { kit.public_send(:BEGIN); kit.public_send(:END) }, "<hr><br>"
+	end
 end
