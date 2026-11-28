@@ -3125,4 +3125,47 @@ class CompilerLifecycleTest < Quickdraw::Test
 			assert_equal LifecycleOptions.new.call, "<div>options</div>"
 		end
 	end
+
+	test "compiling doesn't autoload a Set the component's namespace would" do
+		Dir.mktmpdir do |dir|
+			File.write(File.join(dir, "set.rb"), "module LifecycleAutoloadedSet; class Set; end; end\n")
+
+			with_component_files(
+				"autoloaded_set.rb" => <<~RUBY
+					# frozen_string_literal: true
+					module LifecycleAutoloadedSet
+						autoload :Set, #{File.join(dir, 'set.rb').inspect}
+
+						class Component < Phlex::HTML
+							def view_template = div { "x" }
+						end
+					end
+				RUBY
+			) do
+				Phlex::Compiler.compile(LifecycleAutoloadedSet::Component)
+
+				assert compiled_method?(LifecycleAutoloadedSet::Component, :view_template)
+				assert LifecycleAutoloadedSet.autoload?(:Set)
+				assert_equal LifecycleAutoloadedSet::Component.new.call, "<div>x</div>"
+			end
+		end
+	end
+
+	test "a method evaluated from a string under the file's path isn't compiled from the def at its line" do
+		skip "only CRuby can tell an evaluated method from a def" unless defined?(RubyVM::InstructionSequence)
+
+		with_component_files(
+			"evaluated.rb" => <<~RUBY
+				# frozen_string_literal: true
+				class LifecycleEvaluated < Phlex::HTML
+					def view_template = div { "def" }
+					class_eval "def view_template = div { 'evaluated' }", __FILE__, 3
+				end
+			RUBY
+		) do
+			Phlex::Compiler.compile(LifecycleEvaluated)
+
+			assert_equal LifecycleEvaluated.new.call, "<div>evaluated</div>"
+		end
+	end
 end

@@ -71,9 +71,16 @@ require "refract"
 #   compiling isn't noticed. A String subclass whose `gsub` returns something
 #   other than a String, which the serialiser's own paths treat differently,
 #   renders as its path for names it's seen before does.
-# - Method#source_location of a compiled method names the generated source;
-#   exceptions are mapped back to the real file. `local_variables` and
-#   `binding` in a compiled method also see the compiler's `__phlex_` locals.
+# - A compiled method runs from generated source, under a path of its own,
+#   and that's what tools see: Method#source_location, `caller`,
+#   `caller_locations` and `binding.source_location` name it, and so do line
+#   coverage, line breakpoints and TracePoint. An exception's `backtrace` is
+#   mapped back to the real file as it leaves a compiled method, but not its
+#   `backtrace_locations`, which Rails's error page reads, nor the backtrace a
+#   `rescue` in the same method sees. Mapping rescues and raises it again in
+#   each compiled method it leaves, so a `:raise` TracePoint sees it each
+#   time. `local_variables` and `binding` in a compiled method also see the
+#   compiler's `__phlex_` locals.
 # - A block passed to a method the compiler doesn't know is compiled alongside
 #   a copy of the original, used when the block runs with another `self`. A
 #   literal Ruby reuses on each evaluation, such as a regular expression or a
@@ -103,7 +110,7 @@ module Phlex::Compiler
 	Target = Data.define(:component, :name, :line, :compiled, :replaced)
 
 	# What reopening a definition's class and module statements reached.
-	Probe = Data.define(:component, :set, :method_resolver, :refinements, :nesting)
+	Probe = Data.define(:component, :method_resolver, :refinements, :nesting)
 
 	MUTEX = Mutex.new
 
@@ -684,15 +691,15 @@ module Phlex::Compiler
 	end
 
 	# Reopens the class and module statements around a definition with nothing
-	# inside but a call reporting the class reached, what `Set` names there and
-	# the refinements active there. The method resolver captures the file's
+	# inside but a call reporting the class reached, its nesting and the
+	# refinements active there. The method resolver captures the file's
 	# refinements, so element and helper lookup uses the same lexical scope as
 	# the compiled definitions. The statements are copied without their
 	# superclasses, so they only reopen.
 	# Bind and call separately: TruffleRuby's bind_call loses the caller's refinements.
 	def self.probe(namespace, usings: [])
 		report = parse(<<~RUBY, PROBE_PATH).statements.body.first
-			::Phlex::Compiler.__probe__(self, defined?(Set) && Set, ->(component, name) {
+			::Phlex::Compiler.__probe__(self, ->(component, name) {
 				::Phlex::UNBOUND_INSTANCE_METHOD_METHOD.bind(component).call(name)
 			}, ::Module.used_modules, ::Module.nesting)
 		RUBY
@@ -712,8 +719,8 @@ module Phlex::Compiler
 		SCOPES.pop
 	end
 
-	def self.__probe__(component, set, method_resolver, refinements, nesting)
-		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, set:, method_resolver:, refinements:, nesting:)
+	def self.__probe__(component, method_resolver, refinements, nesting)
+		Thread.current[:__phlex_compiler_probe__] = Probe.new(component:, method_resolver:, refinements:, nesting:)
 	end
 
 	# Whether the class is still the one its name refers to. After a reload the
@@ -781,16 +788,18 @@ module Phlex::Compiler
 		end
 	end
 
-	# Whether the method was made by `def`. Only CRuby can tell: a method from
-	# `attr_reader` has no instruction sequence, and one from `define_method`
-	# has a block's. Anything else, or any method elsewhere, is assumed to be,
-	# so a change in how Ruby labels them makes a `def` that an `attr_reader`
-	# or `define_method` replaced refused, rather than stopping compilation.
+	# Whether the method was made by a `def` in the file. Only CRuby can tell:
+	# a method from `attr_reader` has no instruction sequence, one from
+	# `define_method` has a block's, and one from a string evaluated with the
+	# file's path, such as by `class_eval`, has no absolute path. Anything
+	# else, or any method elsewhere, is assumed to be, so a change in how Ruby
+	# labels them makes a `def` that one of those replaced refused, rather
+	# than stopping compilation.
 	def self.defined_by_def?(method)
 		return true unless defined?(RubyVM::InstructionSequence)
 
 		iseq = RubyVM::InstructionSequence.of(method)
-		!iseq.nil? && !iseq.label.start_with?("block ")
+		!iseq.nil? && !iseq.label.start_with?("block ") && !iseq.absolute_path.nil?
 	end
 
 	# Module's own method listings, called directly so a class overriding them
@@ -888,10 +897,18 @@ module Phlex::Compiler
 	# Emacs-style syntax lets the encoding and frozen string literal comments
 	# share that line, which is the only place Ruby reads an encoding from.
 	def self.magic_comments(parse_result)
-		comments = ["coding: #{parse_result.encoding.name}"]
+		comments = ["coding: #{source_encoding(parse_result).name}"]
 		frozen_string_literal = frozen_string_literal(parse_result)
 		comments << "frozen_string_literal: #{frozen_string_literal}" unless frozen_string_literal.nil?
 		"# -*- #{comments.join('; ')} -*-\n"
+	end
+
+	# Prism reports a binary file with valid UTF-8 in it as UTF-8, so the
+	# encoding is read from the first two lines, the only ones Ruby reads it
+	# from, with anything that isn't ASCII replaced.
+	def self.source_encoding(parse_result)
+		head = parse_result.source.source.b.each_line.first(2).join.gsub(/[^\x00-\x7F]/n, "?")
+		Prism.parse(head).encoding
 	end
 
 	# Ruby only reads a frozen string literal comment from the comment block
