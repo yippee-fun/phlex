@@ -57,11 +57,11 @@ class Phlex::Compiler::Environment
 
 	# With `inline: false` nothing is recognised, so every method compiles to
 	# its original definition. Used to restore a class before it's frozen.
-	def initialize(component, standard_set: standard_set_on?(component), method_resolver: Phlex::UNBOUND_INSTANCE_METHOD_METHOD.method(:bind_call), refinements: [], nesting: [component], inline: true)
+	def initialize(component, standard_set: nil, method_resolver: Phlex::UNBOUND_INSTANCE_METHOD_METHOD.method(:bind_call), refinements: [], nesting: [component], inline: true)
 		@component = component
 		@nesting = nesting
 		@refinements = refinements
-		@standard_set = standard_set
+		@standard_set = standard_set.nil? ? lexical_standard_set? : standard_set
 		@method_resolver = method_resolver
 		@inline = inline
 		@elements = {}
@@ -203,11 +203,11 @@ class Phlex::Compiler::Environment
 		(method = instance_method(name)) && method.owner == owner && method.original_name == name && !overridden_by_descendant?(name, owner)
 	end
 
-	# Without the lexical scopes, the class and its ancestors are the best guess.
-	private def standard_set_on?(component)
-		component.const_get(:Set).equal?(::Set)
-	rescue NameError
-		false
+	# Whether `Set` in the class body's lexical scope is ::Set, found by
+	# reflection so a `Set` waiting to be autoloaded isn't loaded, and taken
+	# not to be ::Set, since reading it would load whatever it is.
+	private def lexical_standard_set?
+		(found = loaded(lexical_owner(:Set), :Set)) ? ::Set.equal?(found[0]) : false
 	end
 
 	private def resolve_element(name)

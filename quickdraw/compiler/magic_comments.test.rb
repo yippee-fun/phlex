@@ -159,6 +159,21 @@ class CompilerMagicCommentsTest < Quickdraw::Test
 		assert_equal results, ["<div>x</div>ASCII-8BIT true", "<div>x</div>ASCII-8BIT true"]
 	end
 
+	test "a binary encoding comment is forwarded when the file holds valid UTF-8" do
+		results = render_before_and_after_compiling("MagicCommentsBinaryWithUTF8", <<~RUBY.b)
+			# encoding: binary
+			class MagicCommentsBinaryWithUTF8 < Phlex::HTML
+				def view_template
+					div { "x" }
+					plain "\xC3\xA9".encoding.name
+					plain __ENCODING__.name
+				end
+			end
+		RUBY
+
+		assert_equal results, ["<div>x</div>ASCII-8BITASCII-8BIT", "<div>x</div>ASCII-8BITASCII-8BIT"]
+	end
+
 	test "a frozen string literal comment after a line continuation is forwarded" do
 		results = render_before_and_after_compiling("MagicCommentsLineContinuation", <<~RUBY)
 			\\
